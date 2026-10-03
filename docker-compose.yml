@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: winger-postgres
+    environment:
+      POSTGRES_DB: winger
+      POSTGRES_USER: winger
+      POSTGRES_PASSWORD: winger
+    ports:
+      - "5432:5432"
+    volumes:
+      - winger_pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: winger-redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  winger_pg:

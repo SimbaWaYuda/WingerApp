@@ -1,0 +1,244 @@
+enum UserRole { customer, supplier, admin }
+
+enum OrderStatus {
+  processing,
+  readyForPickup,
+  shipped,
+  delivered,
+  cancelled,
+  returned,
+  partial,
+}
+
+enum StockStatus { inStock, lowStock, outOfStock }
+
+class Product {
+  const Product({
+    required this.id,
+    required this.name,
+    required this.brand,
+    required this.supplierId,
+    required this.supplierName,
+    required this.price,
+    required this.rating,
+    required this.imageUrl,
+    required this.category,
+    this.previousPrice,
+    this.model = 'Standard',
+    this.color = 'Graphite',
+    this.size = 'One size',
+    this.battery = '—',
+    this.weight = '—',
+    this.description = '',
+    this.stock = 24,
+    this.stockStatus = StockStatus.inStock,
+  });
+
+  final String id;
+  final String name;
+  final String brand;
+  final String supplierId;
+  final String supplierName;
+  final double price;
+  final double? previousPrice;
+  final double rating;
+  final String imageUrl;
+  final String category;
+  final String model;
+  final String color;
+  final String size;
+  final String battery;
+  final String weight;
+  final String description;
+  final int stock;
+  final StockStatus stockStatus;
+
+  double get savings =>
+      previousPrice == null ? 0 : (previousPrice! - price).clamp(0, double.infinity);
+}
+
+class CartItem {
+  const CartItem({
+    required this.product,
+    required this.quantity,
+  });
+
+  final Product product;
+  final int quantity;
+
+  double get lineTotal => product.price * quantity;
+
+  CartItem copyWith({Product? product, int? quantity}) {
+    return CartItem(
+      product: product ?? this.product,
+      quantity: quantity ?? this.quantity,
+    );
+  }
+}
+
+class ShipmentLeg {
+  const ShipmentLeg({
+    required this.supplierName,
+    required this.productName,
+    required this.status,
+    this.trackingCode,
+    this.pickupCode,
+  });
+
+  final String supplierName;
+  final String productName;
+  final OrderStatus status;
+  final String? trackingCode;
+  final String? pickupCode;
+}
+
+class CustomerOrder {
+  const CustomerOrder({
+    required this.id,
+    required this.total,
+    required this.status,
+    required this.shipments,
+    required this.placedAt,
+    this.paymentStatus = 'PAID',
+    this.paymentMode = 'demo',
+    this.customerName = '',
+    this.itemRows = const [],
+  });
+
+  final String id;
+  final double total;
+  final OrderStatus status;
+  final List<ShipmentLeg> shipments;
+  final DateTime placedAt;
+  final String paymentStatus;
+  final String paymentMode;
+  final String customerName;
+  final List<OrderItemRow> itemRows;
+}
+
+class OrderItemRow {
+  const OrderItemRow({
+    required this.id,
+    required this.productId,
+    required this.productName,
+    required this.supplierId,
+    required this.supplierName,
+    required this.quantity,
+    required this.lineTotal,
+    required this.status,
+    this.trackingCode,
+    this.pickupCode,
+  });
+
+  final String id;
+  final String productId;
+  final String productName;
+  final String supplierId;
+  final String supplierName;
+  final int quantity;
+  final double lineTotal;
+  final OrderStatus status;
+  final String? trackingCode;
+  final String? pickupCode;
+}
+
+class SupplierOrderRow {
+  const SupplierOrderRow({
+    required this.id,
+    required this.customerName,
+    required this.productName,
+    required this.value,
+    required this.status,
+  });
+
+  final String id;
+  final String customerName;
+  final String productName;
+  final double value;
+  final OrderStatus status;
+}
+
+OrderStatus orderStatusFromApi(String? raw) {
+  switch ((raw ?? '').toUpperCase()) {
+    case 'READY_FOR_PICKUP':
+      return OrderStatus.readyForPickup;
+    case 'SHIPPED':
+      return OrderStatus.shipped;
+    case 'DELIVERED':
+      return OrderStatus.delivered;
+    case 'CANCELLED':
+      return OrderStatus.cancelled;
+    case 'RETURNED':
+      return OrderStatus.returned;
+    case 'PARTIAL':
+      return OrderStatus.partial;
+    default:
+      return OrderStatus.processing;
+  }
+}
+
+String orderStatusToApi(OrderStatus status) {
+  return switch (status) {
+    OrderStatus.readyForPickup => 'READY_FOR_PICKUP',
+    OrderStatus.shipped => 'SHIPPED',
+    OrderStatus.delivered => 'DELIVERED',
+    OrderStatus.cancelled => 'CANCELLED',
+    OrderStatus.returned => 'RETURNED',
+    OrderStatus.partial => 'PARTIAL',
+    OrderStatus.processing => 'PROCESSING',
+  };
+}
+
+CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
+  final items = (json['items'] as List<dynamic>? ?? [])
+      .cast<Map<String, dynamic>>();
+  return CustomerOrder(
+    id: (json['displayId'] as String?) ?? (json['id'] as String? ?? 'order'),
+    total: (json['total'] as num?)?.toDouble() ?? 0,
+    status: orderStatusFromApi(json['status'] as String?),
+    paymentStatus: json['paymentStatus'] as String? ?? 'PENDING',
+    paymentMode: json['paymentMode'] as String? ?? 'demo',
+    customerName: json['customerName'] as String? ?? '',
+    placedAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+        DateTime.now(),
+    itemRows: [
+      for (final item in items)
+        OrderItemRow(
+          id: item['id'] as String,
+          productId: item['productId'] as String? ?? '',
+          productName: item['productName'] as String? ?? '',
+          supplierId: item['supplierId'] as String? ?? '',
+          supplierName: item['supplierName'] as String? ?? '',
+          quantity: item['quantity'] as int? ?? 1,
+          lineTotal: (item['lineTotal'] as num?)?.toDouble() ?? 0,
+          status: orderStatusFromApi(item['status'] as String?),
+          trackingCode: item['trackingCode'] as String?,
+          pickupCode: item['pickupCode'] as String?,
+        ),
+    ],
+    shipments: [
+      for (final item in items)
+        ShipmentLeg(
+          supplierName: item['supplierName'] as String? ?? 'Supplier',
+          productName: item['productName'] as String? ?? 'Product',
+          status: orderStatusFromApi(item['status'] as String?),
+          trackingCode: item['trackingCode'] as String?,
+          pickupCode: item['pickupCode'] as String?,
+        ),
+    ],
+  );
+}
+
+class KpiCardData {
+  const KpiCardData({
+    required this.label,
+    required this.value,
+    required this.delta,
+    this.positive = true,
+  });
+
+  final String label;
+  final String value;
+  final String delta;
+  final bool positive;
+}

@@ -1,0 +1,224 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum StockStatus {
+  IN_STOCK
+  LOW_STOCK
+  OUT_OF_STOCK
+}
+
+enum SyncEventStatus {
+  SUCCESS
+  CONFLICT
+  DUPLICATE
+}
+
+enum UserRole {
+  CUSTOMER
+  SUPPLIER
+  ADMIN
+}
+
+enum OrderStatus {
+  PROCESSING
+  READY_FOR_PICKUP
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+  PARTIAL
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id               String              @id @default(cuid())
+  email            String              @unique
+  passwordHash     String
+  name             String
+  role             UserRole
+  supplierId       String?
+  supplier         Supplier?           @relation(fields: [supplierId], references: [id])
+  preferredLocale  String?
+  phone            String?
+  city             String?
+  addressLine      String?
+  profileComplete  Boolean             @default(false)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  orders           Order[]
+  onboarding       OnboardingProgress?
+
+  @@index([role])
+  @@index([supplierId])
+}
+
+model Supplier {
+  id                   String      @id
+  name                 String
+  businessBio          String?
+  verificationStatus   String      @default("UNVERIFIED")
+  payoutSetupComplete  Boolean     @default(false)
+  deliveryNotes        String?
+  deliveryConfigured   Boolean     @default(false)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  products             Product[]
+  users                User[]
+  orderItems           OrderItem[]
+}
+
+/// Per-user onboarding checklist progress (never grants roles).
+model OnboardingProgress {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role               UserRole
+  completedKeys      Json      @default("[]")
+  skippedKeys        Json      @default("[]")
+  activityFlags      Json      @default("{}")
+  checklistDismissed Boolean   @default(false)
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+/// Singleton platform ops flags for admin onboarding verification.
+model PlatformSettings {
+  id                   String   @id @default("default")
+  currency             String   @default("USD")
+  timezone             String   @default("Africa/Nairobi")
+  setupComplete        Boolean  @default(false)
+  permissionsSeeded    Boolean  @default(false)
+  deliveryConfigured   Boolean  @default(false)
+  paymentsConfigured   Boolean  @default(false)
+  commissionsConfigured Boolean @default(false)
+  updatedAt            DateTime @updatedAt
+}
+
+model Product {
+  id            String      @id
+  name          String
+  brand         String
+  supplierId    String
+  supplier      Supplier    @relation(fields: [supplierId], references: [id])
+  supplierName  String
+  price         Decimal     @db.Decimal(12, 2)
+  previousPrice Decimal?    @db.Decimal(12, 2)
+  rating        Float       @default(4.5)
+  imageUrl      String
+  category      String
+  model         String      @default("Standard")
+  color         String      @default("Default")
+  size          String      @default("Standard")
+  battery       String      @default("—")
+  weight        String      @default("—")
+  description   String      @default("")
+  stock         Int         @default(0)
+  stockStatus   StockStatus @default(IN_STOCK)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  inventoryLedger InventoryLedger[]
+  orderItems      OrderItem[]
+
+  @@index([supplierId])
+  @@index([category])
+  @@index([name])
+}
+
+model Order {
+  id                    String        @id @default(cuid())
+  displayId             String        @unique
+  customerId            String
+  customer              User          @relation(fields: [customerId], references: [id])
+  customerName          String
+  customerEmail         String
+  status                OrderStatus   @default(PROCESSING)
+  paymentStatus         PaymentStatus @default(PENDING)
+  paymentMethod         String        @default("card")
+  paymentMode           String        @default("demo")
+  stripePaymentIntentId String?
+  currency              String        @default("usd")
+  subtotal              Decimal       @db.Decimal(12, 2)
+  total                 Decimal       @db.Decimal(12, 2)
+  addressLine           String?
+  city                  String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  items                 OrderItem[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id           String      @id @default(cuid())
+  orderId      String
+  order        Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product     @relation(fields: [productId], references: [id])
+  productName  String
+  supplierId   String
+  supplier     Supplier    @relation(fields: [supplierId], references: [id])
+  supplierName String
+  unitPrice    Decimal     @db.Decimal(12, 2)
+  quantity     Int
+  lineTotal    Decimal     @db.Decimal(12, 2)
+  status       OrderStatus @default(PROCESSING)
+  trackingCode String?
+  pickupCode   String?
+
+  @@index([orderId])
+  @@index([supplierId])
+  @@index([productId])
+}
+
+/// Append-only ledger of inventory deltas (source of truth for stock math).
+model InventoryLedger {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  supplierId  String
+  delta       Int
+  reason      String
+  eventId     String   @unique
+  deviceId    String?
+  userId      String?
+  quantityAfter Int
+  createdAt   DateTime @default(now())
+
+  @@index([productId, createdAt])
+  @@index([supplierId])
+}
+
+/// Server-side sync outbox/inbox for idempotent client events.
+model SyncEvent {
+  eventId     String          @id
+  deviceId    String
+  userId      String?
+  businessId  String?
+  operation   String
+  payloadJson Json
+  status      SyncEventStatus
+  message     String?
+  clientTs    DateTime?
+  receivedAt  DateTime        @default(now())
+
+  @@index([operation, receivedAt])
+  @@index([deviceId])
+}

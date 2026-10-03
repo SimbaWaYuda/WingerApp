@@ -1,0 +1,32 @@
+# Flutter
+apps/winger/.dart_tool/
+apps/winger/.flutter-plugins
+apps/winger/.flutter-plugins-dependencies
+apps/winger/.packages
+apps/winger/build/
+apps/winger/.pub-cache/
+apps/winger/.pub/
+apps/winger/coverage/
+
+# NestJS / Node
+apps/api/node_modules/
+apps/api/dist/
+apps/api/coverage/
+apps/api/.pgdata/
+**/.env
+**/.env.local
+**/.env.*.local
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+.~lock.*
+
+# Design lock / temp
+_docx_extract*/
+_prompt_*.docx
+design/**/*Figma_files/
+design/**/*Figma.html
