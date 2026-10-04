@@ -20,12 +20,24 @@ export class ProductsController {
     return this.productsService.listSuppliers();
   }
 
+  @Get('colors')
+  listColors() {
+    return this.productsService.listColors();
+  }
+
+  @Get('sizes')
+  listSizes() {
+    return this.productsService.listSizes();
+  }
+
   @Get()
   findAll(
     @Query('q') q?: string,
     @Query('category') category?: string,
     @Query('brand') brand?: string,
     @Query('supplierId') supplierId?: string,
+    @Query('color') color?: string,
+    @Query('size') size?: string,
     @Query('minPrice') minPrice?: string,
     @Query('maxPrice') maxPrice?: string,
     @Query('minRating') minRating?: string,
@@ -39,6 +51,8 @@ export class ProductsController {
       category != null ||
       brand != null ||
       supplierId != null ||
+      color != null ||
+      size != null ||
       minPrice != null ||
       maxPrice != null ||
       minRating != null ||
@@ -56,6 +70,8 @@ export class ProductsController {
       category,
       brand,
       supplierId,
+      color,
+      size,
       minPrice: minPrice != null ? Number(minPrice) : undefined,
       maxPrice: maxPrice != null ? Number(maxPrice) : undefined,
       minRating: minRating != null ? Number(minRating) : undefined,

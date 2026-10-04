@@ -249,6 +249,42 @@ class ApiClient {
     }).where((s) => s.id.isNotEmpty).toList();
   }
 
+  Future<List<CatalogCategory>> fetchColors() async {
+    final response = await http
+        .get(_uri('/products/colors'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 3));
+    if (response.statusCode != 200) {
+      throw Exception('Colors HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.map((raw) {
+      final row = raw as Map<String, dynamic>;
+      return CatalogCategory(
+        name: row['name'] as String? ?? 'Color',
+        productCount: row['productCount'] as int? ?? 0,
+      );
+    }).toList();
+  }
+
+  Future<List<CatalogCategory>> fetchSizes() async {
+    final response = await http
+        .get(_uri('/products/sizes'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 3));
+    if (response.statusCode != 200) {
+      throw Exception('Sizes HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.map((raw) {
+      final row = raw as Map<String, dynamic>;
+      return CatalogCategory(
+        name: row['name'] as String? ?? 'Size',
+        productCount: row['productCount'] as int? ?? 0,
+      );
+    }).toList();
+  }
+
   Future<SupplierProfile> fetchSupplierProfile(String supplierId) async {
     final response = await http
         .get(_uri('/suppliers/$supplierId'), headers: session.authHeaders)
@@ -275,6 +311,8 @@ class ApiClient {
     String? category,
     String? brand,
     String? supplierId,
+    String? color,
+    String? size,
     double? minPrice,
     double? maxPrice,
     double? minRating,
@@ -291,6 +329,8 @@ class ApiClient {
       if (category != null && category.isNotEmpty) 'category': category,
       if (brand != null && brand.isNotEmpty) 'brand': brand,
       if (supplierId != null && supplierId.isNotEmpty) 'supplierId': supplierId,
+      if (color != null && color.isNotEmpty) 'color': color,
+      if (size != null && size.isNotEmpty) 'size': size,
       if (minPrice != null) 'minPrice': minPrice.toString(),
       if (maxPrice != null) 'maxPrice': maxPrice.toString(),
       if (minRating != null) 'minRating': minRating.toString(),

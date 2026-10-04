@@ -105,11 +105,47 @@ class CatalogRepository {
     ];
   }
 
+  Future<List<CatalogCategory>> getColors() async {
+    try {
+      final remote = await api.fetchColors();
+      if (remote.isNotEmpty) return remote;
+    } catch (_) {}
+    final products = await db.getProducts();
+    final counts = <String, int>{};
+    for (final product in products) {
+      counts[product.color] = (counts[product.color] ?? 0) + 1;
+    }
+    final names = counts.keys.toList()..sort();
+    return [
+      for (final name in names)
+        CatalogCategory(name: name, productCount: counts[name]!),
+    ];
+  }
+
+  Future<List<CatalogCategory>> getSizes() async {
+    try {
+      final remote = await api.fetchSizes();
+      if (remote.isNotEmpty) return remote;
+    } catch (_) {}
+    final products = await db.getProducts();
+    final counts = <String, int>{};
+    for (final product in products) {
+      counts[product.size] = (counts[product.size] ?? 0) + 1;
+    }
+    final names = counts.keys.toList()..sort();
+    return [
+      for (final name in names)
+        CatalogCategory(name: name, productCount: counts[name]!),
+    ];
+  }
+
   Future<ProductPage> browseProducts({
     String query = '',
     String? category,
     String? brand,
     String? supplierId,
+    String? color,
+    String? size,
     double? minPrice,
     double? maxPrice,
     double? minRating,
@@ -124,6 +160,8 @@ class CatalogRepository {
         category: category,
         brand: brand,
         supplierId: supplierId,
+        color: color,
+        size: size,
         minPrice: minPrice,
         maxPrice: maxPrice,
         minRating: minRating,
@@ -150,6 +188,16 @@ class CatalogRepository {
       }
       if (supplierId != null && supplierId.isNotEmpty) {
         local = local.where((p) => p.supplierId == supplierId).toList();
+      }
+      if (color != null && color.isNotEmpty) {
+        local = local
+            .where((p) => p.color.toLowerCase() == color.toLowerCase())
+            .toList();
+      }
+      if (size != null && size.isNotEmpty) {
+        local = local
+            .where((p) => p.size.toLowerCase() == size.toLowerCase())
+            .toList();
       }
       if (minPrice != null) {
         local = local.where((p) => p.price >= minPrice).toList();

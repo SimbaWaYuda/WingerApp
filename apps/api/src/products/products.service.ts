@@ -43,6 +43,8 @@ export type ProductBrowseQuery = {
   category?: string;
   brand?: string;
   supplierId?: string;
+  color?: string;
+  size?: string;
   minPrice?: number;
   maxPrice?: number;
   minRating?: number;
@@ -105,6 +107,34 @@ export class ProductsService {
       name: row.supplierName,
       productCount: row._count._all,
     }));
+  }
+
+  async listColors(): Promise<CategoryDto[]> {
+    const grouped = await this.prisma.product.groupBy({
+      by: ['color'],
+      _count: { _all: true },
+      orderBy: { color: 'asc' },
+    });
+    return grouped
+      .filter((row) => row.color.trim().length > 0)
+      .map((row) => ({
+        name: row.color,
+        productCount: row._count._all,
+      }));
+  }
+
+  async listSizes(): Promise<CategoryDto[]> {
+    const grouped = await this.prisma.product.groupBy({
+      by: ['size'],
+      _count: { _all: true },
+      orderBy: { size: 'asc' },
+    });
+    return grouped
+      .filter((row) => row.size.trim().length > 0)
+      .map((row) => ({
+        name: row.size,
+        productCount: row._count._all,
+      }));
   }
 
   async browse(query: ProductBrowseQuery = {}): Promise<ProductBrowseResult> {
@@ -206,6 +236,12 @@ function buildWhere(query: ProductBrowseQuery): Prisma.ProductWhereInput {
   }
   if (query.supplierId?.trim()) {
     and.push({ supplierId: query.supplierId.trim() });
+  }
+  if (query.color?.trim()) {
+    and.push({ color: { equals: query.color.trim(), mode: 'insensitive' } });
+  }
+  if (query.size?.trim()) {
+    and.push({ size: { equals: query.size.trim(), mode: 'insensitive' } });
   }
   if (query.minPrice != null && Number.isFinite(query.minPrice)) {
     and.push({ price: { gte: query.minPrice } });

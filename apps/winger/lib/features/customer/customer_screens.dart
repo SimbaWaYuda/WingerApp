@@ -180,29 +180,10 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
     if (products.isEmpty) {
       return Text('—', style: TextStyle(color: WingerColors.muted));
     }
-    final height = wide ? 320.0 : 300.0;
-    return SizedBox(
-      height: height,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: products.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          final product = products[index];
-          return SizedBox(
-            width: wide ? 210 : 180,
-            child: ProductCard(
-              product: product,
-              wishlisted: session.isWishlisted(product.id),
-              compareSelected: session.compareIds.contains(product.id),
-              onWishlist: () => unawaited(session.toggleWishlist(product.id)),
-              onCompare: () => session.toggleCompare(product.id),
-              onAddToCart: () => unawaited(session.addToCart(product)),
-              onTap: () => context.go('/customer/product/${product.id}'),
-            ),
-          );
-        },
-      ),
+    return _HomeProductCarousel(
+      products: products,
+      wide: wide,
+      session: session,
     );
   }
 
@@ -403,6 +384,148 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
   }
 }
 
+class _HomeProductCarousel extends StatefulWidget {
+  const _HomeProductCarousel({
+    required this.products,
+    required this.wide,
+    required this.session,
+  });
+
+  final List<Product> products;
+  final bool wide;
+  final AppSession session;
+
+  @override
+  State<_HomeProductCarousel> createState() => _HomeProductCarouselState();
+}
+
+class _HomeProductCarouselState extends State<_HomeProductCarousel> {
+  final _scroll = ScrollController();
+  bool _canLeft = false;
+  bool _canRight = false;
+  bool _overflows = false;
+
+  double get _cardWidth => widget.wide ? 210 : 180;
+  double get _step => (_cardWidth + 12) * (widget.wide ? 2 : 1.5);
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_syncArrows);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncArrows());
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomeProductCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncArrows());
+  }
+
+  @override
+  void dispose() {
+    _scroll.removeListener(_syncArrows);
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _syncArrows() {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final overflows = pos.maxScrollExtent > 4;
+    final left = overflows && pos.pixels > 4;
+    final right = overflows && pos.pixels < pos.maxScrollExtent - 4;
+    if (left != _canLeft || right != _canRight || overflows != _overflows) {
+      setState(() {
+        _canLeft = left;
+        _canRight = right;
+        _overflows = overflows;
+      });
+    }
+  }
+
+  Future<void> _scrollBy(double delta) async {
+    if (!_scroll.hasClients) return;
+    final target = (_scroll.offset + delta).clamp(0.0, _scroll.position.maxScrollExtent);
+    await _scroll.animateTo(
+      target,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+    _syncArrows();
+  }
+
+  Widget _arrowButton({
+    required IconData icon,
+    required bool enabled,
+    required VoidCallback onPressed,
+  }) {
+    return Material(
+      color: enabled ? WingerColors.brand : Colors.white.withValues(alpha: 0.9),
+      shape: const CircleBorder(),
+      elevation: enabled ? 2 : 1,
+      child: IconButton(
+        onPressed: enabled ? onPressed : null,
+        icon: Icon(icon, color: enabled ? Colors.white : WingerColors.muted),
+        tooltip: icon == Icons.chevron_left ? 'Scroll left' : 'Scroll right',
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final height = widget.wide ? 320.0 : 300.0;
+    final session = widget.session;
+    return SizedBox(
+      height: height,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          ListView.separated(
+            controller: _scroll,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            itemCount: widget.products.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, index) {
+              final product = widget.products[index];
+              return SizedBox(
+                width: _cardWidth,
+                child: ProductCard(
+                  product: product,
+                  wishlisted: session.isWishlisted(product.id),
+                  compareSelected: session.compareIds.contains(product.id),
+                  onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                  onCompare: () => session.toggleCompare(product.id),
+                  onAddToCart: () => unawaited(session.addToCart(product)),
+                  onTap: () => context.go('/customer/product/${product.id}'),
+                ),
+              );
+            },
+          ),
+          if (_overflows) ...[
+            Positioned(
+              left: 0,
+              child: _arrowButton(
+                icon: Icons.chevron_left,
+                enabled: _canLeft,
+                onPressed: () => unawaited(_scrollBy(-_step)),
+              ),
+            ),
+            Positioned(
+              right: 0,
+              child: _arrowButton(
+                icon: Icons.chevron_right,
+                enabled: _canRight,
+                onPressed: () => unawaited(_scrollBy(_step)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class CustomerSearchScreen extends StatefulWidget {
   const CustomerSearchScreen({
     super.key,
@@ -427,6 +550,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   String? _brand;
   String? _supplierId;
   String? _supplierName;
+  String? _color;
+  String? _size;
   double? _minRating;
   /// null = any; otherwise [min, max] with null max meaning open-ended.
   (double?, double?)? _priceRange;
@@ -436,6 +561,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   Future<ProductPage>? _future;
   Future<List<CatalogCategory>>? _categoriesFuture;
   Future<List<CatalogCategory>>? _brandsFuture;
+  Future<List<CatalogCategory>>? _colorsFuture;
+  Future<List<CatalogCategory>>? _sizesFuture;
   Future<List<CatalogSupplier>>? _suppliersFuture;
 
   @override
@@ -448,6 +575,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     final catalog = context.read<CatalogRepository>();
     _categoriesFuture = catalog.getCategories();
     _brandsFuture = catalog.getBrands();
+    _colorsFuture = catalog.getColors();
+    _sizesFuture = catalog.getSizes();
     _suppliersFuture = catalog.getSuppliers();
     _reload();
   }
@@ -464,6 +593,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     _brand = null;
     _supplierId = null;
     _supplierName = null;
+    _color = null;
+    _size = null;
     _minRating = null;
     _priceRange = null;
     _inStockOnly = false;
@@ -525,6 +656,26 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         },
       ));
     }
+    if (_color != null) {
+      chips.add((
+        label: _color!,
+        onClear: () {
+          _color = null;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
+    if (_size != null) {
+      chips.add((
+        label: _size!,
+        onClear: () {
+          _size = null;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
     final price = _priceLabel(s);
     if (price != null) {
       chips.add((
@@ -566,6 +717,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             category: _category,
             brand: _brand,
             supplierId: _supplierId,
+            color: _color,
+            size: _size,
             minPrice: _priceRange?.$1,
             maxPrice: _priceRange?.$2,
             minRating: _minRating,
@@ -577,15 +730,593 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     });
   }
 
+  void _applyFilter(VoidCallback update) {
+    update();
+    _page = 1;
+    _reload();
+  }
+
+  List<({String key, String label, (double?, double?)? range})> _priceOptions(WingerStrings s) => [
+        (key: 'any', label: s.t('anyPrice'), range: null),
+        (key: 'u100', label: s.t('priceUnder100'), range: (null, 100.0)),
+        (key: '100250', label: s.t('price100to250'), range: (100.0, 250.0)),
+        (key: '250500', label: s.t('price250to500'), range: (250.0, 500.0)),
+        (key: 'o500', label: s.t('priceOver500'), range: (500.0, null)),
+      ];
+
+  bool _priceSelected((double?, double?)? range) {
+    if (range == null) return _priceRange == null;
+    return _priceRange?.$1 == range.$1 && _priceRange?.$2 == range.$2;
+  }
+
+  Widget _dropdownPill({
+    required String label,
+    required bool active,
+    required List<PopupMenuEntry<String>> items,
+    required ValueChanged<String> onSelected,
+  }) {
+    return PopupMenuButton<String>(
+      onSelected: onSelected,
+      itemBuilder: (_) => items,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: active ? WingerColors.brand : WingerColors.brandMuted,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: active ? WingerColors.brand : WingerColors.border,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: active ? Colors.white : WingerColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            Icon(
+              Icons.arrow_drop_down,
+              color: active ? Colors.white : WingerColors.ink,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sidebarOption({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+      selected: selected,
+      selectedTileColor: WingerColors.brand.withValues(alpha: 0.12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      leading: Icon(
+        selected ? Icons.check_circle : Icons.circle_outlined,
+        size: 18,
+        color: selected ? WingerColors.brand : WingerColors.muted,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          color: selected ? WingerColors.brand : WingerColors.ink,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
+
+  Widget _buildActiveFiltersBar(WingerStrings s) {
+    final active = _activeFilters(s);
+    if (active.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(s.t('activeFilters'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              const Spacer(),
+              TextButton(
+                onPressed: _clearFilters,
+                style: TextButton.styleFrom(
+                  foregroundColor: WingerColors.brand,
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(s.t('clearFilters')),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final chip in active)
+                InputChip(
+                  label: Text(chip.label),
+                  onDeleted: chip.onClear,
+                  deleteIcon: const Icon(Icons.close, size: 16),
+                  selected: true,
+                  selectedColor: WingerColors.brandMuted,
+                  checkmarkColor: WingerColors.brand,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterSidebar(WingerStrings s) {
+    return ListView(
+      padding: const EdgeInsets.only(right: 8),
+      children: [
+        Text(s.t('categories'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        FutureBuilder<List<CatalogCategory>>(
+          future: _categoriesFuture,
+          builder: (context, snapshot) {
+            final categories = snapshot.data ?? const <CatalogCategory>[];
+            return Column(
+              children: [
+                _sidebarOption(
+                  label: s.t('allCategories'),
+                  selected: _category == null,
+                  onTap: () => _applyFilter(() => _category = null),
+                ),
+                for (final category in categories)
+                  _sidebarOption(
+                    label: category.name,
+                    selected: _category == category.name,
+                    onTap: () => _applyFilter(() => _category = category.name),
+                  ),
+              ],
+            );
+          },
+        ),
+        ExpansionTile(
+          initiallyExpanded: _brand != null,
+          title: Text(s.t('brands'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          children: [
+            FutureBuilder<List<CatalogCategory>>(
+              future: _brandsFuture,
+              builder: (context, snapshot) {
+                final brands = snapshot.data ?? const <CatalogCategory>[];
+                return Column(
+                  children: [
+                    _sidebarOption(
+                      label: s.t('allBrands'),
+                      selected: _brand == null,
+                      onTap: () => _applyFilter(() => _brand = null),
+                    ),
+                    for (final brand in brands)
+                      _sidebarOption(
+                        label: brand.name,
+                        selected: _brand == brand.name,
+                        onTap: () => _applyFilter(() => _brand = brand.name),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+        ExpansionTile(
+          initiallyExpanded: _color != null,
+          title: Text(s.t('color'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          children: [
+            FutureBuilder<List<CatalogCategory>>(
+              future: _colorsFuture,
+              builder: (context, snapshot) {
+                final colors = snapshot.data ?? const <CatalogCategory>[];
+                return Column(
+                  children: [
+                    _sidebarOption(
+                      label: s.t('allColors'),
+                      selected: _color == null,
+                      onTap: () => _applyFilter(() => _color = null),
+                    ),
+                    for (final color in colors)
+                      _sidebarOption(
+                        label: color.name,
+                        selected: _color == color.name,
+                        onTap: () => _applyFilter(() => _color = color.name),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+        ExpansionTile(
+          initiallyExpanded: _size != null,
+          title: Text(s.t('size'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          children: [
+            FutureBuilder<List<CatalogCategory>>(
+              future: _sizesFuture,
+              builder: (context, snapshot) {
+                final sizes = snapshot.data ?? const <CatalogCategory>[];
+                return Column(
+                  children: [
+                    _sidebarOption(
+                      label: s.t('allSizes'),
+                      selected: _size == null,
+                      onTap: () => _applyFilter(() => _size = null),
+                    ),
+                    for (final size in sizes)
+                      _sidebarOption(
+                        label: size.name,
+                        selected: _size == size.name,
+                        onTap: () => _applyFilter(() => _size = size.name),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+        ExpansionTile(
+          initiallyExpanded: _priceRange != null,
+          title: Text(s.t('price'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          children: [
+            for (final option in _priceOptions(s))
+              _sidebarOption(
+                label: option.label,
+                selected: _priceSelected(option.range),
+                onTap: () => _applyFilter(() => _priceRange = option.range),
+              ),
+          ],
+        ),
+        ExpansionTile(
+          initiallyExpanded: _supplierId != null,
+          title: Text(s.t('suppliers'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          children: [
+            FutureBuilder<List<CatalogSupplier>>(
+              future: _suppliersFuture,
+              builder: (context, snapshot) {
+                final suppliers = snapshot.data ?? const <CatalogSupplier>[];
+                return Column(
+                  children: [
+                    _sidebarOption(
+                      label: s.t('allSuppliers'),
+                      selected: _supplierId == null,
+                      onTap: () => _applyFilter(() {
+                        _supplierId = null;
+                        _supplierName = null;
+                      }),
+                    ),
+                    for (final supplier in suppliers)
+                      _sidebarOption(
+                        label: supplier.name,
+                        selected: _supplierId == supplier.id,
+                        onTap: () => _applyFilter(() {
+                          _supplierId = supplier.id;
+                          _supplierName = supplier.name;
+                        }),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+        ExpansionTile(
+          initiallyExpanded: _minRating != null,
+          title: Text(s.t('rating'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          children: [
+            _sidebarOption(
+              label: s.t('anyRating'),
+              selected: _minRating == null,
+              onTap: () => _applyFilter(() => _minRating = null),
+            ),
+            _sidebarOption(
+              label: s.t('rating4plus'),
+              selected: _minRating == 4.0,
+              onTap: () => _applyFilter(() => _minRating = 4.0),
+            ),
+            _sidebarOption(
+              label: s.t('rating45plus'),
+              selected: _minRating == 4.5,
+              onTap: () => _applyFilter(() => _minRating = 4.5),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(s.t('inStockOnly')),
+          value: _inStockOnly,
+          activeThumbColor: WingerColors.brand,
+          onChanged: (value) => _applyFilter(() => _inStockOnly = value),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHorizontalFilterBar(WingerStrings s) {
+    return FutureBuilder(
+      future: Future.wait([
+        _categoriesFuture ?? Future.value(const <CatalogCategory>[]),
+        _brandsFuture ?? Future.value(const <CatalogCategory>[]),
+        _colorsFuture ?? Future.value(const <CatalogCategory>[]),
+        _sizesFuture ?? Future.value(const <CatalogCategory>[]),
+        _suppliersFuture ?? Future.value(const <CatalogSupplier>[]),
+      ]),
+      builder: (context, snapshot) {
+        final data = snapshot.data ?? const [];
+        final categories = data.isNotEmpty ? data[0] as List<CatalogCategory> : const <CatalogCategory>[];
+        final brands = data.length > 1 ? data[1] as List<CatalogCategory> : const <CatalogCategory>[];
+        final colors = data.length > 2 ? data[2] as List<CatalogCategory> : const <CatalogCategory>[];
+        final sizes = data.length > 3 ? data[3] as List<CatalogCategory> : const <CatalogCategory>[];
+        final suppliers = data.length > 4 ? data[4] as List<CatalogSupplier> : const <CatalogSupplier>[];
+
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _dropdownPill(
+              label: _category ?? s.t('categories'),
+              active: _category != null,
+              onSelected: (value) => _applyFilter(() {
+                _category = value == '__all__' ? null : value;
+              }),
+              items: [
+                PopupMenuItem(value: '__all__', child: Text(s.t('allCategories'))),
+                for (final category in categories)
+                  PopupMenuItem(value: category.name, child: Text(category.name)),
+              ],
+            ),
+            _dropdownPill(
+              label: _brand ?? s.t('brands'),
+              active: _brand != null,
+              onSelected: (value) => _applyFilter(() {
+                _brand = value == '__all__' ? null : value;
+              }),
+              items: [
+                PopupMenuItem(value: '__all__', child: Text(s.t('allBrands'))),
+                for (final brand in brands)
+                  PopupMenuItem(value: brand.name, child: Text(brand.name)),
+              ],
+            ),
+            _dropdownPill(
+              label: _color ?? s.t('color'),
+              active: _color != null,
+              onSelected: (value) => _applyFilter(() {
+                _color = value == '__all__' ? null : value;
+              }),
+              items: [
+                PopupMenuItem(value: '__all__', child: Text(s.t('allColors'))),
+                for (final color in colors)
+                  PopupMenuItem(value: color.name, child: Text(color.name)),
+              ],
+            ),
+            _dropdownPill(
+              label: _size ?? s.t('size'),
+              active: _size != null,
+              onSelected: (value) => _applyFilter(() {
+                _size = value == '__all__' ? null : value;
+              }),
+              items: [
+                PopupMenuItem(value: '__all__', child: Text(s.t('allSizes'))),
+                for (final size in sizes)
+                  PopupMenuItem(value: size.name, child: Text(size.name)),
+              ],
+            ),
+            _dropdownPill(
+              label: _priceLabel(s) ?? s.t('price'),
+              active: _priceRange != null,
+              onSelected: (value) {
+                final match = _priceOptions(s).where((o) => o.key == value);
+                if (match.isEmpty) return;
+                _applyFilter(() => _priceRange = match.first.range);
+              },
+              items: [
+                for (final option in _priceOptions(s))
+                  PopupMenuItem(value: option.key, child: Text(option.label)),
+              ],
+            ),
+            _dropdownPill(
+              label: _supplierName ?? s.t('suppliers'),
+              active: _supplierId != null,
+              onSelected: (value) {
+                if (value == '__all__') {
+                  _applyFilter(() {
+                    _supplierId = null;
+                    _supplierName = null;
+                  });
+                  return;
+                }
+                final match = suppliers.where((supplier) => supplier.id == value);
+                if (match.isEmpty) return;
+                _applyFilter(() {
+                  _supplierId = match.first.id;
+                  _supplierName = match.first.name;
+                });
+              },
+              items: [
+                PopupMenuItem(value: '__all__', child: Text(s.t('allSuppliers'))),
+                for (final supplier in suppliers)
+                  PopupMenuItem(value: supplier.id, child: Text(supplier.name)),
+              ],
+            ),
+            _dropdownPill(
+              label: _minRating == null
+                  ? s.t('rating')
+                  : (_minRating == 4.5 ? s.t('rating45plus') : s.t('rating4plus')),
+              active: _minRating != null,
+              onSelected: (value) => _applyFilter(() {
+                _minRating = value == '__all__'
+                    ? null
+                    : value == '4.5'
+                        ? 4.5
+                        : 4.0;
+              }),
+              items: [
+                PopupMenuItem(value: '__all__', child: Text(s.t('anyRating'))),
+                PopupMenuItem(value: '4', child: Text(s.t('rating4plus'))),
+                PopupMenuItem(value: '4.5', child: Text(s.t('rating45plus'))),
+              ],
+            ),
+            FilterChip(
+              label: Text(s.t('inStockOnly')),
+              selected: _inStockOnly,
+              selectedColor: WingerColors.brand,
+              checkmarkColor: Colors.white,
+              labelStyle: TextStyle(
+                color: _inStockOnly ? Colors.white : WingerColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
+              onSelected: (value) => _applyFilter(() => _inStockOnly = value),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSortRow(WingerStrings s) {
+    return Row(
+      children: [
+        DropdownButton<String>(
+          value: _sort,
+          underline: const SizedBox.shrink(),
+          items: [
+            DropdownMenuItem(value: 'relevance', child: Text(s.t('sortRelevance'))),
+            DropdownMenuItem(value: 'price_asc', child: Text(s.t('sortPriceAsc'))),
+            DropdownMenuItem(value: 'price_desc', child: Text(s.t('sortPriceDesc'))),
+            DropdownMenuItem(value: 'rating', child: Text(s.t('sortRating'))),
+            DropdownMenuItem(value: 'newest', child: Text(s.t('sortNewest'))),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            _applyFilter(() => _sort = value);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildResults(WingerStrings s, AppSession session, {required bool wideGrid}) {
+    final future = _future;
+    if (future == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return FutureBuilder<ProductPage>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final page = snapshot.data;
+        final items = page?.items ?? const <Product>[];
+        if (items.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 32),
+            child: Column(
+              children: [
+                const Icon(Icons.search_off, size: 48, color: WingerColors.muted),
+                const SizedBox(height: 12),
+                Text(s.t('noResults'), style: TextStyle(color: WingerColors.muted)),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _clearFilters,
+                  child: Text(s.t('clearFilters')),
+                ),
+              ],
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${page!.total} ${s.t('products').toLowerCase()}',
+              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: items.length,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: wideGrid ? 3 : 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: wideGrid ? 0.68 : 0.64,
+              ),
+              itemBuilder: (context, index) {
+                final product = items[index];
+                return ProductCard(
+                  product: product,
+                  wishlisted: session.isWishlisted(product.id),
+                  compareSelected: session.compareIds.contains(product.id),
+                  onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                  onCompare: () => session.toggleCompare(product.id),
+                  onAddToCart: () => unawaited(session.addToCart(product)),
+                  onTap: () => context.go('/customer/product/${product.id}'),
+                );
+              },
+            ),
+            if (page.totalPages > 1) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  OutlinedButton(
+                    onPressed: _page <= 1
+                        ? null
+                        : () {
+                            _page -= 1;
+                            _reload();
+                          },
+                    child: Text(s.t('back')),
+                  ),
+                  const SizedBox(width: 12),
+                  Text('${s.t('page')} $_page / ${page.totalPages}'),
+                  const SizedBox(width: 12),
+                  OutlinedButton(
+                    onPressed: _page >= page.totalPages
+                        ? null
+                        : () {
+                            _page += 1;
+                            _reload();
+                          },
+                    child: Text(s.t('continueRole')),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
-    final wide = MediaQuery.sizeOf(context).width >= 900;
-    final future = _future;
+    final width = MediaQuery.sizeOf(context).width;
+    final useSidebar = width >= 1100;
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
+    final header = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
@@ -626,375 +1357,64 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             _reload();
           },
         ),
-        Builder(
-          builder: (context) {
-            final active = _activeFilters(s);
-            if (active.isEmpty) return const SizedBox.shrink();
-            return Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Column(
+        _buildActiveFiltersBar(s),
+      ],
+    );
+
+    if (useSidebar) {
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            header,
+            const SizedBox(height: 16),
+            Expanded(
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(s.t('activeFilters'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final chip in active)
-                        InputChip(
-                          label: Text(chip.label),
-                          onDeleted: chip.onClear,
-                          deleteIcon: const Icon(Icons.close, size: 16),
-                        ),
-                      ActionChip(
-                        label: Text(s.t('clearFilters')),
-                        onPressed: _clearFilters,
+                  SizedBox(
+                    width: 280,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: WingerColors.white,
+                        border: Border.all(color: WingerColors.border),
+                        borderRadius: BorderRadius.circular(16),
                       ),
-                    ],
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+                        child: _buildFilterSidebar(s),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: ListView(
+                      children: [
+                        _buildSortRow(s),
+                        const SizedBox(height: 12),
+                        _buildResults(s, session, wideGrid: true),
+                      ],
+                    ),
                   ),
                 ],
               ),
-            );
-          },
+            ),
+          ],
         ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        header,
         const SizedBox(height: 12),
-        FutureBuilder<List<CatalogCategory>>(
-          future: _categoriesFuture,
-          builder: (context, snapshot) {
-            final categories = snapshot.data ?? const <CatalogCategory>[];
-            return Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilterChip(
-                  label: Text(s.t('allCategories')),
-                  selected: _category == null,
-                  onSelected: (_) {
-                    _category = null;
-                    _page = 1;
-                    _reload();
-                  },
-                ),
-                for (final category in categories)
-                  FilterChip(
-                    label: Text(category.name),
-                    selected: _category == category.name,
-                    onSelected: (_) {
-                      _category = category.name;
-                      _page = 1;
-                      _reload();
-                    },
-                  ),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 12),
-        FutureBuilder<List<CatalogCategory>>(
-          future: _brandsFuture,
-          builder: (context, snapshot) {
-            final brands = snapshot.data ?? const <CatalogCategory>[];
-            if (brands.isEmpty) return const SizedBox.shrink();
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(s.t('brands'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilterChip(
-                      label: Text(s.t('allBrands')),
-                      selected: _brand == null,
-                      onSelected: (_) {
-                        _brand = null;
-                        _page = 1;
-                        _reload();
-                      },
-                    ),
-                    for (final brand in brands)
-                      FilterChip(
-                        label: Text(brand.name),
-                        selected: _brand == brand.name,
-                        onSelected: (_) {
-                          _brand = brand.name;
-                          _page = 1;
-                          _reload();
-                        },
-                      ),
-                  ],
-                ),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 12),
-        Text(s.t('price'), style: const TextStyle(fontWeight: FontWeight.w700)),
+        _buildHorizontalFilterBar(s),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            FilterChip(
-              label: Text(s.t('anyPrice')),
-              selected: _priceRange == null,
-              onSelected: (_) {
-                _priceRange = null;
-                _page = 1;
-                _reload();
-              },
-            ),
-            FilterChip(
-              label: Text(s.t('priceUnder100')),
-              selected: _priceRange?.$1 == null && _priceRange?.$2 == 100,
-              onSelected: (_) {
-                _priceRange = (null, 100.0);
-                _page = 1;
-                _reload();
-              },
-            ),
-            FilterChip(
-              label: Text(s.t('price100to250')),
-              selected: _priceRange?.$1 == 100 && _priceRange?.$2 == 250,
-              onSelected: (_) {
-                _priceRange = (100.0, 250.0);
-                _page = 1;
-                _reload();
-              },
-            ),
-            FilterChip(
-              label: Text(s.t('price250to500')),
-              selected: _priceRange?.$1 == 250 && _priceRange?.$2 == 500,
-              onSelected: (_) {
-                _priceRange = (250.0, 500.0);
-                _page = 1;
-                _reload();
-              },
-            ),
-            FilterChip(
-              label: Text(s.t('priceOver500')),
-              selected: _priceRange?.$1 == 500 && _priceRange?.$2 == null,
-              onSelected: (_) {
-                _priceRange = (500.0, null);
-                _page = 1;
-                _reload();
-              },
-            ),
-          ],
-        ),
+        _buildSortRow(s),
         const SizedBox(height: 12),
-        FutureBuilder<List<CatalogSupplier>>(
-          future: _suppliersFuture,
-          builder: (context, snapshot) {
-            final suppliers = snapshot.data ?? const <CatalogSupplier>[];
-            if (suppliers.isEmpty) return const SizedBox.shrink();
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(s.t('suppliers'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilterChip(
-                      label: Text(s.t('allSuppliers')),
-                      selected: _supplierId == null,
-                      onSelected: (_) {
-                        _supplierId = null;
-                        _supplierName = null;
-                        _page = 1;
-                        _reload();
-                      },
-                    ),
-                    for (final supplier in suppliers)
-                      FilterChip(
-                        label: Text(supplier.name),
-                        selected: _supplierId == supplier.id,
-                        onSelected: (_) {
-                          _supplierId = supplier.id;
-                          _supplierName = supplier.name;
-                          _page = 1;
-                          _reload();
-                        },
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-              ],
-            );
-          },
-        ),
-        Text(s.t('rating'), style: const TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            FilterChip(
-              label: Text(s.t('anyRating')),
-              selected: _minRating == null,
-              onSelected: (_) {
-                _minRating = null;
-                _page = 1;
-                _reload();
-              },
-            ),
-            FilterChip(
-              label: Text(s.t('rating4plus')),
-              selected: _minRating == 4.0,
-              onSelected: (_) {
-                _minRating = 4.0;
-                _page = 1;
-                _reload();
-              },
-            ),
-            FilterChip(
-              label: Text(s.t('rating45plus')),
-              selected: _minRating == 4.5,
-              onSelected: (_) {
-                _minRating = 4.5;
-                _page = 1;
-                _reload();
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            FilterChip(
-              label: Text(s.t('inStockOnly')),
-              selected: _inStockOnly,
-              onSelected: (value) {
-                _inStockOnly = value;
-                _page = 1;
-                _reload();
-              },
-            ),
-            DropdownButton<String>(
-              value: _sort,
-              underline: const SizedBox.shrink(),
-              items: [
-                DropdownMenuItem(value: 'relevance', child: Text(s.t('sortRelevance'))),
-                DropdownMenuItem(value: 'price_asc', child: Text(s.t('sortPriceAsc'))),
-                DropdownMenuItem(value: 'price_desc', child: Text(s.t('sortPriceDesc'))),
-                DropdownMenuItem(value: 'rating', child: Text(s.t('sortRating'))),
-                DropdownMenuItem(value: 'newest', child: Text(s.t('sortNewest'))),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                _sort = value;
-                _page = 1;
-                _reload();
-              },
-            ),
-            TextButton(
-              onPressed: _clearFilters,
-              child: Text(s.t('clearFilters')),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        if (future == null)
-          const Center(child: CircularProgressIndicator())
-        else
-          FutureBuilder<ProductPage>(
-            future: future,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-              final page = snapshot.data;
-              final items = page?.items ?? const <Product>[];
-              if (items.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 32),
-                  child: Column(
-                    children: [
-                      const Icon(Icons.search_off, size: 48, color: WingerColors.muted),
-                      const SizedBox(height: 12),
-                      Text(s.t('noResults'), style: TextStyle(color: WingerColors.muted)),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: _clearFilters,
-                        child: Text(s.t('clearFilters')),
-                      ),
-                    ],
-                  ),
-                );
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${page!.total} ${s.t('products').toLowerCase()}',
-                    style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 12),
-                  GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: items.length,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: wide ? 4 : 2,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: wide ? 0.68 : 0.64,
-                    ),
-                    itemBuilder: (context, index) {
-                      final product = items[index];
-                      return ProductCard(
-                        product: product,
-                        wishlisted: session.isWishlisted(product.id),
-                        compareSelected: session.compareIds.contains(product.id),
-                        onWishlist: () => unawaited(session.toggleWishlist(product.id)),
-                        onCompare: () => session.toggleCompare(product.id),
-                        onAddToCart: () => unawaited(session.addToCart(product)),
-                        onTap: () => context.go('/customer/product/${product.id}'),
-                      );
-                    },
-                  ),
-                  if (page.totalPages > 1) ...[
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        OutlinedButton(
-                          onPressed: _page <= 1
-                              ? null
-                              : () {
-                                  _page -= 1;
-                                  _reload();
-                                },
-                          child: Text(s.t('back')),
-                        ),
-                        const SizedBox(width: 12),
-                        Text('${s.t('page')} $_page / ${page.totalPages}'),
-                        const SizedBox(width: 12),
-                        OutlinedButton(
-                          onPressed: _page >= page.totalPages
-                              ? null
-                              : () {
-                                  _page += 1;
-                                  _reload();
-                                },
-                          child: Text(s.t('continueRole')),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
+        _buildResults(s, session, wideGrid: width >= 900),
       ],
     );
   }
