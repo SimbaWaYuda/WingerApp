@@ -7,6 +7,7 @@ import '../features/auth/login_screen.dart';
 import '../features/auth/signup_screen.dart';
 import '../features/customer/customer_screens.dart';
 import '../features/onboarding/onboarding_screens.dart';
+import '../features/shared/returns_inbox_screen.dart';
 import '../features/supplier/supplier_screens.dart';
 
 GoRouter createRouter(AppSession session) {
@@ -81,6 +82,7 @@ GoRouter createRouter(AppSession session) {
           GoRoute(path: '/supplier', builder: (context, state) => const SupplierDashboardScreen()),
           GoRoute(path: '/supplier/onboarding', builder: (context, state) => const SupplierOnboardingScreen()),
           GoRoute(path: '/supplier/orders', builder: (context, state) => const SupplierOrdersScreen()),
+          GoRoute(path: '/supplier/returns', builder: (context, state) => const ReturnsInboxScreen()),
           GoRoute(path: '/supplier/products', builder: (context, state) => const SupplierProductsScreen()),
           GoRoute(path: '/supplier/payments', builder: (context, state) => const SupplierPaymentsScreen()),
         ],
@@ -92,6 +94,8 @@ GoRouter createRouter(AppSession session) {
           GoRoute(path: '/admin/onboarding', builder: (context, state) => const AdminOnboardingScreen()),
           GoRoute(path: '/admin/suppliers', builder: (context, state) => const AdminSuppliersScreen()),
           GoRoute(path: '/admin/orders', builder: (context, state) => const AdminOrdersScreen()),
+          GoRoute(path: '/admin/returns', builder: (context, state) => const ReturnsInboxScreen()),
+          GoRoute(path: '/admin/commissions', builder: (context, state) => const AdminCommissionsScreen()),
           GoRoute(path: '/admin/delivery', builder: (context, state) => const AdminDeliveryScreen()),
         ],
       ),

@@ -534,6 +534,78 @@ class ApiClient {
     return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<void> createReturnRequest({
+    required String orderId,
+    required String orderItemId,
+    required String reason,
+    String? notes,
+    int? quantity,
+  }) async {
+    final response = await http
+        .post(
+          _uri('/orders/$orderId/returns'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'orderItemId': orderItemId,
+            'reason': reason,
+            if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+            if (quantity != null) 'quantity': quantity,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Return request failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+  }
+
+  Future<List<OrderReturnRequest>> fetchReturnsInbox() async {
+    final response = await http
+        .get(_uri('/orders/returns'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Returns HTTP ${response.statusCode}',
+      );
+    }
+    session.setApiOnline(true);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((raw) => orderReturnRequestFromApi(raw as Map<String, dynamic>))
+        .where((row) => row.id.isNotEmpty)
+        .toList();
+  }
+
+  Future<OrderReturnRequest> updateReturnRequest({
+    required String returnId,
+    required String status,
+  }) async {
+    final response = await http
+        .patch(
+          _uri('/orders/returns/$returnId'),
+          headers: session.authHeaders,
+          body: jsonEncode({'status': status}),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Return update failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    return orderReturnRequestFromApi(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<CustomerOrder> updateOrderItemStatus({
     required String orderId,
     required String itemId,
@@ -566,6 +638,134 @@ class ApiClient {
     }
     session.setApiOnline(true);
     return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<Map<String, dynamic>> fetchCommissionSettings() async {
+    final response = await http
+        .get(_uri('/commissions/settings'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw Exception('Commission settings HTTP ${response.statusCode}');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateDefaultCommissionRate(double percent) async {
+    final response = await http
+        .patch(
+          _uri('/commissions/settings/default-rate'),
+          headers: session.authHeaders,
+          body: jsonEncode({'defaultCommissionPercent': percent}),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Update default commission failed (${response.statusCode})',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchCommissionAgreements({
+    String? supplierId,
+  }) async {
+    final query = supplierId != null
+        ? '?supplierId=${Uri.encodeComponent(supplierId)}'
+        : '';
+    final response = await http
+        .get(_uri('/commissions/agreements$query'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw Exception('Agreements HTTP ${response.statusCode}');
+    }
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> proposeCommissionAgreement({
+    required String supplierId,
+    required double ratePercent,
+    String? notes,
+  }) async {
+    final response = await http
+        .post(
+          _uri('/commissions/agreements'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'supplierId': supplierId,
+            'ratePercent': ratePercent,
+            if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Propose agreement failed (${response.statusCode})',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> commissionAgreementAction({
+    required String agreementId,
+    required String action,
+    double? ratePercent,
+    String? notes,
+  }) async {
+    final body = <String, dynamic>{
+      if (ratePercent != null) 'ratePercent': ratePercent,
+      if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+    };
+    final response = await http
+        .post(
+          _uri('/commissions/agreements/$agreementId/$action'),
+          headers: session.authHeaders,
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final err = _tryJson(response.body);
+      throw Exception(
+        err?['message']?.toString() ??
+            'Agreement $action failed (${response.statusCode})',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> fetchSupplierCommissionSummary() async {
+    final response = await http
+        .get(_uri('/commissions/supplier/summary'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Commission summary HTTP ${response.statusCode}',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> fetchAdminSupplierCommissionTotals() async {
+    final response = await http
+        .get(
+          _uri('/commissions/admin/supplier-totals'),
+          headers: session.authHeaders,
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Supplier commission totals HTTP ${response.statusCode}',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   Future<OnboardingProgress> fetchOnboarding() async {

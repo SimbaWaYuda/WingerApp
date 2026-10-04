@@ -42,6 +42,30 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum ReturnRequestStatus {
+  REQUESTED
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  CLOSED
+}
+
+/// Recognition lifecycle for line commissions (Slice 5a).
+enum CommissionRecognitionStatus {
+  PENDING
+  RECOGNIZED
+  SETTLEABLE
+}
+
+enum CommissionAgreementStatus {
+  PROPOSED
+  COUNTERED
+  APPROVED
+  ACTIVE
+  REJECTED
+  SUPERSEDED
+}
+
 model User {
   id               String              @id @default(cuid())
   email            String              @unique
@@ -60,6 +84,11 @@ model User {
   orders           Order[]
   onboarding       OnboardingProgress?
   supplierReviews  SupplierReview[]
+  returnRequests   ReturnRequest[]
+  auditLogs        AuditLog[]
+  commissionAgreementsProposed SupplierCommissionAgreement[] @relation("AgreementProposedBy")
+  commissionAgreementsApproved SupplierCommissionAgreement[] @relation("AgreementApprovedBy")
+  commissionAgreementsAccepted SupplierCommissionAgreement[] @relation("AgreementAcceptedBy")
 
   @@index([role])
   @@index([supplierId])
@@ -81,6 +110,7 @@ model Supplier {
   users                User[]
   orderItems           OrderItem[]
   reviews              SupplierReview[]
+  commissionAgreements SupplierCommissionAgreement[]
 }
 
 /// Customer rating of a supplier after a delivered shipment.
@@ -119,15 +149,61 @@ model OnboardingProgress {
 
 /// Singleton platform ops flags for admin onboarding verification.
 model PlatformSettings {
-  id                   String   @id @default("default")
-  currency             String   @default("USD")
-  timezone             String   @default("Africa/Nairobi")
-  setupComplete        Boolean  @default(false)
-  permissionsSeeded    Boolean  @default(false)
-  deliveryConfigured   Boolean  @default(false)
-  paymentsConfigured   Boolean  @default(false)
-  commissionsConfigured Boolean @default(false)
-  updatedAt            DateTime @updatedAt
+  id                        String   @id @default("default")
+  currency                  String   @default("USD")
+  timezone                  String   @default("Africa/Nairobi")
+  setupComplete             Boolean  @default(false)
+  permissionsSeeded         Boolean  @default(false)
+  deliveryConfigured        Boolean  @default(false)
+  paymentsConfigured        Boolean  @default(false)
+  commissionsConfigured     Boolean  @default(false)
+  /// Default marketplace commission % (admin-configurable). Slice 5a default: 10.
+  defaultCommissionPercent  Decimal  @default(10) @db.Decimal(5, 2)
+  updatedAt                 DateTime @updatedAt
+}
+
+/// Supplier-specific commission rate agreement (proposal → approve → accept → active).
+model SupplierCommissionAgreement {
+  id                     String                    @id @default(cuid())
+  supplierId             String
+  supplier               Supplier                  @relation(fields: [supplierId], references: [id])
+  proposedRatePercent    Decimal                   @db.Decimal(5, 2)
+  counterRatePercent     Decimal?                  @db.Decimal(5, 2)
+  effectiveRatePercent   Decimal?                  @db.Decimal(5, 2)
+  status                 CommissionAgreementStatus @default(PROPOSED)
+  proposedByRole         UserRole
+  proposedByUserId       String
+  proposedBy             User                      @relation("AgreementProposedBy", fields: [proposedByUserId], references: [id])
+  approvedByUserId       String?
+  approvedBy             User?                     @relation("AgreementApprovedBy", fields: [approvedByUserId], references: [id])
+  acceptedByUserId       String?
+  acceptedBy             User?                     @relation("AgreementAcceptedBy", fields: [acceptedByUserId], references: [id])
+  effectiveFrom          DateTime?
+  effectiveTo            DateTime?
+  notes                  String?
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  commissionSnapshots    OrderItemCommission[]
+
+  @@index([supplierId, status])
+  @@index([supplierId, effectiveFrom])
+}
+
+/// Append-only audit of commission rate / agreement changes.
+model AuditLog {
+  id           String   @id @default(cuid())
+  entityType   String
+  entityId     String
+  action       String
+  actorUserId  String
+  actor        User     @relation(fields: [actorUserId], references: [id])
+  actorRole    UserRole
+  beforeJson   Json?
+  afterJson    Json?
+  createdAt    DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model Product {
@@ -175,6 +251,10 @@ model Order {
   stripePaymentIntentId String?
   currency              String        @default("usd")
   subtotal              Decimal       @db.Decimal(12, 2)
+  /// Recorded separately from product subtotal; not part of commission base.
+  taxAmount             Decimal       @default(0) @db.Decimal(12, 2)
+  /// Recorded separately from product subtotal; not part of commission base.
+  deliveryFee           Decimal       @default(0) @db.Decimal(12, 2)
   total                 Decimal       @db.Decimal(12, 2)
   addressLine           String?
   city                  String?
@@ -182,6 +262,7 @@ model Order {
   updatedAt             DateTime      @updatedAt
   items                 OrderItem[]
   supplierReviews       SupplierReview[]
+  returnRequests        ReturnRequest[]
 
   @@index([customerId])
   @@index([status])
@@ -205,10 +286,57 @@ model OrderItem {
   status       OrderStatus @default(PROCESSING)
   trackingCode String?
   pickupCode   String?
+  returnRequests ReturnRequest[]
+  commission   OrderItemCommission?
 
   @@index([orderId])
   @@index([supplierId])
   @@index([productId])
+}
+
+/// Immutable rate/base/amount snapshot per order line (status may advance).
+model OrderItemCommission {
+  id               String                      @id @default(cuid())
+  orderItemId      String                      @unique
+  orderItem        OrderItem                   @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  agreementId      String?
+  agreement        SupplierCommissionAgreement? @relation(fields: [agreementId], references: [id])
+  ratePercent      Decimal                     @db.Decimal(5, 2)
+  commissionBase   Decimal                     @db.Decimal(12, 2)
+  commissionAmount Decimal                     @db.Decimal(12, 2)
+  status           CommissionRecognitionStatus @default(PENDING)
+  paymentMode      String
+  /// Demo charges are tracked but not treated as real financial settlement.
+  isDemo           Boolean                     @default(false)
+  recognizedAt     DateTime?
+  settleableAt     DateTime?
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+
+  @@index([status])
+  @@index([agreementId])
+}
+
+/// Customer return / support request after delivery (no auto-refund yet).
+model ReturnRequest {
+  id          String              @id @default(cuid())
+  orderId     String
+  order       Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId String
+  orderItem   OrderItem           @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  customerId  String
+  customer    User                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  reason      String
+  notes       String?
+  quantity    Int
+  status      ReturnRequestStatus @default(REQUESTED)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([orderId, createdAt])
+  @@index([customerId])
+  @@index([orderItemId])
+  @@index([status])
 }
 
 /// Append-only ledger of inventory deltas (source of truth for stock math).

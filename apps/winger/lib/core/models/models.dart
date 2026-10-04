@@ -228,6 +228,8 @@ class CustomerOrder {
     this.city,
     this.paymentMethod,
     this.canRateSuppliers = const [],
+    this.returnableItems = const [],
+    this.returnRequests = const [],
   });
 
   final String id;
@@ -243,6 +245,8 @@ class CustomerOrder {
   final String? addressLine;
   final String? city;
   final List<RateableSupplier> canRateSuppliers;
+  final List<ReturnableItem> returnableItems;
+  final List<OrderReturnRequest> returnRequests;
 
   bool get canCancel {
     if (status == OrderStatus.cancelled) return false;
@@ -256,6 +260,8 @@ class CustomerOrder {
           itemStatus != OrderStatus.cancelled,
     );
   }
+
+  bool get canRequestReturn => returnableItems.isNotEmpty;
 }
 
 class RateableSupplier {
@@ -266,6 +272,68 @@ class RateableSupplier {
 
   final String supplierId;
   final String supplierName;
+}
+
+class ReturnableItem {
+  const ReturnableItem({
+    required this.orderItemId,
+    required this.productName,
+    required this.supplierName,
+    required this.quantity,
+  });
+
+  final String orderItemId;
+  final String productName;
+  final String supplierName;
+  final int quantity;
+}
+
+class OrderReturnRequest {
+  const OrderReturnRequest({
+    required this.id,
+    required this.orderItemId,
+    required this.productName,
+    required this.supplierName,
+    required this.reason,
+    required this.quantity,
+    required this.status,
+    required this.createdAt,
+    this.orderId,
+    this.notes,
+    this.customerName,
+  });
+
+  final String id;
+  final String? orderId;
+  final String orderItemId;
+  final String productName;
+  final String supplierName;
+  final String reason;
+  final String? notes;
+  final int quantity;
+  final String status;
+  final DateTime createdAt;
+  final String? customerName;
+
+  bool get canReview =>
+      status == 'REQUESTED' || status == 'IN_REVIEW';
+}
+
+OrderReturnRequest orderReturnRequestFromApi(Map<String, dynamic> json) {
+  return OrderReturnRequest(
+    id: json['id'] as String? ?? '',
+    orderId: json['orderId'] as String?,
+    orderItemId: json['orderItemId'] as String? ?? '',
+    productName: json['productName'] as String? ?? 'Product',
+    supplierName: json['supplierName'] as String? ?? 'Supplier',
+    reason: json['reason'] as String? ?? 'other',
+    notes: json['notes'] as String?,
+    quantity: json['quantity'] as int? ?? 1,
+    status: json['status'] as String? ?? 'REQUESTED',
+    createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+        DateTime.now(),
+    customerName: json['customerName'] as String?,
+  );
 }
 
 class OrderItemRow {
@@ -346,6 +414,10 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
       .cast<Map<String, dynamic>>();
   final rateable = (json['canRateSuppliers'] as List<dynamic>? ?? const [])
       .cast<Map<String, dynamic>>();
+  final returnable = (json['returnableItems'] as List<dynamic>? ?? const [])
+      .cast<Map<String, dynamic>>();
+  final returns = (json['returnRequests'] as List<dynamic>? ?? const [])
+      .cast<Map<String, dynamic>>();
   return CustomerOrder(
     id: (json['displayId'] as String?) ?? (json['id'] as String? ?? 'order'),
     total: (json['total'] as num?)?.toDouble() ?? 0,
@@ -390,6 +462,18 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           supplierName: row['supplierName'] as String? ?? 'Supplier',
         ),
     ].where((s) => s.supplierId.isNotEmpty).toList(),
+    returnableItems: [
+      for (final row in returnable)
+        ReturnableItem(
+          orderItemId: row['orderItemId'] as String? ?? '',
+          productName: row['productName'] as String? ?? 'Product',
+          supplierName: row['supplierName'] as String? ?? 'Supplier',
+          quantity: row['quantity'] as int? ?? 1,
+        ),
+    ].where((item) => item.orderItemId.isNotEmpty).toList(),
+    returnRequests: [
+      for (final row in returns) orderReturnRequestFromApi(row),
+    ].where((row) => row.id.isNotEmpty).toList(),
   );
 }
 

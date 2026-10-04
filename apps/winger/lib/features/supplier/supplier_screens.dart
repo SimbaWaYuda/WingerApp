@@ -17,6 +17,7 @@ import '../onboarding/onboarding_checklist.dart';
 const supplierDestinations = [
   ShellDestination(labelKey: 'overview', icon: Icons.dashboard_outlined, path: '/supplier'),
   ShellDestination(labelKey: 'orders', icon: Icons.receipt_long_outlined, path: '/supplier/orders'),
+  ShellDestination(labelKey: 'returns', icon: Icons.assignment_return_outlined, path: '/supplier/returns'),
   ShellDestination(labelKey: 'products', icon: Icons.inventory_2_outlined, path: '/supplier/products'),
   ShellDestination(labelKey: 'payments', icon: Icons.payments_outlined, path: '/supplier/payments'),
 ];
@@ -508,45 +509,257 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
   }
 }
 
-class SupplierPaymentsScreen extends StatelessWidget {
+class SupplierPaymentsScreen extends StatefulWidget {
   const SupplierPaymentsScreen({super.key});
 
-  static const _paymentKpis = [
-    KpiCardData(label: 'Next payout', value: '\$8,412', delta: '3 days'),
-    KpiCardData(label: 'Pending', value: '\$1,204', delta: 'held'),
-    KpiCardData(label: 'Commissions YTD', value: '\$5,834', delta: '12%'),
-    KpiCardData(label: 'Paid this month', value: '\$42,786', delta: '+6.9%'),
-  ];
+  @override
+  State<SupplierPaymentsScreen> createState() => _SupplierPaymentsScreenState();
+}
+
+class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
+  Future<_SupplierFinance>? _future;
+  final _proposeCtrl = TextEditingController(text: '10');
+  final _counterCtrl = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _future ??= _load();
+  }
+
+  @override
+  void dispose() {
+    _proposeCtrl.dispose();
+    _counterCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<_SupplierFinance> _load() async {
+    final api = context.read<ApiClient>();
+    final summary = await api.fetchSupplierCommissionSummary();
+    final agreements = await api.fetchCommissionAgreements();
+    final settings = await api.fetchCommissionSettings();
+    return _SupplierFinance(
+      summary: summary,
+      agreements: agreements,
+      defaultRate: (settings['defaultCommissionPercent'] as num?)?.toDouble() ?? 10,
+    );
+  }
+
+  Future<void> _propose() async {
+    final session = context.read<AppSession>();
+    final supplierId = session.supplierId;
+    final rate = double.tryParse(_proposeCtrl.text.trim());
+    if (supplierId == null || rate == null) return;
+    setState(() => _busy = true);
+    try {
+      await context.read<ApiClient>().proposeCommissionAgreement(
+            supplierId: supplierId,
+            ratePercent: rate,
+          );
+      if (!mounted) return;
+      setState(() => _future = _load());
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _action(String id, String action, {double? rate}) async {
+    setState(() => _busy = true);
+    try {
+      await context.read<ApiClient>().commissionAgreementAction(
+            agreementId: id,
+            action: action,
+            ratePercent: rate,
+          );
+      if (!mounted) return;
+      setState(() => _future = _load());
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(s.t('payments'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 16),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: MediaQuery.sizeOf(context).width >= 900 ? 4 : 2,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 1.3,
-          children: [for (final kpi in _paymentKpis) KpiCard(data: kpi)],
-        ),
-        const SizedBox(height: 16),
-        Card(
-          child: ListTile(
-            title: const Text('Settlement WG-10025'),
-            subtitle: Text('${s.t('commission')} 12% · Net \$219.12'),
-            trailing: const Text(
-              'PAID',
-              style: TextStyle(color: WingerColors.successInk, fontWeight: FontWeight.w800),
+    final future = _future;
+    if (future == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return FutureBuilder<_SupplierFinance>(
+      future: future,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final activeRate = (data?.summary['activeRatePercent'] as num?)?.toDouble() ?? data?.defaultRate ?? 10;
+        final settleable = (data?.summary['settleableCommission'] as num?)?.toDouble() ?? 0;
+        final pending = (data?.summary['pendingCommission'] as num?)?.toDouble() ?? 0;
+        final lines = (data?.summary['lines'] as List<dynamic>? ?? const [])
+            .cast<Map<String, dynamic>>();
+        final agreements = data?.agreements ?? const [];
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(s.t('payments'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text(s.t('commissionSupplierHint'), style: TextStyle(color: WingerColors.muted)),
+            const SizedBox(height: 6),
+            Text(
+              '${s.t('supplierAccount')}: ${context.watch<AppSession>().displayName}'
+              '${context.watch<AppSession>().supplierId != null ? ' (${context.watch<AppSession>().supplierId})' : ''}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
             ),
-          ),
-        ),
-      ],
+            const SizedBox(height: 16),
+            if (snapshot.connectionState != ConnectionState.done)
+              const Center(child: CircularProgressIndicator())
+            else if (snapshot.hasError)
+              Text(
+                snapshot.error.toString().replaceFirst('Exception: ', ''),
+                style: const TextStyle(color: WingerColors.dangerInk),
+              )
+            else ...[
+              GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: MediaQuery.sizeOf(context).width >= 900 ? 3 : 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.3,
+                children: [
+                  KpiCard(data: KpiCardData(label: s.t('activeRate'), value: '${activeRate.toStringAsFixed(1)}%', delta: s.t('commission'))),
+                  KpiCard(data: KpiCardData(label: s.t('settleableCommission'), value: '\$${settleable.toStringAsFixed(2)}', delta: s.t('settleable'))),
+                  KpiCard(data: KpiCardData(label: s.t('pendingCommission'), value: '\$${pending.toStringAsFixed(2)}', delta: s.t('pending'))),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(s.t('proposeAgreement'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 8),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 120,
+                        child: TextField(
+                          controller: _proposeCtrl,
+                          decoration: InputDecoration(suffixText: '%', labelText: s.t('commissionRate')),
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      FilledButton(onPressed: _busy ? null : _propose, child: Text(s.t('proposeAgreement'))),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(s.t('commissionAgreements'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 8),
+              if (agreements.isEmpty)
+                Text(s.t('noAgreements'), style: TextStyle(color: WingerColors.muted))
+              else
+                for (final row in agreements)
+                  Card(
+                    color: row['status'] == 'APPROVED' ? WingerColors.brandMuted : null,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${row['supplierName'] ?? ''} · ${row['status']} · ${row['effectiveRatePercent'] ?? row['proposedRatePercent']}%',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          if (row['status'] == 'APPROVED')
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                s.t('awaitingYourAccept'),
+                                style: const TextStyle(color: WingerColors.successInk, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          if (row['counterRatePercent'] != null)
+                            Text('${s.t('counter')}: ${row['counterRatePercent']}%'),
+                          if (row['effectiveRatePercent'] != null)
+                            Text('${s.t('effective')}: ${row['effectiveRatePercent']}%'),
+                          const SizedBox(height: 8),
+                          if (row['status'] == 'APPROVED')
+                            FilledButton.icon(
+                              onPressed: _busy ? null : () => _action(row['id'] as String, 'accept'),
+                              icon: const Icon(Icons.check_circle_outline),
+                              label: Text(s.t('acceptAgreement')),
+                            ),
+                          if (row['status'] == 'PROPOSED' || row['status'] == 'COUNTERED' || row['status'] == 'APPROVED') ...[
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _counterCtrl,
+                              decoration: InputDecoration(labelText: s.t('counterRate'), suffixText: '%'),
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            ),
+                            const SizedBox(height: 8),
+                            OutlinedButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () async {
+                                      final rate = double.tryParse(_counterCtrl.text.trim()) ??
+                                          ((row['proposedRatePercent'] as num?)?.toDouble() ?? 10) - 1;
+                                      await _action(row['id'] as String, 'counter', rate: rate);
+                                    },
+                              child: Text(s.t('counter')),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+              const SizedBox(height: 16),
+              Text(s.t('commissionLines'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 8),
+              if (lines.isEmpty)
+                Text(s.t('noCommissionLines'), style: TextStyle(color: WingerColors.muted))
+              else
+                for (final line in lines)
+                  Card(
+                    child: ListTile(
+                      title: Text('${line['orderId']} · ${line['productName']}'),
+                      subtitle: Text(
+                        '${line['ratePercent']}% of \$${(line['commissionBase'] as num?)?.toStringAsFixed(2) ?? '0'}',
+                      ),
+                      trailing: Text(
+                        '${line['status']}\n\$${(line['commissionAmount'] as num?)?.toStringAsFixed(2) ?? '0'}',
+                        textAlign: TextAlign.end,
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                      ),
+                    ),
+                  ),
+            ],
+          ],
+        );
+      },
     );
   }
+}
+
+class _SupplierFinance {
+  const _SupplierFinance({
+    required this.summary,
+    required this.agreements,
+    required this.defaultRate,
+  });
+
+  final Map<String, dynamic> summary;
+  final List<Map<String, dynamic>> agreements;
+  final double defaultRate;
 }

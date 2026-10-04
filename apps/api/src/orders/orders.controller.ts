@@ -16,10 +16,13 @@ import { RolesGuard } from '../auth/roles.guard';
 import { AuthUser } from '../auth/auth.types';
 import {
   CreateOrderDto,
+  CreateReturnRequestDto,
   OrdersService,
   UpdateItemStatusDto,
+  UpdateReturnRequestDto,
   ValidateCartDto,
 } from './orders.service';
+import { ReturnRequestStatus } from '@prisma/client';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -43,10 +46,42 @@ export class OrdersController {
     return this.ordersService.list(user);
   }
 
+  @Get('returns')
+  @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
+  listReturns(@CurrentUser() user: AuthUser) {
+    return this.ordersService.listReturnsInbox(user);
+  }
+
+  @Patch('returns/:returnId')
+  @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
+  updateReturn(
+    @CurrentUser() user: AuthUser,
+    @Param('returnId') returnId: string,
+    @Body() body: UpdateReturnRequestDto,
+  ) {
+    if (
+      body.status == null ||
+      !Object.values(ReturnRequestStatus).includes(body.status)
+    ) {
+      throw new BadRequestException('Valid status is required');
+    }
+    return this.ordersService.updateReturnRequest(returnId, body, user);
+  }
+
   @Post(':id/cancel')
   @Roles(UserRole.CUSTOMER)
   cancel(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ordersService.cancel(id, user);
+  }
+
+  @Post(':id/returns')
+  @Roles(UserRole.CUSTOMER)
+  createReturn(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: CreateReturnRequestDto,
+  ) {
+    return this.ordersService.createReturnRequest(id, body, user);
   }
 
   @Get(':id')

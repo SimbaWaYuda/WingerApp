@@ -5,13 +5,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CommissionRecognitionStatus,
   OrderStatus,
   PaymentStatus,
   Prisma,
+  ReturnRequestStatus,
   StockStatus,
   UserRole,
 } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
+import { CommissionsService } from '../commissions/commissions.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from './stripe.service';
@@ -44,10 +47,34 @@ export type UpdateItemStatusDto = {
   collectPayment?: boolean;
 };
 
+export type CreateReturnRequestDto = {
+  orderItemId: string;
+  reason: string;
+  notes?: string;
+  quantity?: number;
+};
+
+export type UpdateReturnRequestDto = {
+  status: ReturnRequestStatus;
+};
+
+const RETURN_REASONS = new Set([
+  'damaged',
+  'wrong_item',
+  'not_as_described',
+  'changed_mind',
+  'other',
+]);
+
+const orderWithItems = {
+  items: { include: { commission: true } },
+} as const;
+
 @Injectable()
 export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly commissions: CommissionsService,
     private readonly stripe: StripeService,
     private readonly onboarding: OnboardingService,
   ) {}
@@ -271,6 +298,8 @@ export class OrdersService {
               : 'demo',
           currency: 'usd',
           subtotal,
+          taxAmount: new Prisma.Decimal(fees.tax.toFixed(2)),
+          deliveryFee: new Prisma.Decimal(fees.deliveryFee.toFixed(2)),
           total,
           addressLine: dto.addressLine ?? 'Westlands',
           city: dto.city ?? 'Nairobi',
@@ -287,7 +316,7 @@ export class OrdersService {
             })),
           },
         },
-        include: { items: true },
+        include: orderWithItems,
       });
 
       for (const line of lines) {
@@ -316,6 +345,13 @@ export class OrdersService {
     });
 
     if (payOnDelivery) {
+      // COD: snapshot at confirmation as PENDING; settle later on delivery + payment.
+      await this.commissions.createSnapshotsForOrder({
+        orderId: order.id,
+        paymentMode: 'cod',
+        isDemo: false,
+        initialStatus: CommissionRecognitionStatus.PENDING,
+      });
       await this.onboarding.onOrderPlaced(user.sub, user.role);
       return this.toResponse(
         order,
@@ -345,13 +381,22 @@ export class OrdersService {
             ? OrderStatus.CANCELLED
             : OrderStatus.PROCESSING,
       },
-      include: { items: true },
+      include: orderWithItems,
     });
 
     if (paymentStatus === PaymentStatus.FAILED) {
       await this.restoreStock(updated.id, user.sub);
       throw new BadRequestException(charge.message);
     }
+
+    // Card/demo: snapshot at payment confirmation. Demo is flagged and never settleable.
+    const isDemo = charge.mode === 'demo';
+    await this.commissions.createSnapshotsForOrder({
+      orderId: updated.id,
+      paymentMode: charge.mode,
+      isDemo,
+      initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+    });
 
     await this.onboarding.onOrderPlaced(user.sub, user.role);
     return this.toResponse(updated, charge.message);
@@ -361,7 +406,7 @@ export class OrdersService {
     if (user.role === UserRole.CUSTOMER) {
       const orders = await this.prisma.order.findMany({
         where: { customerId: user.sub },
-        include: { items: true },
+        include: orderWithItems,
         orderBy: { createdAt: 'desc' },
       });
       return orders.map((order) => this.toResponse(order));
@@ -392,7 +437,7 @@ export class OrdersService {
     }
 
     const orders = await this.prisma.order.findMany({
-      include: { items: true },
+      include: orderWithItems,
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
@@ -404,16 +449,343 @@ export class OrdersService {
       where: {
         OR: [{ id }, { displayId: id }],
       },
-      include: { items: true },
+      include: orderWithItems,
     });
     if (!order) throw new NotFoundException('Order not found');
     this.assertCanView(order, user);
     const base = this.toResponse(order);
+    const returnRequests = await this.listReturnRequests(order.id, user);
     if (user.role !== UserRole.CUSTOMER || order.customerId !== user.sub) {
-      return base;
+      return { ...base, returnRequests };
     }
     const canRateSuppliers = await this.listRateableSuppliers(order, user.sub);
-    return { ...base, canRateSuppliers };
+    const returnableItems = await this.listReturnableItems(order);
+    return { ...base, canRateSuppliers, returnRequests, returnableItems };
+  }
+
+  /**
+   * Customer return / support request for a delivered line item.
+   * Records the request only — no refund or stock restore yet.
+   */
+  async createReturnRequest(
+    orderId: string,
+    dto: CreateReturnRequestDto,
+    user: AuthUser,
+  ) {
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customers can request returns');
+    }
+    const reason = (dto.reason ?? '').trim().toLowerCase();
+    if (!RETURN_REASONS.has(reason)) {
+      throw new BadRequestException(
+        `Reason must be one of: ${[...RETURN_REASONS].join(', ')}`,
+      );
+    }
+    const notes = dto.notes?.trim() || null;
+    if (notes && notes.length > 500) {
+      throw new BadRequestException('Notes must be 500 characters or fewer');
+    }
+
+    const order = await this.prisma.order.findFirst({
+      where: {
+        OR: [{ id: orderId }, { displayId: orderId }],
+        customerId: user.sub,
+      },
+      include: orderWithItems,
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const item = order.items.find((row) => row.id === dto.orderItemId);
+    if (!item) {
+      throw new BadRequestException('Item is not part of this order');
+    }
+    if (item.status !== OrderStatus.DELIVERED) {
+      throw new BadRequestException(
+        'Returns are only available after the item is delivered',
+      );
+    }
+
+    const open = await this.prisma.returnRequest.findFirst({
+      where: {
+        orderItemId: item.id,
+        status: {
+          in: [ReturnRequestStatus.REQUESTED, ReturnRequestStatus.IN_REVIEW],
+        },
+      },
+    });
+    if (open) {
+      throw new BadRequestException(
+        'A return request is already open for this item',
+      );
+    }
+
+    const quantity = dto.quantity != null ? Number(dto.quantity) : item.quantity;
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > item.quantity) {
+      throw new BadRequestException(
+        `Quantity must be an integer from 1 to ${item.quantity}`,
+      );
+    }
+
+    const created = await this.prisma.returnRequest.create({
+      data: {
+        orderId: order.id,
+        orderItemId: item.id,
+        customerId: user.sub,
+        reason,
+        notes,
+        quantity,
+      },
+      include: {
+        order: { select: { displayId: true } },
+        orderItem: {
+          select: { productName: true, supplierName: true },
+        },
+      },
+    });
+
+    return this.toReturnResponse(created);
+  }
+
+  /** Supplier/admin inbox of return requests. */
+  async listReturnsInbox(user: AuthUser) {
+    if (user.role !== UserRole.SUPPLIER && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only suppliers or admins can list returns');
+    }
+    if (user.role === UserRole.SUPPLIER && !user.supplierId) {
+      throw new ForbiddenException('Supplier account is not linked');
+    }
+
+    const rows = await this.prisma.returnRequest.findMany({
+      where:
+        user.role === UserRole.SUPPLIER
+          ? { orderItem: { supplierId: user.supplierId! } }
+          : undefined,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        order: { select: { displayId: true, customerName: true } },
+        orderItem: {
+          select: { productName: true, supplierName: true, supplierId: true },
+        },
+      },
+    });
+
+    return rows.map((row) => ({
+      ...this.toReturnResponse(row),
+      customerName: row.order.customerName,
+    }));
+  }
+
+  /**
+   * Supplier/admin review of a return request.
+   * APPROVED marks the line RETURNED and restores stock for the returned qty.
+   * Payment refund remains manual until commission rules are approved.
+   */
+  async updateReturnRequest(
+    returnId: string,
+    dto: UpdateReturnRequestDto,
+    user: AuthUser,
+  ) {
+    if (user.role !== UserRole.SUPPLIER && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only suppliers or admins can review returns');
+    }
+    const next = dto.status;
+    if (!Object.values(ReturnRequestStatus).includes(next)) {
+      throw new BadRequestException('Invalid return status');
+    }
+
+    const row = await this.prisma.returnRequest.findUnique({
+      where: { id: returnId },
+      include: {
+        order: { select: { displayId: true, id: true } },
+        orderItem: true,
+      },
+    });
+    if (!row) throw new NotFoundException('Return request not found');
+
+    if (
+      user.role === UserRole.SUPPLIER &&
+      row.orderItem.supplierId !== user.supplierId
+    ) {
+      throw new ForbiddenException('Cannot review another supplier return');
+    }
+
+    this.assertReturnTransition(row.status, next);
+
+    if (next === ReturnRequestStatus.APPROVED) {
+      if (row.orderItem.status !== OrderStatus.DELIVERED) {
+        throw new BadRequestException(
+          'Only delivered items can be approved for return',
+        );
+      }
+      await this.prisma.$transaction(async (tx) => {
+        await tx.returnRequest.update({
+          where: { id: row.id },
+          data: { status: next },
+        });
+        await tx.orderItem.update({
+          where: { id: row.orderItemId },
+          data: { status: OrderStatus.RETURNED },
+        });
+        const product = await tx.product.findUnique({
+          where: { id: row.orderItem.productId },
+        });
+        if (product) {
+          const nextStock = product.stock + row.quantity;
+          await tx.product.update({
+            where: { id: product.id },
+            data: { stock: nextStock, stockStatus: stockStatusFor(nextStock) },
+          });
+          await tx.inventoryLedger.create({
+            data: {
+              productId: product.id,
+              supplierId: product.supplierId,
+              delta: row.quantity,
+              reason: 'RETURN_APPROVED',
+              eventId: `return-restore-${row.id}-${Date.now()}`,
+              userId: user.sub,
+              quantityAfter: nextStock,
+            },
+          });
+        }
+        const items = await tx.orderItem.findMany({
+          where: { orderId: row.orderId },
+          select: { status: true },
+        });
+        await tx.order.update({
+          where: { id: row.orderId },
+          data: { status: rollupStatus(items.map((item) => item.status)) },
+        });
+      });
+    } else {
+      await this.prisma.returnRequest.update({
+        where: { id: row.id },
+        data: { status: next },
+      });
+    }
+
+    const updated = await this.prisma.returnRequest.findUnique({
+      where: { id: row.id },
+      include: {
+        order: { select: { displayId: true, customerName: true } },
+        orderItem: {
+          select: { productName: true, supplierName: true },
+        },
+      },
+    });
+    return {
+      ...this.toReturnResponse(updated!),
+      customerName: updated!.order.customerName,
+    };
+  }
+
+  private assertReturnTransition(
+    current: ReturnRequestStatus,
+    next: ReturnRequestStatus,
+  ) {
+    if (current === next) return;
+    const allowed: Record<ReturnRequestStatus, ReturnRequestStatus[]> = {
+      [ReturnRequestStatus.REQUESTED]: [
+        ReturnRequestStatus.IN_REVIEW,
+        ReturnRequestStatus.APPROVED,
+        ReturnRequestStatus.REJECTED,
+      ],
+      [ReturnRequestStatus.IN_REVIEW]: [
+        ReturnRequestStatus.APPROVED,
+        ReturnRequestStatus.REJECTED,
+      ],
+      [ReturnRequestStatus.APPROVED]: [ReturnRequestStatus.CLOSED],
+      [ReturnRequestStatus.REJECTED]: [ReturnRequestStatus.CLOSED],
+      [ReturnRequestStatus.CLOSED]: [],
+    };
+    if (!allowed[current].includes(next)) {
+      throw new BadRequestException(
+        `Cannot move return from ${current} to ${next}`,
+      );
+    }
+  }
+
+  private async listReturnRequests(orderId: string, user: AuthUser) {
+    const where =
+      user.role === UserRole.CUSTOMER
+        ? { orderId, customerId: user.sub }
+        : { orderId };
+    const rows = await this.prisma.returnRequest.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        order: { select: { displayId: true } },
+        orderItem: {
+          select: { productName: true, supplierName: true, supplierId: true },
+        },
+      },
+    });
+    if (user.role === UserRole.SUPPLIER && user.supplierId) {
+      return rows
+        .filter((row) => row.orderItem.supplierId === user.supplierId)
+        .map((row) => this.toReturnResponse(row));
+    }
+    return rows.map((row) => this.toReturnResponse(row));
+  }
+
+  private async listReturnableItems(order: {
+    items: Array<{
+      id: string;
+      productName: string;
+      supplierName: string;
+      quantity: number;
+      status: OrderStatus;
+    }>;
+  }) {
+    const delivered = order.items.filter(
+      (item) => item.status === OrderStatus.DELIVERED,
+    );
+    if (delivered.length === 0) return [];
+
+    const open = await this.prisma.returnRequest.findMany({
+      where: {
+        orderItemId: { in: delivered.map((item) => item.id) },
+        status: {
+          in: [ReturnRequestStatus.REQUESTED, ReturnRequestStatus.IN_REVIEW],
+        },
+      },
+      select: { orderItemId: true },
+    });
+    const blocked = new Set(open.map((row) => row.orderItemId));
+    return delivered
+      .filter((item) => !blocked.has(item.id))
+      .map((item) => ({
+        orderItemId: item.id,
+        productName: item.productName,
+        supplierName: item.supplierName,
+        quantity: item.quantity,
+      }));
+  }
+
+  private toReturnResponse(row: {
+    id: string;
+    orderId: string;
+    orderItemId: string;
+    reason: string;
+    notes: string | null;
+    quantity: number;
+    status: string;
+    createdAt: Date;
+    order?: { displayId: string };
+    orderItem: { productName: string; supplierName: string };
+  }) {
+    return {
+      id: row.id,
+      orderId: row.order?.displayId ?? row.orderId,
+      orderItemId: row.orderItemId,
+      productName: row.orderItem.productName,
+      supplierName: row.orderItem.supplierName,
+      reason: row.reason,
+      notes: row.notes,
+      quantity: row.quantity,
+      status: row.status,
+      createdAt: row.createdAt.toISOString(),
+    };
   }
 
   private async listRateableSuppliers(
@@ -463,7 +835,7 @@ export class OrdersService {
         OR: [{ id }, { displayId: id }],
         customerId: user.sub,
       },
-      include: { items: true },
+      include: orderWithItems,
     });
     if (!order) throw new NotFoundException('Order not found');
     if (order.status === OrderStatus.CANCELLED) {
@@ -502,7 +874,7 @@ export class OrdersService {
 
     const updated = await this.prisma.order.findUnique({
       where: { id: order.id },
-      include: { items: true },
+      include: orderWithItems,
     });
     return this.toResponse(updated!, 'Order cancelled and stock restored');
   }
@@ -562,10 +934,12 @@ export class OrdersService {
         ...(markCodPaid ? { paymentStatus: PaymentStatus.PAID } : {}),
       },
       include: {
-        items:
-          user.role === UserRole.SUPPLIER && user.supplierId
+        items: {
+          ...(user.role === UserRole.SUPPLIER && user.supplierId
             ? { where: { supplierId: user.supplierId } }
-            : true,
+            : {}),
+          include: { commission: true },
+        },
       },
     });
 
@@ -576,6 +950,9 @@ export class OrdersService {
     ) {
       await this.onboarding.onSupplierShipped(user.sub);
     }
+
+    // Advance after paymentStatus may have flipped to PAID.
+    await this.commissions.advanceRecognitionForItem(item.id);
 
     return this.toResponse(order);
   }
@@ -644,6 +1021,8 @@ export class OrdersService {
       stripePaymentIntentId: string | null;
       currency: string;
       subtotal: Prisma.Decimal;
+      taxAmount?: Prisma.Decimal;
+      deliveryFee?: Prisma.Decimal;
       total: Prisma.Decimal;
       addressLine: string | null;
       city: string | null;
@@ -660,6 +1039,13 @@ export class OrdersService {
         status: OrderStatus;
         trackingCode: string | null;
         pickupCode: string | null;
+        commission?: {
+          ratePercent: Prisma.Decimal;
+          commissionBase: Prisma.Decimal;
+          commissionAmount: Prisma.Decimal;
+          status: CommissionRecognitionStatus;
+          isDemo: boolean;
+        } | null;
       }>;
     },
     paymentMessage?: string,
@@ -677,6 +1063,8 @@ export class OrdersService {
       stripePaymentIntentId: order.stripePaymentIntentId,
       currency: order.currency,
       subtotal: Number(order.subtotal),
+      tax: Number(order.taxAmount ?? 0),
+      deliveryFee: Number(order.deliveryFee ?? 0),
       total: Number(order.total),
       addressLine: order.addressLine,
       city: order.city,
@@ -694,6 +1082,15 @@ export class OrdersService {
         status: item.status,
         trackingCode: item.trackingCode,
         pickupCode: item.pickupCode,
+        commission: item.commission
+          ? {
+              ratePercent: Number(item.commission.ratePercent),
+              commissionBase: Number(item.commission.commissionBase),
+              commissionAmount: Number(item.commission.commissionAmount),
+              status: item.commission.status,
+              isDemo: item.commission.isDemo,
+            }
+          : null,
       })),
     };
   }
@@ -775,16 +1172,34 @@ function stockStatusFor(quantity: number): StockStatus {
 
 function rollupStatus(statuses: OrderStatus[]): OrderStatus {
   if (statuses.length === 0) return OrderStatus.PROCESSING;
+  if (statuses.every((s) => s === OrderStatus.RETURNED)) {
+    return OrderStatus.RETURNED;
+  }
   if (statuses.every((s) => s === OrderStatus.DELIVERED)) {
     return OrderStatus.DELIVERED;
   }
   if (statuses.every((s) => s === OrderStatus.CANCELLED)) {
     return OrderStatus.CANCELLED;
   }
-  if (statuses.every((s) => s === OrderStatus.SHIPPED || s === OrderStatus.DELIVERED)) {
+  if (
+    statuses.every(
+      (s) =>
+        s === OrderStatus.SHIPPED ||
+        s === OrderStatus.DELIVERED ||
+        s === OrderStatus.RETURNED,
+    ) &&
+    statuses.some((s) => s === OrderStatus.SHIPPED)
+  ) {
     return OrderStatus.SHIPPED;
   }
-  if (statuses.some((s) => s === OrderStatus.SHIPPED || s === OrderStatus.DELIVERED)) {
+  if (
+    statuses.some(
+      (s) =>
+        s === OrderStatus.SHIPPED ||
+        s === OrderStatus.DELIVERED ||
+        s === OrderStatus.RETURNED,
+    )
+  ) {
     return OrderStatus.PARTIAL;
   }
   if (statuses.every((s) => s === OrderStatus.READY_FOR_PICKUP)) {

@@ -1,12 +1,13 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { CommissionsModule } from '../commissions/commissions.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { StripeService } from './stripe.service';
 
 @Module({
-  imports: [AuthModule, OnboardingModule],
+  imports: [AuthModule, OnboardingModule, CommissionsModule],
   controllers: [OrdersController],
   providers: [OrdersService, StripeService],
   exports: [OrdersService],

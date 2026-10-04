@@ -291,6 +291,12 @@ async function main() {
       supplierId: 's-kijani',
     },
     {
+      email: 'supplier@atlas.example',
+      name: 'Nora Atlas',
+      role: UserRole.SUPPLIER,
+      supplierId: 's-atlas',
+    },
+    {
       email: 'supplier@savanna.example',
       name: 'Asha Otieno',
       role: UserRole.SUPPLIER,

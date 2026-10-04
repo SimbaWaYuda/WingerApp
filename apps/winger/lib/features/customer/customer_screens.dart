@@ -3012,6 +3012,15 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Future<CustomerOrder>? _future;
   bool _cancelling = false;
   bool _rating = false;
+  bool _returning = false;
+
+  static const _returnReasons = <String>[
+    'damaged',
+    'wrong_item',
+    'not_as_described',
+    'changed_mind',
+    'other',
+  ];
 
   @override
   void didChangeDependencies() {
@@ -3021,6 +3030,132 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   Future<CustomerOrder> _load() {
     return context.read<ApiClient>().fetchOrder(widget.orderId);
+  }
+
+  String _returnReasonLabel(WingerStrings s, String reason) {
+    switch (reason) {
+      case 'damaged':
+        return s.t('returnReasonDamaged');
+      case 'wrong_item':
+        return s.t('returnReasonWrongItem');
+      case 'not_as_described':
+        return s.t('returnReasonNotAsDescribed');
+      case 'changed_mind':
+        return s.t('returnReasonChangedMind');
+      default:
+        return s.t('returnReasonOther');
+    }
+  }
+
+  Future<void> _requestReturn(CustomerOrder order) async {
+    final s = WingerStrings.of(context);
+    if (order.returnableItems.isEmpty) return;
+
+    var selectedItem = order.returnableItems.first;
+    var reason = _returnReasons.first;
+    final notesCtrl = TextEditingController();
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: Text(s.t('requestReturnTitle')),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(s.t('requestReturnHint'), style: TextStyle(color: WingerColors.muted)),
+                    const SizedBox(height: 12),
+                    Text(s.t('returnItem'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      value: selectedItem.orderItemId,
+                      items: [
+                        for (final item in order.returnableItems)
+                          DropdownMenuItem(
+                            value: item.orderItemId,
+                            child: Text(
+                              '${item.productName} · ${item.supplierName}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setLocal(() {
+                          selectedItem = order.returnableItems.firstWhere(
+                            (item) => item.orderItemId == value,
+                          );
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text(s.t('returnReason'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      value: reason,
+                      items: [
+                        for (final code in _returnReasons)
+                          DropdownMenuItem(
+                            value: code,
+                            child: Text(_returnReasonLabel(s, code)),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setLocal(() => reason = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: notesCtrl,
+                      maxLines: 3,
+                      decoration: InputDecoration(labelText: s.t('returnNotes')),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text(s.t('submitReturn')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    final notes = notesCtrl.text;
+    notesCtrl.dispose();
+    if (submitted != true || !mounted) return;
+
+    setState(() => _returning = true);
+    try {
+      await context.read<ApiClient>().createReturnRequest(
+            orderId: order.id,
+            orderItemId: selectedItem.orderItemId,
+            reason: reason,
+            notes: notes,
+            quantity: selectedItem.quantity,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s.t('returnSubmitted'))),
+      );
+      setState(() => _future = _load());
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _returning = false);
+    }
   }
 
   Future<void> _rateSupplier(CustomerOrder order, RateableSupplier supplier) async {
@@ -3228,6 +3363,42 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               const SizedBox(height: 12),
             ],
             Text(s.t('supportHint'), style: TextStyle(color: WingerColors.muted)),
+            if (order.canRequestReturn) ...[
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _returning ? null : () => _requestReturn(order),
+                icon: _returning
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.assignment_return_outlined),
+                label: Text(s.t('requestReturn')),
+              ),
+            ],
+            if (order.returnRequests.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(s.t('returnRequests'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 8),
+              for (final request in order.returnRequests)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.assignment_return_outlined),
+                    title: Text(request.productName),
+                    subtitle: Text(
+                      '${request.supplierName}\n'
+                      '${_returnReasonLabel(s, request.reason)}'
+                      '${request.notes != null && request.notes!.isNotEmpty ? ' · ${request.notes}' : ''}',
+                    ),
+                    isThreeLine: true,
+                    trailing: Text(
+                      '${s.t('returnStatus')}: ${request.status}',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                    ),
+                  ),
+                ),
+            ],
             if (order.canRateSuppliers.isNotEmpty) ...[
               const SizedBox(height: 16),
               Text(s.t('rateSupplier'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
