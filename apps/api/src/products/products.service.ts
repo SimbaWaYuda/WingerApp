@@ -73,6 +73,18 @@ export class ProductsService {
     }));
   }
 
+  async listBrands(): Promise<CategoryDto[]> {
+    const grouped = await this.prisma.product.groupBy({
+      by: ['brand'],
+      _count: { _all: true },
+      orderBy: { brand: 'asc' },
+    });
+    return grouped.map((row) => ({
+      name: row.brand,
+      productCount: row._count._all,
+    }));
+  }
+
   async browse(query: ProductBrowseQuery = {}): Promise<ProductBrowseResult> {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(50, Math.max(1, Number(query.pageSize) || 24));

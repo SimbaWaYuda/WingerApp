@@ -420,18 +420,24 @@ class CustomerSearchScreen extends StatefulWidget {
 class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   late final TextEditingController _queryCtrl;
   String? _category;
+  String? _brand;
+  /// null = any; otherwise [min, max] with null max meaning open-ended.
+  (double?, double?)? _priceRange;
   String _sort = 'relevance';
   bool _inStockOnly = false;
   int _page = 1;
   Future<ProductPage>? _future;
   Future<List<CatalogCategory>>? _categoriesFuture;
+  Future<List<CatalogCategory>>? _brandsFuture;
 
   @override
   void initState() {
     super.initState();
     _queryCtrl = TextEditingController(text: widget.initialQuery ?? '');
     _category = widget.initialCategory;
-    _categoriesFuture = context.read<CatalogRepository>().getCategories();
+    final catalog = context.read<CatalogRepository>();
+    _categoriesFuture = catalog.getCategories();
+    _brandsFuture = catalog.getBrands();
     _reload();
   }
 
@@ -441,11 +447,25 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     super.dispose();
   }
 
+  void _clearFilters() {
+    _queryCtrl.clear();
+    _category = null;
+    _brand = null;
+    _priceRange = null;
+    _inStockOnly = false;
+    _sort = 'relevance';
+    _page = 1;
+    _reload();
+  }
+
   void _reload() {
     setState(() {
       _future = context.read<CatalogRepository>().browseProducts(
             query: _queryCtrl.text,
             category: _category,
+            brand: _brand,
+            minPrice: _priceRange?.$1,
+            maxPrice: _priceRange?.$2,
             inStock: _inStockOnly,
             sort: _sort,
             page: _page,
@@ -536,6 +556,100 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
           },
         ),
         const SizedBox(height: 12),
+        FutureBuilder<List<CatalogCategory>>(
+          future: _brandsFuture,
+          builder: (context, snapshot) {
+            final brands = snapshot.data ?? const <CatalogCategory>[];
+            if (brands.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(s.t('brands'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilterChip(
+                      label: Text(s.t('allBrands')),
+                      selected: _brand == null,
+                      onSelected: (_) {
+                        _brand = null;
+                        _page = 1;
+                        _reload();
+                      },
+                    ),
+                    for (final brand in brands)
+                      FilterChip(
+                        label: Text(brand.name),
+                        selected: _brand == brand.name,
+                        onSelected: (_) {
+                          _brand = brand.name;
+                          _page = 1;
+                          _reload();
+                        },
+                      ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        Text(s.t('price'), style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChip(
+              label: Text(s.t('anyPrice')),
+              selected: _priceRange == null,
+              onSelected: (_) {
+                _priceRange = null;
+                _page = 1;
+                _reload();
+              },
+            ),
+            FilterChip(
+              label: Text(s.t('priceUnder100')),
+              selected: _priceRange?.$1 == null && _priceRange?.$2 == 100,
+              onSelected: (_) {
+                _priceRange = (null, 100.0);
+                _page = 1;
+                _reload();
+              },
+            ),
+            FilterChip(
+              label: Text(s.t('price100to250')),
+              selected: _priceRange?.$1 == 100 && _priceRange?.$2 == 250,
+              onSelected: (_) {
+                _priceRange = (100.0, 250.0);
+                _page = 1;
+                _reload();
+              },
+            ),
+            FilterChip(
+              label: Text(s.t('price250to500')),
+              selected: _priceRange?.$1 == 250 && _priceRange?.$2 == 500,
+              onSelected: (_) {
+                _priceRange = (250.0, 500.0);
+                _page = 1;
+                _reload();
+              },
+            ),
+            FilterChip(
+              label: Text(s.t('priceOver500')),
+              selected: _priceRange?.$1 == 500 && _priceRange?.$2 == null,
+              onSelected: (_) {
+                _priceRange = (500.0, null);
+                _page = 1;
+                _reload();
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -568,14 +682,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
               },
             ),
             TextButton(
-              onPressed: () {
-                _queryCtrl.clear();
-                _category = null;
-                _inStockOnly = false;
-                _sort = 'relevance';
-                _page = 1;
-                _reload();
-              },
+              onPressed: _clearFilters,
               child: Text(s.t('clearFilters')),
             ),
           ],
@@ -605,13 +712,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                       Text(s.t('noResults'), style: TextStyle(color: WingerColors.muted)),
                       const SizedBox(height: 8),
                       TextButton(
-                        onPressed: () {
-                          _queryCtrl.clear();
-                          _category = null;
-                          _inStockOnly = false;
-                          _page = 1;
-                          _reload();
-                        },
+                        onPressed: _clearFilters,
                         child: Text(s.t('clearFilters')),
                       ),
                     ],
@@ -2360,13 +2461,15 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
               : Text(s.t('obSaveProfile')),
         ),
         const SizedBox(height: 24),
-        Text(s.t('deliveryAddress'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-        const SizedBox(height: 4),
-        Text(
-          '${session.addressLine}, ${session.city}',
-          style: TextStyle(color: WingerColors.muted),
+        ListTile(
+          leading: const Icon(Icons.location_on_outlined),
+          title: Text(s.t('addresses')),
+          subtitle: Text(
+            '${session.addressLine}, ${session.city}',
+            style: TextStyle(color: WingerColors.muted),
+          ),
+          onTap: () => context.go('/customer/addresses'),
         ),
-        const SizedBox(height: 16),
         ListTile(
           leading: const Icon(Icons.receipt_long_outlined),
           title: Text(s.t('orders')),
@@ -2402,6 +2505,129 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
             session.signOut();
             context.go('/login');
           },
+        ),
+      ],
+    );
+  }
+}
+
+class AddressesScreen extends StatefulWidget {
+  const AddressesScreen({super.key});
+
+  @override
+  State<AddressesScreen> createState() => _AddressesScreenState();
+}
+
+class _AddressesScreenState extends State<AddressesScreen> {
+  late final TextEditingController _address;
+  late final TextEditingController _city;
+  bool _busy = false;
+  String? _message;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final session = context.read<AppSession>();
+    _address = TextEditingController(text: session.addressLine);
+    _city = TextEditingController(text: session.city);
+  }
+
+  @override
+  void dispose() {
+    _address.dispose();
+    _city.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final api = context.read<ApiClient>();
+    final session = context.read<AppSession>();
+    final address = _address.text.trim();
+    final city = _city.text.trim();
+    if (address.isEmpty || city.isEmpty) {
+      setState(() => _error = 'Address and city are required');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _message = null;
+    });
+    try {
+      if (session.accessToken != null && session.apiOnline) {
+        await api.updateProfile(
+          name: session.displayName,
+          phone: session.phone,
+          city: city,
+          addressLine: address,
+        );
+      } else {
+        session.applyProfile(
+          name: session.displayName,
+          phoneNumber: session.phone,
+          cityName: city,
+          address: address,
+        );
+      }
+      if (!mounted) return;
+      setState(() => _message = WingerStrings.of(context).t('addressSaved'));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        TextButton.icon(
+          onPressed: () => context.go('/customer/account'),
+          icon: const Icon(Icons.arrow_back),
+          label: Text(s.t('account')),
+        ),
+        Text(
+          s.t('addresses'),
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        Text(s.t('deliveryAddress'), style: TextStyle(color: WingerColors.muted)),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _address,
+          decoration: InputDecoration(
+            labelText: s.t('addressLine'),
+            hintText: 'Westlands',
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _city,
+          decoration: InputDecoration(labelText: s.t('obCity')),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: const TextStyle(color: WingerColors.dangerInk)),
+        ],
+        if (_message != null) ...[
+          const SizedBox(height: 8),
+          Text(_message!, style: const TextStyle(color: WingerColors.successInk)),
+        ],
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: _busy ? null : _save,
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : Text(s.t('saveAddress')),
         ),
       ],
     );

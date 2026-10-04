@@ -212,6 +212,24 @@ class ApiClient {
     }).toList();
   }
 
+  Future<List<CatalogCategory>> fetchBrands() async {
+    final response = await http
+        .get(_uri('/products/brands'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 3));
+    if (response.statusCode != 200) {
+      throw Exception('Brands HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.map((raw) {
+      final row = raw as Map<String, dynamic>;
+      return CatalogCategory(
+        name: row['name'] as String? ?? 'Brand',
+        productCount: row['productCount'] as int? ?? 0,
+      );
+    }).toList();
+  }
+
   Future<ProductPage> browseProducts({
     String query = '',
     String? category,

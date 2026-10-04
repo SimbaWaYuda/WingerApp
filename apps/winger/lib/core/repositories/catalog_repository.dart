@@ -64,10 +64,29 @@ class CatalogRepository {
     ];
   }
 
+  Future<List<CatalogCategory>> getBrands() async {
+    try {
+      final remote = await api.fetchBrands();
+      if (remote.isNotEmpty) return remote;
+    } catch (_) {}
+    final products = await db.getProducts();
+    final counts = <String, int>{};
+    for (final product in products) {
+      counts[product.brand] = (counts[product.brand] ?? 0) + 1;
+    }
+    final names = counts.keys.toList()..sort();
+    return [
+      for (final name in names)
+        CatalogCategory(name: name, productCount: counts[name]!),
+    ];
+  }
+
   Future<ProductPage> browseProducts({
     String query = '',
     String? category,
     String? brand,
+    double? minPrice,
+    double? maxPrice,
     bool inStock = false,
     String sort = 'relevance',
     int page = 1,
@@ -78,6 +97,8 @@ class CatalogRepository {
         query: query,
         category: category,
         brand: brand,
+        minPrice: minPrice,
+        maxPrice: maxPrice,
         inStock: inStock,
         sort: sort,
         page: page,
@@ -98,6 +119,12 @@ class CatalogRepository {
         local = local
             .where((p) => p.brand.toLowerCase() == brand.toLowerCase())
             .toList();
+      }
+      if (minPrice != null) {
+        local = local.where((p) => p.price >= minPrice).toList();
+      }
+      if (maxPrice != null) {
+        local = local.where((p) => p.price <= maxPrice).toList();
       }
       if (inStock) {
         local = local.where((p) => p.stock > 0).toList();

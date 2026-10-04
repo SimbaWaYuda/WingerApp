@@ -10,6 +10,11 @@ export class ProductsController {
     return this.productsService.listCategories();
   }
 
+  @Get('brands')
+  listBrands() {
+    return this.productsService.listBrands();
+  }
+
   @Get()
   findAll(
     @Query('q') q?: string,
