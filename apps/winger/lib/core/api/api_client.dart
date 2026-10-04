@@ -247,18 +247,23 @@ class ApiClient {
   Future<CustomerOrder> updateOrderItemStatus({
     required String orderId,
     required String itemId,
-    required OrderStatus status,
+    OrderStatus? status,
     String? trackingCode,
     String? pickupCode,
+    bool collectPayment = false,
   }) async {
+    if (status == null && !collectPayment) {
+      throw Exception('status or collectPayment is required');
+    }
     final response = await http
         .patch(
           _uri('/orders/$orderId/items/$itemId'),
           headers: session.authHeaders,
           body: jsonEncode({
-            'status': orderStatusToApi(status),
+            if (status != null) 'status': orderStatusToApi(status),
             if (trackingCode != null) 'trackingCode': trackingCode,
             if (pickupCode != null) 'pickupCode': pickupCode,
+            if (collectPayment) 'collectPayment': true,
           }),
         )
         .timeout(const Duration(seconds: 5));

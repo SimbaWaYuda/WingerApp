@@ -49,8 +49,14 @@ export class OrdersController {
     @Param('itemId') itemId: string,
     @Body() body: UpdateItemStatusDto,
   ) {
-    if (!body.status || !Object.values(OrderStatus).includes(body.status)) {
+    if (
+      body.status != null &&
+      !Object.values(OrderStatus).includes(body.status)
+    ) {
       throw new BadRequestException('Invalid order item status');
+    }
+    if (body.status == null && !body.collectPayment) {
+      throw new BadRequestException('status or collectPayment is required');
     }
     return this.ordersService.updateItemStatus(orderId, itemId, body, user);
   }

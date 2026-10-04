@@ -235,9 +235,18 @@ class ProductDetailScreen extends StatefulWidget {
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
 }
 
+enum _DeliveryOption { express, standard, pickup }
+
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
   int qty = 1;
   late Future<Product> _future;
+  _DeliveryOption? _delivery;
+
+  static const _deliveryLabels = <_DeliveryOption, String>{
+    _DeliveryOption.express: 'Express 1–2 days',
+    _DeliveryOption.standard: 'Standard 3–5 days',
+    _DeliveryOption.pickup: 'Pickup',
+  };
 
   @override
   void initState() {
@@ -246,9 +255,38 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _delivery ??= _deliveryFromSession(context.read<AppSession>().deliveryMethod);
+  }
+
+  _DeliveryOption _deliveryFromSession(String method) {
+    switch (method) {
+      case 'express':
+        return _DeliveryOption.express;
+      case 'pickup':
+        return _DeliveryOption.pickup;
+      default:
+        return _DeliveryOption.standard;
+    }
+  }
+
+  String _deliveryToSession(_DeliveryOption option) {
+    switch (option) {
+      case _DeliveryOption.express:
+        return 'express';
+      case _DeliveryOption.pickup:
+        return 'pickup';
+      case _DeliveryOption.standard:
+        return 'standard';
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
+    final selected = _delivery ?? _DeliveryOption.standard;
 
     return FutureBuilder(
       future: _future,
@@ -283,14 +321,25 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             const SizedBox(height: 16),
             Text(product.description),
             const SizedBox(height: 16),
-            Text(s.t('deliveryTo'), style: const TextStyle(fontWeight: FontWeight.w700)),
+            Text(
+              '${s.t('deliveryTo')}: ${session.city}',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 8),
-            const Wrap(
+            Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
-                Chip(label: Text('Express 1–2 days')),
-                Chip(label: Text('Standard 3–5 days')),
-                Chip(label: Text('Pickup')),
+                for (final option in _DeliveryOption.values)
+                  ChoiceChip(
+                    label: Text(_deliveryLabels[option]!),
+                    selected: selected == option,
+                    selectedColor: WingerColors.brandMuted,
+                    onSelected: (_) {
+                      setState(() => _delivery = option);
+                      session.setDeliveryMethod(_deliveryToSession(option));
+                    },
+                  ),
               ],
             ),
             const SizedBox(height: 16),
@@ -306,6 +355,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             const SizedBox(height: 12),
             FilledButton(
               onPressed: () async {
+                session.setDeliveryMethod(_deliveryToSession(selected));
                 await session.addToCart(product, quantity: qty);
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('addToCart'))));
@@ -440,10 +490,13 @@ class CheckoutScreen extends StatefulWidget {
   State<CheckoutScreen> createState() => _CheckoutScreenState();
 }
 
+enum _CheckoutPayMethod { card, payOnDelivery }
+
 class _CheckoutScreenState extends State<CheckoutScreen> {
   int step = 0;
   bool _paying = false;
   String? _payError;
+  _CheckoutPayMethod _payMethod = _CheckoutPayMethod.card;
   late final TextEditingController _city;
   late final TextEditingController _address;
 
@@ -507,19 +560,90 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           spacing: 8,
           children: [
             for (var i = 0; i < steps.length; i++)
-              Chip(
+              ActionChip(
                 label: Text(steps[i]),
                 backgroundColor: i == step ? WingerColors.brand : WingerColors.brandMuted,
-                labelStyle: TextStyle(color: i == step ? Colors.white : WingerColors.ink, fontWeight: FontWeight.w700),
+                labelStyle: TextStyle(
+                  color: i == step ? Colors.white : WingerColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+                onPressed: _paying || i >= step || step >= 4
+                    ? null
+                    : () => setState(() {
+                          _payError = null;
+                          step = i;
+                        }),
               ),
           ],
         ),
         const SizedBox(height: 20),
         if (step < 4) ...[
-          if (step == 0)
+          if (step == 0) ...[
             Text(
-              'Review ${session.cart.length} items from ${session.cartBySupplier.length} suppliers.',
-            )
+              'Review ${session.cartCount} item${session.cartCount == 1 ? '' : 's'} '
+              'from ${session.cartBySupplier.length} supplier'
+              '${session.cartBySupplier.length == 1 ? '' : 's'}.',
+              style: TextStyle(color: WingerColors.muted),
+            ),
+            const SizedBox(height: 12),
+            if (session.cart.isEmpty)
+              Text(
+                'Your cart is empty.',
+                style: TextStyle(color: WingerColors.muted),
+              )
+            else ...[
+              for (final entry in session.cartBySupplier.entries) ...[
+                Text(
+                  entry.key,
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                for (final item in entry.value)
+                  Card(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          item.product.imageUrl,
+                          width: 52,
+                          height: 52,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 52,
+                            height: 52,
+                            color: WingerColors.brandMuted,
+                            child: const Icon(Icons.image_outlined),
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        item.product.name,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      subtitle: Text(
+                        '\$${item.product.price.toStringAsFixed(2)} × ${item.quantity}',
+                      ),
+                      trailing: Text(
+                        '\$${item.lineTotal.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+              ],
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  '${s.t('dueToday')}: \$${session.cartTotal.toStringAsFixed(2)}',
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                ),
+              ),
+            ],
+          ]
           else if (step == 1) ...[
             Text(s.t('deliveryAddress'), style: const TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
@@ -541,84 +665,177 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               style: TextStyle(color: WingerColors.muted),
             ),
           ]
-          else if (step == 2)
+          else if (step == 2) ...[
             Text(
-              'Deliver to ${session.city} · ${session.addressLine} · ${session.displayName}\n'
-              'Per-supplier methods: Express, Standard, Pickup',
-            )
-          else
-            Text(
-              session.apiOnline && session.accessToken != null
-                  ? 'Pay \$${session.cartTotal.toStringAsFixed(2)} by card (API · demo payment unless Stripe key set)\n'
-                      'Ship to ${session.addressLine}, ${session.city}'
-                  : 'Pay \$${session.cartTotal.toStringAsFixed(2)} offline — order saved locally until online',
+              'Deliver to ${session.city} · ${session.addressLine} · ${session.displayName}',
             ),
+            const SizedBox(height: 16),
+            Text(
+              s.t('fulfillMethod'),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final option in const [
+                  ('express', 'Express 1–2 days'),
+                  ('standard', 'Standard 3–5 days'),
+                  ('pickup', 'Pickup'),
+                ])
+                  ChoiceChip(
+                    label: Text(option.$2),
+                    selected: session.deliveryMethod == option.$1,
+                    selectedColor: WingerColors.brandMuted,
+                    onSelected: (_) => session.setDeliveryMethod(option.$1),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Selected: ${session.deliveryMethodLabel}',
+              style: TextStyle(color: WingerColors.muted),
+            ),
+          ]
+          else ...[
+            Text(
+              s.t('paymentMethod'),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<_CheckoutPayMethod>(
+              segments: [
+                ButtonSegment(
+                  value: _CheckoutPayMethod.card,
+                  label: Text(s.t('payByCard')),
+                  icon: const Icon(Icons.credit_card_outlined),
+                ),
+                ButtonSegment(
+                  value: _CheckoutPayMethod.payOnDelivery,
+                  label: Text(s.t('payOnDelivery')),
+                  icon: const Icon(Icons.payments_outlined),
+                ),
+              ],
+              selected: {_payMethod},
+              onSelectionChanged: (value) {
+                setState(() => _payMethod = value.first);
+              },
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _payMethod == _CheckoutPayMethod.payOnDelivery
+                  ? '${s.t('payOnDeliveryHint')}\n'
+                      '\$${session.cartTotal.toStringAsFixed(2)} · ${session.addressLine}, ${session.city}'
+                  : session.apiOnline && session.accessToken != null
+                      ? 'Pay \$${session.cartTotal.toStringAsFixed(2)} by card '
+                          '(API · demo payment unless Stripe key set)\n'
+                          'Ship to ${session.addressLine}, ${session.city}'
+                      : 'Pay \$${session.cartTotal.toStringAsFixed(2)} offline — '
+                          'order saved locally until online',
+            ),
+          ],
           if (_payError != null) ...[
             const SizedBox(height: 12),
             Text(_payError!, style: const TextStyle(color: WingerColors.dangerInk)),
           ],
           const SizedBox(height: 20),
-          FilledButton(
-            onPressed: _paying
-                ? null
-                : () async {
-                    if (step == 1) {
-                      setState(() => _paying = true);
-                      try {
-                        await _saveAddressStep();
-                      } catch (error) {
-                        if (!mounted) return;
-                        setState(() => _payError = error.toString());
-                      } finally {
-                        if (mounted) setState(() => _paying = false);
-                      }
-                      return;
-                    }
-                    if (step < 3) {
-                      setState(() => step++);
-                      return;
-                    }
-                    setState(() {
-                      _paying = true;
-                      _payError = null;
-                    });
-                    try {
-                      final offline = !session.apiOnline || session.accessToken == null;
-                      final order = await session.placeOrder();
-                      if (!mounted) return;
-                      final messenger = ScaffoldMessenger.of(context);
-                      if (offline) {
-                        messenger.showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Order saved locally — waiting for connection to charge payment.',
-                            ),
+          Row(
+            children: [
+              if (step > 0) ...[
+                OutlinedButton(
+                  onPressed: _paying
+                      ? null
+                      : () => setState(() {
+                            _payError = null;
+                            step--;
+                          }),
+                  child: Text(s.t('back')),
+                ),
+                const SizedBox(width: 12),
+              ],
+              Expanded(
+                child: FilledButton(
+                  onPressed: _paying
+                      ? null
+                      : () async {
+                          if (step == 1) {
+                            setState(() => _paying = true);
+                            try {
+                              await _saveAddressStep();
+                            } catch (error) {
+                              if (!mounted) return;
+                              setState(() => _payError = error.toString());
+                            } finally {
+                              if (mounted) setState(() => _paying = false);
+                            }
+                            return;
+                          }
+                          if (step < 3) {
+                            setState(() => step++);
+                            return;
+                          }
+                          setState(() {
+                            _paying = true;
+                            _payError = null;
+                          });
+                          try {
+                            final offline =
+                                !session.apiOnline || session.accessToken == null;
+                            final method =
+                                _payMethod == _CheckoutPayMethod.payOnDelivery
+                                    ? 'pay_on_delivery'
+                                    : 'card';
+                            final order =
+                                await session.placeOrder(paymentMethod: method);
+                            if (!mounted) return;
+                            final messenger = ScaffoldMessenger.of(context);
+                            if (offline) {
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    method == 'pay_on_delivery'
+                                        ? 'Order saved locally — pay on delivery when connected.'
+                                        : 'Order saved locally — waiting for connection to charge payment.',
+                                  ),
+                                ),
+                              );
+                            } else {
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '${order.id} · ${order.paymentMode} · ${order.paymentStatus}',
+                                  ),
+                                ),
+                              );
+                            }
+                            setState(() => step = 4);
+                          } catch (error) {
+                            if (!mounted) return;
+                            setState(() => _payError = error.toString());
+                          } finally {
+                            if (mounted) setState(() => _paying = false);
+                          }
+                        },
+                  child: _paying
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
                           ),
-                        );
-                      } else {
-                        messenger.showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              '${order.id} · ${order.paymentMode} · ${order.paymentStatus}',
-                            ),
-                          ),
-                        );
-                      }
-                      setState(() => step = 4);
-                    } catch (error) {
-                      if (!mounted) return;
-                      setState(() => _payError = error.toString());
-                    } finally {
-                      if (mounted) setState(() => _paying = false);
-                    }
-                  },
-            child: _paying
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : Text(step == 3 ? s.t('payment') : s.t('continueRole')),
+                        )
+                      : Text(
+                          step == 3
+                              ? (_payMethod == _CheckoutPayMethod.payOnDelivery
+                                  ? s.t('placeOrderCod')
+                                  : s.t('payment'))
+                              : s.t('continueRole'),
+                        ),
+                ),
+              ),
+            ],
           ),
         ] else ...[
           const Icon(Icons.check_circle, color: WingerColors.successInk, size: 64),
@@ -626,7 +843,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           Text(s.t('thanksOrder'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
           Text('${s.t('orderConfirmed')} · ${session.lastOrder?.id ?? 'WG-10025'}'),
           Text(
-            'Payment: ${session.lastOrder?.paymentStatus ?? 'PAID'} (${session.lastOrder?.paymentMode ?? 'demo'})',
+            session.lastOrder?.paymentMode == 'cod'
+                ? '${s.t('payOnDelivery')}: ${session.lastOrder?.paymentStatus ?? 'PENDING'}'
+                : 'Payment: ${session.lastOrder?.paymentStatus ?? 'PAID'} (${session.lastOrder?.paymentMode ?? 'demo'})',
             style: const TextStyle(color: WingerColors.muted),
           ),
           const SizedBox(height: 16),
@@ -723,15 +942,34 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       for (final leg in order.shipments)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
-                                child: Text(
-                                  '${leg.supplierName} · ${leg.productName}',
-                                  style: const TextStyle(fontWeight: FontWeight.w600),
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '${leg.supplierName} · ${leg.productName}',
+                                      style: const TextStyle(fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  StatusBadge(status: leg.status),
+                                ],
                               ),
-                              StatusBadge(status: leg.status),
+                              if (leg.trackingCode != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${s.t('trackingCode')}: ${leg.trackingCode}',
+                                  style: TextStyle(color: WingerColors.muted, fontSize: 12),
+                                ),
+                              ],
+                              if (leg.pickupCode != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${s.t('pickupCode')}: ${leg.pickupCode}',
+                                  style: TextStyle(color: WingerColors.muted, fontSize: 12),
+                                ),
+                              ],
                             ],
                           ),
                         ),

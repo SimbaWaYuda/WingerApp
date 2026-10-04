@@ -20,6 +20,8 @@ class AppSession extends ChangeNotifier {
   String phone = '';
   String city = 'Nairobi';
   String addressLine = 'Westlands';
+  /// express | standard | pickup
+  String deliveryMethod = 'standard';
   LocaleCode localeCode = LocaleCode.en;
   final List<CartItem> _cart = [];
   final List<String> compareIds = [];
@@ -67,6 +69,29 @@ class AppSession extends ChangeNotifier {
   Future<void> setLocale(LocaleCode code) async {
     localeCode = code;
     notifyListeners();
+  }
+
+  void setDeliveryMethod(String method) {
+    final normalized = method.trim().toLowerCase();
+    if (normalized != 'express' &&
+        normalized != 'standard' &&
+        normalized != 'pickup') {
+      return;
+    }
+    if (deliveryMethod == normalized) return;
+    deliveryMethod = normalized;
+    notifyListeners();
+  }
+
+  String get deliveryMethodLabel {
+    switch (deliveryMethod) {
+      case 'express':
+        return 'Express 1–2 days';
+      case 'pickup':
+        return 'Pickup';
+      default:
+        return 'Standard 3–5 days';
+    }
   }
 
   void applyAuth({
@@ -185,7 +210,9 @@ class AppSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<CustomerOrder> placeOrder() async {
+  Future<CustomerOrder> placeOrder({
+    String paymentMethod = 'card',
+  }) async {
     if (_cart.isEmpty) {
       throw Exception('Cart is empty');
     }
@@ -193,6 +220,7 @@ class AppSession extends ChangeNotifier {
     if (apiOnline && accessToken != null && _api != null) {
       final order = await _api!.createOrder(
         items: List.of(_cart),
+        paymentMethod: paymentMethod,
         addressLine: addressLine,
         city: city,
       );

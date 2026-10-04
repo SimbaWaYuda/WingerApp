@@ -29,9 +29,11 @@ export type CreateOrderDto = {
 };
 
 export type UpdateItemStatusDto = {
-  status: OrderStatus;
+  status?: OrderStatus;
   trackingCode?: string;
   pickupCode?: string;
+  /** Collect COD payment (marks order PAID). */
+  collectPayment?: boolean;
 };
 
 @Injectable()
@@ -90,6 +92,7 @@ export class OrdersService {
       new Prisma.Decimal(0),
     );
     const total = subtotal;
+    const payOnDelivery = isPayOnDelivery(dto.paymentMethod);
 
     const order = await this.prisma.$transaction(async (tx) => {
       const count = await tx.order.count();
@@ -103,8 +106,14 @@ export class OrdersService {
           customerEmail: user.email,
           status: OrderStatus.PROCESSING,
           paymentStatus: PaymentStatus.PENDING,
-          paymentMethod: dto.paymentMethod ?? 'card',
-          paymentMode: this.stripe.configured ? 'stripe' : 'demo',
+          paymentMethod: payOnDelivery
+            ? 'pay_on_delivery'
+            : (dto.paymentMethod ?? 'card'),
+          paymentMode: payOnDelivery
+            ? 'cod'
+            : this.stripe.configured
+              ? 'stripe'
+              : 'demo',
           currency: 'usd',
           subtotal,
           total,
@@ -150,6 +159,14 @@ export class OrdersService {
 
       return created;
     });
+
+    if (payOnDelivery) {
+      await this.onboarding.onOrderPlaced(user.sub, user.role);
+      return this.toResponse(
+        order,
+        'Pay on delivery — collect payment when the order is delivered',
+      );
+    }
 
     const amountCents = Math.round(Number(total) * 100);
     const charge = await this.stripe.chargeOrder({
@@ -202,7 +219,14 @@ export class OrdersService {
       const orders = await this.prisma.order.findMany({
         where: {
           items: { some: { supplierId: user.supplierId } },
-          paymentStatus: PaymentStatus.PAID,
+          status: { not: OrderStatus.CANCELLED },
+          OR: [
+            { paymentStatus: PaymentStatus.PAID },
+            {
+              paymentMode: 'cod',
+              paymentStatus: PaymentStatus.PENDING,
+            },
+          ],
         },
         include: {
           items: { where: { supplierId: user.supplierId } },
@@ -256,10 +280,11 @@ export class OrdersService {
       throw new ForbiddenException('Cannot update another supplier item');
     }
 
+    const nextItemStatus = dto.status ?? item.status;
     await this.prisma.orderItem.update({
       where: { id: item.id },
       data: {
-        status: dto.status,
+        status: nextItemStatus,
         trackingCode: dto.trackingCode,
         pickupCode: dto.pickupCode,
       },
@@ -269,9 +294,22 @@ export class OrdersService {
       where: { orderId: item.orderId },
     });
     const rollup = rollupStatus(items.map((row) => row.status));
+    const isCodPending =
+      item.order.paymentMode === 'cod' &&
+      item.order.paymentStatus === PaymentStatus.PENDING;
+    // COD becomes PAID when delivered or when supplier collects payment.
+    const markCodPaid =
+      isCodPending &&
+      (Boolean(dto.collectPayment) ||
+        nextItemStatus === OrderStatus.DELIVERED ||
+        rollup === OrderStatus.DELIVERED);
+
     const order = await this.prisma.order.update({
       where: { id: item.orderId },
-      data: { status: rollup },
+      data: {
+        status: rollup,
+        ...(markCodPaid ? { paymentStatus: PaymentStatus.PAID } : {}),
+      },
       include: {
         items:
           user.role === UserRole.SUPPLIER && user.supplierId
@@ -282,7 +320,8 @@ export class OrdersService {
 
     if (
       user.role === UserRole.SUPPLIER &&
-      (dto.status === OrderStatus.SHIPPED || dto.status === OrderStatus.DELIVERED)
+      (nextItemStatus === OrderStatus.SHIPPED ||
+        nextItemStatus === OrderStatus.DELIVERED)
     ) {
       await this.onboarding.onSupplierShipped(user.sub);
     }
@@ -403,6 +442,16 @@ export class OrdersService {
       })),
     };
   }
+}
+
+function isPayOnDelivery(method?: string): boolean {
+  if (!method) return false;
+  const normalized = method.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return (
+    normalized === 'pay_on_delivery' ||
+    normalized === 'cod' ||
+    normalized === 'cash_on_delivery'
+  );
 }
 
 function stockStatusFor(quantity: number): StockStatus {

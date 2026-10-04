@@ -98,26 +98,143 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
     return [];
   }
 
-  Future<void> _markShipped(CustomerOrder order, OrderItemRow item) async {
+  void _reload() {
+    final next = _load();
+    setState(() {
+      _future = next;
+    });
+  }
+
+  /// Unique per order line — never derived from product id alone.
+  String _defaultTrackingCode(CustomerOrder order, OrderItemRow item) {
+    final orderKey = order.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+    final itemKey = item.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+    final shortItem =
+        itemKey.length > 6 ? itemKey.substring(itemKey.length - 6) : itemKey;
+    return 'TRK-$orderKey-$shortItem';
+  }
+
+  String _defaultPickupCode(CustomerOrder order, OrderItemRow item) {
+    final digits = order.id.replaceAll(RegExp(r'[^0-9]'), '');
+    final orderPart = digits.length >= 4
+        ? digits.substring(digits.length - 4)
+        : digits.padLeft(4, '0');
+    final itemKey = item.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+    final shortItem =
+        itemKey.length > 4 ? itemKey.substring(itemKey.length - 4) : itemKey;
+    return 'PU-$orderPart-$shortItem';
+  }
+
+  bool _isProductScopedTracking(String? code) {
+    if (code == null) return false;
+    // Legacy defaults looked like TRK-P-PULSEWATCH (product id only).
+    return RegExp(r'^TRK-P-', caseSensitive: false).hasMatch(code);
+  }
+
+  Future<void> _updateItem({
+    required CustomerOrder order,
+    required OrderItemRow item,
+    OrderStatus? status,
+    String? trackingCode,
+    String? pickupCode,
+    bool collectPayment = false,
+  }) async {
     final api = context.read<ApiClient>();
     try {
       await api.updateOrderItemStatus(
         orderId: order.id,
         itemId: item.id,
-        status: OrderStatus.shipped,
-        trackingCode: 'TRK-${item.productId.toUpperCase()}',
+        status: status,
+        trackingCode: trackingCode,
+        pickupCode: pickupCode,
+        collectPayment: collectPayment,
       );
       if (!mounted) return;
-      final next = _load();
-      setState(() {
-        _future = next;
-      });
+      _reload();
+      final message = collectPayment && status == null
+          ? 'Payment collected — marked PAID'
+          : status == OrderStatus.delivered
+              ? (order.paymentMode == 'cod'
+                  ? 'Delivered — COD marked PAID'
+                  : 'Marked delivered')
+              : status == OrderStatus.shipped
+                  ? 'Marked shipped'
+                  : status == OrderStatus.readyForPickup
+                      ? 'Ready for pickup'
+                      : 'Fulfillment updated';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not mark shipped: $error')),
+        SnackBar(content: Text('Could not update fulfillment: $error')),
       );
     }
+  }
+
+  Future<void> _openFulfillment(CustomerOrder order, OrderItemRow item) async {
+    final s = WingerStrings.of(context);
+    final pickupCtrl = TextEditingController(
+      text: item.pickupCode ?? _defaultPickupCode(order, item),
+    );
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(s.t('fulfillment')),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${order.id} · ${item.productName}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(order.customerName, style: TextStyle(color: WingerColors.muted)),
+                const SizedBox(height: 12),
+                Text(
+                  s.t('fulfillPickupHint'),
+                  style: TextStyle(color: WingerColors.muted),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: pickupCtrl,
+                  decoration: InputDecoration(labelText: s.t('pickupCode')),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(s.t('cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(s.t('markReady')),
+            ),
+          ],
+        );
+      },
+    );
+
+    final pickupCode = pickupCtrl.text.trim();
+    pickupCtrl.dispose();
+    if (confirmed != true || !mounted) return;
+
+    await _updateItem(
+      order: order,
+      item: item,
+      status: OrderStatus.readyForPickup,
+      pickupCode: pickupCode.isEmpty
+          ? _defaultPickupCode(order, item)
+          : pickupCode,
+    );
   }
 
   @override
@@ -160,22 +277,88 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                               StatusBadge(status: item.status),
                             ],
                           ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${order.paymentStatus} · ${order.paymentMode}',
+                            style: TextStyle(
+                              color: order.paymentMode == 'cod' &&
+                                      order.paymentStatus == 'PENDING'
+                                  ? WingerColors.attentionInk
+                                  : WingerColors.muted,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           const SizedBox(height: 8),
                           Text(order.customerName),
                           Text('${item.productName} × ${item.quantity}'),
                           Text('\$${item.lineTotal.toStringAsFixed(2)}'),
+                          if (item.trackingCode != null) ...[
+                            const SizedBox(height: 4),
+                            Text('${s.t('trackingCode')}: ${item.trackingCode}', style: TextStyle(color: WingerColors.muted)),
+                          ],
+                          if (item.pickupCode != null) ...[
+                            const SizedBox(height: 4),
+                            Text('${s.t('pickupCode')}: ${item.pickupCode}', style: TextStyle(color: WingerColors.muted)),
+                          ],
                           const SizedBox(height: 12),
                           Wrap(
                             spacing: 8,
+                            runSpacing: 8,
                             children: [
-                              OutlinedButton(onPressed: () {}, child: Text(s.t('fulfillment'))),
+                              OutlinedButton(
+                                onPressed: item.status == OrderStatus.delivered
+                                    ? null
+                                    : () => _openFulfillment(order, item),
+                                child: Text(s.t('fulfillment')),
+                              ),
                               FilledButton(
                                 onPressed: item.status == OrderStatus.shipped ||
                                         item.status == OrderStatus.delivered
                                     ? null
-                                    : () => _markShipped(order, item),
-                                child: const Text('Mark shipped'),
+                                    : () => _updateItem(
+                                          order: order,
+                                          item: item,
+                                          status: OrderStatus.shipped,
+                                          trackingCode: _isProductScopedTracking(
+                                                    item.trackingCode,
+                                                  )
+                                              ? _defaultTrackingCode(order, item)
+                                              : (item.trackingCode ??
+                                                  _defaultTrackingCode(
+                                                    order,
+                                                    item,
+                                                  )),
+                                        ),
+                                child: Text(s.t('markShipped')),
                               ),
+                              FilledButton.tonal(
+                                onPressed: item.status == OrderStatus.delivered
+                                    ? null
+                                    : item.status == OrderStatus.shipped ||
+                                            item.status ==
+                                                OrderStatus.readyForPickup
+                                        ? () => _updateItem(
+                                              order: order,
+                                              item: item,
+                                              status: OrderStatus.delivered,
+                                              collectPayment:
+                                                  order.paymentMode == 'cod' &&
+                                                      order.paymentStatus ==
+                                                          'PENDING',
+                                            )
+                                        : null,
+                                child: Text(s.t('markDelivered')),
+                              ),
+                              if (order.paymentMode == 'cod' &&
+                                  order.paymentStatus == 'PENDING')
+                                OutlinedButton(
+                                  onPressed: () => _updateItem(
+                                    order: order,
+                                    item: item,
+                                    collectPayment: true,
+                                  ),
+                                  child: Text(s.t('collectPayment')),
+                                ),
                             ],
                           ),
                         ],
