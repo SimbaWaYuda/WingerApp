@@ -283,6 +283,56 @@ class ApiClient {
     return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<CartValidationResult> validateCart(List<CartItem> items) async {
+    final response = await http
+        .post(
+          _uri('/orders/validate'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'items': [
+              for (final item in items)
+                {
+                  'productId': item.product.id,
+                  'quantity': item.quantity,
+                },
+            ],
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Cart validation failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    final map = jsonDecode(response.body) as Map<String, dynamic>;
+    final lines = (map['lines'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map((row) {
+      final productJson = row['product'] as Map<String, dynamic>?;
+      return CartValidationLine(
+        productId: row['productId'] as String,
+        available: row['available'] as bool? ?? false,
+        reason: row['reason'] as String?,
+        requestedQty: row['requestedQty'] as int? ?? 0,
+        availableQty: row['availableQty'] as int? ?? 0,
+        unitPrice: (row['unitPrice'] as num?)?.toDouble() ?? 0,
+        lineTotal: (row['lineTotal'] as num?)?.toDouble() ?? 0,
+        product: productJson == null ? null : _productFromJson(productJson),
+      );
+    }).toList();
+    return CartValidationResult(
+      ok: map['ok'] as bool? ?? false,
+      subtotal: (map['subtotal'] as num?)?.toDouble() ?? 0,
+      total: (map['total'] as num?)?.toDouble() ?? 0,
+      deliveryFee: (map['deliveryFee'] as num?)?.toDouble() ?? 0,
+      tax: (map['tax'] as num?)?.toDouble() ?? 0,
+      lines: lines,
+    );
+  }
+
   Future<CustomerOrder> createOrder({
     required List<CartItem> items,
     String paymentMethod = 'card',

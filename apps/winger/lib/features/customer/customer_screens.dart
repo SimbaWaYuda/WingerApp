@@ -639,7 +639,9 @@ enum _DeliveryOption { express, standard, pickup }
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
   int qty = 1;
   late Future<Product> _future;
+  Future<List<Product>>? _relatedFuture;
   _DeliveryOption? _delivery;
+  int _galleryIndex = 0;
 
   static const _deliveryLabels = <_DeliveryOption, String>{
     _DeliveryOption.express: 'Express 1–2 days',
@@ -652,10 +654,57 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     super.initState();
     _future = context.read<CatalogRepository>().getProduct(widget.productId);
     unawaited(_recordView());
+    _future.then((product) {
+      if (!mounted) return;
+      final catalog = context.read<CatalogRepository>();
+      setState(() {
+        _relatedFuture = () async {
+          final byModel = await catalog.getProducts(query: product.model);
+          final byCategory = await catalog.browseProducts(
+            category: product.category,
+            pageSize: 8,
+            sort: 'rating',
+          );
+          final seen = <String>{product.id};
+          final related = <Product>[];
+          // Prefer same model from other suppliers first (price compare).
+          for (final item in byModel) {
+            if (item.id == product.id) continue;
+            if (item.model.toLowerCase() != product.model.toLowerCase()) continue;
+            if (seen.add(item.id)) related.add(item);
+          }
+          for (final item in byCategory.items) {
+            if (seen.add(item.id)) related.add(item);
+            if (related.length >= 6) break;
+          }
+          return related.take(6).toList();
+        }();
+      });
+    });
   }
 
   Future<void> _recordView() async {
     await context.read<AppSession>().markProductViewed(widget.productId);
+  }
+
+  String _estimateFor(_DeliveryOption option, String city) {
+    switch (option) {
+      case _DeliveryOption.express:
+        return '1–2 days to $city';
+      case _DeliveryOption.pickup:
+        return 'Ready for pickup in $city';
+      case _DeliveryOption.standard:
+        return '3–5 days to $city';
+    }
+  }
+
+  List<String> _galleryUrls(Product product, List<Product> related) {
+    final urls = <String>{product.imageUrl};
+    for (final item in related) {
+      if (urls.length >= 4) break;
+      urls.add(item.imageUrl);
+    }
+    return urls.toList();
   }
 
   @override
@@ -696,126 +745,525 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       future: _future,
       builder: (context, snapshot) {
         final product = snapshot.data ?? MockCatalog.byId(widget.productId);
+        return FutureBuilder<List<Product>>(
+          future: _relatedFuture,
+          builder: (context, relatedSnap) {
+            final related = relatedSnap.data ?? const <Product>[];
+            final gallery = _galleryUrls(product, related);
+            final safeIndex = _galleryIndex.clamp(0, gallery.length - 1);
+            return ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => context.go('/customer'),
+                    icon: const Icon(Icons.arrow_back),
+                    label: Text(s.t('home')),
+                  ),
+                ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: AspectRatio(
+                    aspectRatio: 1.4,
+                    child: Image.network(
+                      gallery[safeIndex],
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: WingerColors.brandMuted,
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.image_outlined),
+                      ),
+                    ),
+                  ),
+                ),
+                if (gallery.length > 1) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 64,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: gallery.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final selectedThumb = index == safeIndex;
+                        return InkWell(
+                          onTap: () => setState(() => _galleryIndex = index),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: selectedThumb ? WingerColors.brand : WingerColors.border,
+                                width: selectedThumb ? 2 : 1,
+                              ),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(9),
+                              child: Image.network(
+                                gallery[index],
+                                width: 64,
+                                height: 64,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Text(product.brand, style: const TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600)),
+                Text(product.name, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 8),
+                Text('\$${product.price.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: WingerColors.brand)),
+                if (product.previousPrice != null && product.previousPrice! > product.price) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '\$${product.previousPrice!.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      decoration: TextDecoration.lineThrough,
+                      color: WingerColors.muted,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Text('${product.supplierName} · ★ ${product.rating}'),
+                    if (product.supplierVerified) ...[
+                      const SizedBox(width: 6),
+                      const Icon(Icons.verified, size: 18, color: WingerColors.brand),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  product.stockStatus == StockStatus.outOfStock
+                      ? s.t('outOfStock')
+                      : product.stockStatus == StockStatus.lowStock
+                          ? '${s.t('lowStock')} · ${product.stock}'
+                          : '${s.t('inStock')} · ${product.stock}',
+                  style: TextStyle(
+                    color: product.stockStatus == StockStatus.outOfStock
+                        ? WingerColors.dangerInk
+                        : WingerColors.successInk,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(product.description),
+                const SizedBox(height: 20),
+                Text(s.t('specifications'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                const SizedBox(height: 8),
+                _SpecRow(label: s.t('sku'), value: product.model),
+                _SpecRow(label: 'Category', value: product.category),
+                _SpecRow(label: 'Color', value: product.color),
+                _SpecRow(label: 'Size', value: product.size),
+                _SpecRow(label: 'Battery', value: product.battery),
+                _SpecRow(label: 'Weight', value: product.weight),
+                const SizedBox(height: 20),
+                Text(
+                  '${s.t('deliveryTo')}: ${session.city}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final option in _DeliveryOption.values)
+                      ChoiceChip(
+                        label: Text(_deliveryLabels[option]!),
+                        selected: selected == option,
+                        selectedColor: WingerColors.brandMuted,
+                        onSelected: (_) {
+                          setState(() => _delivery = option);
+                          session.setDeliveryMethod(_deliveryToSession(option));
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${s.t('deliveryEstimate')}: ${_estimateFor(selected, session.city)}',
+                  style: TextStyle(color: WingerColors.muted),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Text('${s.t('qty')}:'),
+                    const SizedBox(width: 12),
+                    IconButton(onPressed: qty > 1 ? () => setState(() => qty--) : null, icon: const Icon(Icons.remove_circle_outline)),
+                    Text('$qty', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                    IconButton(
+                      onPressed: qty < product.stock ? () => setState(() => qty++) : null,
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+                if (product.stock > 0 && product.stock <= 5)
+                  Text(
+                    s.t('stockWarning').replaceAll('{n}', '${product.stock}'),
+                    style: TextStyle(color: WingerColors.attentionInk, fontWeight: FontWeight.w600),
+                  ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: product.stock <= 0
+                      ? null
+                      : () async {
+                          session.setDeliveryMethod(_deliveryToSession(selected));
+                          await session.addToCart(product, quantity: qty.clamp(1, product.stock));
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('addToCart'))));
+                        },
+                  child: Text(s.t('addToCart')),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => unawaited(session.toggleWishlist(product.id)),
+                        icon: Icon(
+                          session.isWishlisted(product.id) ? Icons.favorite : Icons.favorite_border,
+                        ),
+                        label: Text(s.t('wishlist')),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          // Replace prior compare picks so unrelated items
+                          // (e.g. a watch) are not mixed with this model.
+                          final sameModelIds = <String>{
+                            product.id,
+                            for (final item in related)
+                              if (item.model.toLowerCase() ==
+                                      product.model.toLowerCase() &&
+                                  item.brand.toLowerCase() ==
+                                      product.brand.toLowerCase())
+                                item.id,
+                          }.toList();
+                          session.setCompare(sameModelIds);
+                          final messenger = ScaffoldMessenger.of(context);
+                          messenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                session.compareIds.length < 2
+                                    ? 'Only one ${product.model} offer found — add another supplier from Search'
+                                    : 'Comparing ${session.compareIds.length} ${product.model} offers',
+                              ),
+                              action: SnackBarAction(
+                                label: s.t('compare'),
+                                onPressed: () => context.go('/customer/compare'),
+                              ),
+                            ),
+                          );
+                          context.go('/customer/compare');
+                        },
+                        icon: Icon(
+                          session.compareIds.contains(product.id)
+                              ? Icons.compare_arrows
+                              : Icons.compare_arrows_outlined,
+                        ),
+                        label: Text(s.t('compare')),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: () => context.go('/customer/cart'),
+                  child: Text(s.t('cart')),
+                ),
+                Builder(
+                  builder: (context) {
+                    final otherSuppliers = related
+                        .where(
+                          (item) =>
+                              item.model.toLowerCase() == product.model.toLowerCase() &&
+                              item.brand.toLowerCase() == product.brand.toLowerCase() &&
+                              item.supplierId != product.supplierId,
+                        )
+                        .toList();
+                    final moreRelated = related
+                        .where((item) => !otherSuppliers.any((o) => o.id == item.id))
+                        .toList();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (otherSuppliers.isNotEmpty) ...[
+                          const SizedBox(height: 24),
+                          Text(
+                            s.t('otherSuppliers'),
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                          ),
+                          const SizedBox(height: 10),
+                          for (final offer in otherSuppliers)
+                            Card(
+                              child: ListTile(
+                                leading: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(
+                                    offer.imageUrl,
+                                    width: 48,
+                                    height: 48,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                                title: Text(
+                                  offer.supplierName,
+                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                subtitle: Text(
+                                  '\$${offer.price.toStringAsFixed(2)} · ★ ${offer.rating.toStringAsFixed(1)} · ${offer.stock} in stock',
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () => context.go('/customer/product/${offer.id}'),
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              session.setCompare([
+                                product.id,
+                                ...otherSuppliers.map((o) => o.id),
+                              ]);
+                              context.go('/customer/compare');
+                            },
+                            icon: const Icon(Icons.compare_arrows),
+                            label: Text(s.t('compare')),
+                          ),
+                        ],
+                        if (moreRelated.isNotEmpty) ...[
+                          const SizedBox(height: 24),
+                          Text(
+                            s.t('relatedProducts'),
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 300,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: moreRelated.length,
+                              separatorBuilder: (_, __) => const SizedBox(width: 12),
+                              itemBuilder: (context, index) {
+                                final item = moreRelated[index];
+                                return SizedBox(
+                                  width: 180,
+                                  child: ProductCard(
+                                    product: item,
+                                    wishlisted: session.isWishlisted(item.id),
+                                    onWishlist: () => unawaited(session.toggleWishlist(item.id)),
+                                    onAddToCart: () => unawaited(session.addToCart(item)),
+                                    onTap: () => context.go('/customer/product/${item.id}'),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ],
+                    );
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _SpecRow extends StatelessWidget {
+  const _SpecRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(label, style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600)),
+          ),
+          Expanded(child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600))),
+        ],
+      ),
+    );
+  }
+}
+
+class CompareScreen extends StatefulWidget {
+  const CompareScreen({super.key});
+
+  @override
+  State<CompareScreen> createState() => _CompareScreenState();
+}
+
+class _CompareScreenState extends State<CompareScreen> {
+  Future<List<Product>>? _future;
+  String _compareKey = '';
+
+  Future<List<Product>> _load() async {
+    final session = context.read<AppSession>();
+    final catalog = context.read<CatalogRepository>();
+    final products = <Product>[];
+    for (final id in session.compareIds) {
+      products.add(await catalog.getProduct(id));
+    }
+    return products;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    final key = session.compareIds.join('|');
+    if (_future == null || key != _compareKey) {
+      _compareKey = key;
+      _future = _load();
+    }
+
+    return FutureBuilder<List<Product>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final products = snapshot.data ?? const <Product>[];
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => context.go('/customer'),
-                icon: const Icon(Icons.arrow_back),
-                label: Text(s.t('home')),
-              ),
-            ),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: AspectRatio(
-                aspectRatio: 1.4,
-                child: Image.network(product.imageUrl, fit: BoxFit.cover),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(product.brand, style: const TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600)),
-            Text(product.name, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Text('\$${product.price.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: WingerColors.brand)),
-            if (product.previousPrice != null && product.previousPrice! > product.price) ...[
-              const SizedBox(height: 4),
-              Text(
-                '\$${product.previousPrice!.toStringAsFixed(2)}',
-                style: const TextStyle(
-                  decoration: TextDecoration.lineThrough,
-                  color: WingerColors.muted,
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
             Row(
               children: [
-                Text('${product.supplierName} · ★ ${product.rating}'),
-                if (product.supplierVerified) ...[
-                  const SizedBox(width: 6),
-                  const Icon(Icons.verified, size: 18, color: WingerColors.brand),
-                ],
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              product.stockStatus == StockStatus.outOfStock
-                  ? s.t('outOfStock')
-                  : product.stockStatus == StockStatus.lowStock
-                      ? '${s.t('lowStock')} · ${product.stock}'
-                      : '${s.t('inStock')} · ${product.stock}',
-              style: TextStyle(
-                color: product.stockStatus == StockStatus.outOfStock
-                    ? WingerColors.dangerInk
-                    : WingerColors.successInk,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(product.description),
-            const SizedBox(height: 16),
-            Text(
-              '${s.t('deliveryTo')}: ${session.city}',
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final option in _DeliveryOption.values)
-                  ChoiceChip(
-                    label: Text(_deliveryLabels[option]!),
-                    selected: selected == option,
-                    selectedColor: WingerColors.brandMuted,
-                    onSelected: (_) {
-                      setState(() => _delivery = option);
-                      session.setDeliveryMethod(_deliveryToSession(option));
-                    },
+                Text(s.t('compare'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+                const Spacer(),
+                if (session.compareIds.isNotEmpty)
+                  TextButton(
+                    onPressed: session.clearCompare,
+                    child: Text(s.t('clearFilters')),
                   ),
               ],
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Text('${s.t('qty')}:'),
-                const SizedBox(width: 12),
-                IconButton(onPressed: qty > 1 ? () => setState(() => qty--) : null, icon: const Icon(Icons.remove_circle_outline)),
-                Text('$qty', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-                IconButton(
-                  onPressed: qty < product.stock ? () => setState(() => qty++) : null,
-                  icon: const Icon(Icons.add_circle_outline),
-                ),
-              ],
-            ),
             const SizedBox(height: 12),
-            FilledButton(
-              onPressed: product.stock <= 0
-                  ? null
-                  : () async {
-                      session.setDeliveryMethod(_deliveryToSession(selected));
-                      await session.addToCart(product, quantity: qty.clamp(1, product.stock));
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('addToCart'))));
-                    },
-              child: Text(s.t('addToCart')),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: () => unawaited(session.toggleWishlist(product.id)),
-              icon: Icon(
-                session.isWishlisted(product.id) ? Icons.favorite : Icons.favorite_border,
+            if (session.compareIds.isEmpty)
+              Text(s.t('searchHint'), style: TextStyle(color: WingerColors.muted))
+            else if (snapshot.connectionState != ConnectionState.done)
+              const Center(child: CircularProgressIndicator())
+            else ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final product in products)
+                    InputChip(
+                      label: Text(
+                        '${product.supplierName} · \$${product.price.toStringAsFixed(0)}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onDeleted: () => session.removeFromCompare(product.id),
+                      deleteIcon: const Icon(Icons.close, size: 16),
+                    ),
+                ],
               ),
-              label: Text(s.t('wishlist')),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: () => context.go('/customer/cart'),
-              child: Text(s.t('cart')),
-            ),
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  headingRowHeight: 56,
+                  dataRowMinHeight: 48,
+                  dataRowMaxHeight: 56,
+                  columns: [
+                    const DataColumn(label: Text('Spec')),
+                    ...products.map(
+                      (p) => DataColumn(
+                        label: SizedBox(
+                          width: 140,
+                          child: Text(
+                            '${p.name}\n${p.supplierName}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700, height: 1.2),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  rows: [
+                    DataRow(cells: [
+                      const DataCell(Text('Price')),
+                      ...products.map((p) => DataCell(Text('\$${p.price.toStringAsFixed(2)}'))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Supplier')),
+                      ...products.map((p) => DataCell(Text(p.supplierName))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Verified')),
+                      ...products.map((p) => DataCell(Text(p.supplierVerified ? 'Yes' : 'No'))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Rating')),
+                      ...products.map((p) => DataCell(Text(p.rating.toStringAsFixed(1)))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Stock')),
+                      ...products.map((p) => DataCell(Text('${p.stock} (${p.stockStatus.name})'))),
+                    ]),
+                    DataRow(cells: [
+                      DataCell(Text(s.t('fulfillMethod'))),
+                      ...products.map((_) => DataCell(Text(session.deliveryMethodLabel))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Model')),
+                      ...products.map((p) => DataCell(Text(p.model))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Color')),
+                      ...products.map((p) => DataCell(Text(p.color))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Size')),
+                      ...products.map((p) => DataCell(Text(p.size))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Battery')),
+                      ...products.map((p) => DataCell(Text(p.battery))),
+                    ]),
+                    DataRow(cells: [
+                      const DataCell(Text('Weight')),
+                      ...products.map((p) => DataCell(Text(p.weight))),
+                    ]),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            if (products.isNotEmpty)
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final product in products)
+                    FilledButton(
+                      onPressed: product.stock <= 0
+                          ? null
+                          : () async {
+                              await session.addToCart(product);
+                              if (!context.mounted) return;
+                              context.go('/customer/cart');
+                            },
+                      child: Text('${s.t('addToCart')}: ${product.name}'),
+                    ),
+                ],
+              ),
           ],
         );
       },
@@ -823,107 +1271,174 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 }
 
-class CompareScreen extends StatelessWidget {
-  const CompareScreen({super.key});
+class CartScreen extends StatefulWidget {
+  const CartScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final s = WingerStrings.of(context);
-    final session = context.watch<AppSession>();
-    final products = session.compareIds.map(MockCatalog.byId).toList();
-
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(s.t('compare'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 12),
-        if (products.isEmpty)
-          Text(s.t('searchHint'))
-        else
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columns: [
-                const DataColumn(label: Text('Spec')),
-                ...products.map((p) => DataColumn(label: Text(p.name, maxLines: 2))),
-              ],
-              rows: [
-                DataRow(cells: [const DataCell(Text('Price')), ...products.map((p) => DataCell(Text('\$${p.price}')))]),
-                DataRow(cells: [const DataCell(Text('Supplier')), ...products.map((p) => DataCell(Text(p.supplierName)))]),
-                DataRow(cells: [const DataCell(Text('Battery')), ...products.map((p) => DataCell(Text(p.battery)))]),
-                DataRow(cells: [const DataCell(Text('Weight')), ...products.map((p) => DataCell(Text(p.weight)))]),
-                DataRow(cells: [const DataCell(Text('Rating')), ...products.map((p) => DataCell(Text('${p.rating}')))]),
-              ],
-            ),
-          ),
-        const SizedBox(height: 16),
-        if (products.isNotEmpty)
-          FilledButton(
-            onPressed: () async {
-              await session.addToCart(products.first);
-              if (!context.mounted) return;
-              context.go('/customer/cart');
-            },
-            child: Text('${s.t('addToCart')} ${products.first.name}'),
-          ),
-      ],
-    );
-  }
+  State<CartScreen> createState() => _CartScreenState();
 }
 
-class CartScreen extends StatelessWidget {
-  const CartScreen({super.key});
+class _CartScreenState extends State<CartScreen> {
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+  }
+
+  Future<void> _refresh() async {
+    final session = context.read<AppSession>();
+    if (session.cart.isEmpty) return;
+    setState(() => _refreshing = true);
+    final ok = await session.refreshCartFromServer();
+    if (!mounted) return;
+    setState(() => _refreshing = false);
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(WingerStrings.of(context).t('cartUpdated'))),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
     final grouped = session.cartBySupplier;
+    final hasStockIssue = session.cart.any(
+      (item) => item.quantity > item.product.stock || item.product.stock <= 0,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(s.t('cart'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        Row(
+          children: [
+            Text(s.t('cart'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            const Spacer(),
+            IconButton(
+              onPressed: _refreshing ? null : _refresh,
+              icon: _refreshing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${s.t('fulfillMethod')}: ${session.deliveryMethodLabel}',
+          style: TextStyle(color: WingerColors.muted),
+        ),
+        if (_refreshing) ...[
+          const SizedBox(height: 8),
+          Text(s.t('refreshingCart'), style: TextStyle(color: WingerColors.muted)),
+        ],
         const SizedBox(height: 12),
         if (grouped.isEmpty)
           Text(s.t('explore'))
         else ...[
+          if (hasStockIssue) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: WingerColors.attention,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                s.t('unavailableItem'),
+                style: TextStyle(color: WingerColors.attentionInk, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           for (final entry in grouped.entries) ...[
             Text(entry.key, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
             const SizedBox(height: 8),
             for (final item in entry.value)
               Card(
-                child: ListTile(
-                  leading: Image.network(item.product.imageUrl, width: 48, height: 48, fit: BoxFit.cover),
-                  title: Text(item.product.name),
-                  subtitle: Text('\$${item.product.price.toStringAsFixed(2)} × ${item.quantity}'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        onPressed: () => unawaited(
-                          session.updateQuantity(item.product.id, item.quantity - 1),
-                        ),
-                        icon: const Icon(Icons.remove),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        item.product.imageUrl,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
                       ),
-                      Text('${item.quantity}'),
-                      IconButton(
-                        onPressed: () => unawaited(
-                          session.updateQuantity(item.product.id, item.quantity + 1),
-                        ),
-                        icon: const Icon(Icons.add),
+                    ),
+                    title: Text(item.product.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    subtitle: Text(
+                      item.quantity > item.product.stock || item.product.stock <= 0
+                          ? '${s.t('unavailableItem')}\n\$${item.product.price.toStringAsFixed(2)} × ${item.quantity}'
+                          : '\$${item.product.price.toStringAsFixed(2)} × ${item.quantity} = \$${item.lineTotal.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        color: item.quantity > item.product.stock || item.product.stock <= 0
+                            ? WingerColors.dangerInk
+                            : null,
                       ),
-                    ],
+                    ),
+                    isThreeLine: true,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: () => unawaited(
+                            session.updateQuantity(item.product.id, item.quantity - 1),
+                          ),
+                          icon: const Icon(Icons.remove),
+                        ),
+                        Text('${item.quantity}'),
+                        IconButton(
+                          onPressed: item.quantity >= item.product.stock
+                              ? null
+                              : () => unawaited(
+                                    session.updateQuantity(
+                                      item.product.id,
+                                      item.quantity + 1,
+                                    ),
+                                  ),
+                          icon: const Icon(Icons.add),
+                        ),
+                        IconButton(
+                          tooltip: s.t('remove'),
+                          onPressed: () => unawaited(session.removeFromCart(item.product.id)),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             const SizedBox(height: 12),
           ],
+          Text('${s.t('deliveryFee')}: \$0.00', style: TextStyle(color: WingerColors.muted)),
+          Text('${s.t('tax')}: \$0.00', style: TextStyle(color: WingerColors.muted)),
+          const SizedBox(height: 4),
           Text('${s.t('dueToday')}: \$${session.cartTotal.toStringAsFixed(2)}',
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
           const SizedBox(height: 12),
           FilledButton(
-            onPressed: () => context.go('/customer/checkout'),
+            onPressed: hasStockIssue || _refreshing
+                ? null
+                : () async {
+                    final ok = await session.refreshCartFromServer();
+                    if (!context.mounted) return;
+                    if (!ok || session.cart.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(s.t('unavailableItem'))),
+                      );
+                      return;
+                    }
+                    context.go('/customer/checkout');
+                  },
             child: Text(s.t('checkoutAll')),
           ),
         ],

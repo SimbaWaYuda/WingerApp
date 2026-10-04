@@ -101,6 +101,46 @@ class CartItem {
   }
 }
 
+class CartValidationResult {
+  const CartValidationResult({
+    required this.ok,
+    required this.subtotal,
+    required this.total,
+    required this.deliveryFee,
+    required this.tax,
+    required this.lines,
+  });
+
+  final bool ok;
+  final double subtotal;
+  final double total;
+  final double deliveryFee;
+  final double tax;
+  final List<CartValidationLine> lines;
+}
+
+class CartValidationLine {
+  const CartValidationLine({
+    required this.productId,
+    required this.available,
+    required this.requestedQty,
+    required this.availableQty,
+    required this.unitPrice,
+    required this.lineTotal,
+    this.reason,
+    this.product,
+  });
+
+  final String productId;
+  final bool available;
+  final String? reason;
+  final int requestedQty;
+  final int availableQty;
+  final double unitPrice;
+  final double lineTotal;
+  final Product? product;
+}
+
 class ShipmentLeg {
   const ShipmentLeg({
     required this.supplierName,

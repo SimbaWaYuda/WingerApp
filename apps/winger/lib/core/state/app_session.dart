@@ -241,13 +241,90 @@ class AppSession extends ChangeNotifier {
     await _cartRepository?.remove(productId);
   }
 
-  void toggleCompare(String productId) {
+  /// Sync cart lines with trusted server prices/stock. Returns false if issues remain.
+  Future<bool> refreshCartFromServer() async {
+    if (_cart.isEmpty || _api == null || accessToken == null) {
+      return _cart.isNotEmpty &&
+          !_cart.any((item) => item.quantity > item.product.stock || item.product.stock <= 0);
+    }
+    try {
+      final result = await _api!.validateCart(List.of(_cart));
+      final next = <CartItem>[];
+      for (final line in result.lines) {
+        final product = line.product;
+        if (product == null) {
+          await _cartRepository?.remove(line.productId);
+          continue;
+        }
+        final qty = line.availableQty <= 0
+            ? 0
+            : line.requestedQty.clamp(1, line.availableQty);
+        if (qty <= 0) {
+          await _cartRepository?.remove(product.id);
+          continue;
+        }
+        next.add(CartItem(product: product, quantity: qty));
+        await _cartRepository?.upsert(product, qty);
+      }
+      _cart
+        ..clear()
+        ..addAll(next);
+      notifyListeners();
+      return result.ok &&
+          !_cart.any((item) => item.quantity > item.product.stock);
+    } catch (_) {
+      return !_cart.any(
+        (item) => item.quantity > item.product.stock || item.product.stock <= 0,
+      );
+    }
+  }
+
+  /// Returns true when the product is now selected for compare.
+  bool toggleCompare(String productId) {
     if (compareIds.contains(productId)) {
       compareIds.remove(productId);
-    } else if (compareIds.length < 3) {
-      compareIds.add(productId);
+      notifyListeners();
+      return false;
     }
+    if (compareIds.length >= 3) {
+      notifyListeners();
+      return false;
+    }
+    compareIds.add(productId);
     notifyListeners();
+    return true;
+  }
+
+  void clearCompare() {
+    if (compareIds.isEmpty) return;
+    compareIds.clear();
+    notifyListeners();
+  }
+
+  void removeFromCompare(String productId) {
+    if (!compareIds.remove(productId)) return;
+    notifyListeners();
+  }
+
+  /// Replaces compare with these product ids (max 3). Used for same-model compare.
+  void setCompare(Iterable<String> productIds) {
+    compareIds
+      ..clear()
+      ..addAll(productIds.take(3));
+    notifyListeners();
+  }
+
+  /// Adds product ids to compare (max 3). Returns how many were newly added.
+  int addToCompare(Iterable<String> productIds) {
+    var added = 0;
+    for (final id in productIds) {
+      if (compareIds.contains(id)) continue;
+      if (compareIds.length >= 3) break;
+      compareIds.add(id);
+      added++;
+    }
+    if (added > 0) notifyListeners();
+    return added;
   }
 
   Future<CustomerOrder> placeOrder({

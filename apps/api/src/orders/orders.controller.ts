@@ -18,12 +18,19 @@ import {
   CreateOrderDto,
   OrdersService,
   UpdateItemStatusDto,
+  ValidateCartDto,
 } from './orders.service';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
+
+  @Post('validate')
+  @Roles(UserRole.CUSTOMER)
+  validate(@CurrentUser() user: AuthUser, @Body() body: ValidateCartDto) {
+    return this.ordersService.validateCart(body, user);
+  }
 
   @Post()
   @Roles(UserRole.CUSTOMER)

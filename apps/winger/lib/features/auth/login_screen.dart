@@ -311,6 +311,7 @@ class _LoginForm extends StatelessWidget {
             '${s.t('languageHint')}\n\nDemo password: demo1234\n'
             'Customer: amina.mwangi@example.com\n'
             'Supplier: supplier@kijani.example\n'
+            'Supplier (Savanna): supplier@savanna.example\n'
             'Admin: admin@winger.example',
           ),
         ),

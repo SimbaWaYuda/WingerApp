@@ -4,9 +4,15 @@ import * as bcrypt from 'bcrypt';
 const prisma = new PrismaClient();
 
 const suppliers = [
-  { id: 's-kijani', name: 'Kijani Tech' },
-  { id: 's-atlas', name: 'Atlas Home' },
-  { id: 's-metals', name: 'Metals Outdoor' },
+  { id: 's-kijani', name: 'Kijani Tech', verificationStatus: 'APPROVED' },
+  { id: 's-atlas', name: 'Atlas Home', verificationStatus: 'APPROVED' },
+  { id: 's-metals', name: 'Metals Outdoor', verificationStatus: 'UNVERIFIED' },
+  // Same catalogue SKUs as Kijani at alternate prices — for multi-supplier compare.
+  {
+    id: 's-savanna',
+    name: 'Savanna Electronics',
+    verificationStatus: 'APPROVED',
+  },
 ];
 
 const products = [
@@ -133,14 +139,85 @@ const products = [
     stock: 33,
     stockStatus: StockStatus.IN_STOCK,
   },
+  // Savanna Electronics — same models as Kijani, different selling prices.
+  {
+    id: 'p-aeropulse-savanna',
+    name: 'AeroPulse ANC Headphones',
+    brand: 'AeroPulse',
+    supplierId: 's-savanna',
+    supplierName: 'Savanna Electronics',
+    price: 229,
+    previousPrice: 259,
+    rating: 4.6,
+    imageUrl:
+      'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800',
+    category: 'Audio',
+    model: 'AP700',
+    color: 'Graphite',
+    size: 'Standard',
+    battery: '36h',
+    weight: '248g',
+    description:
+      'Quiet cabin-ready ANC headphones with multi-point Bluetooth and USB-C fast charge.',
+    stock: 35,
+    stockStatus: StockStatus.IN_STOCK,
+  },
+  {
+    id: 'p-pulsewatch-savanna',
+    name: 'Pulse Watch Pro',
+    brand: 'Pulse',
+    supplierId: 's-savanna',
+    supplierName: 'Savanna Electronics',
+    price: 299,
+    previousPrice: 329,
+    rating: 4.5,
+    imageUrl:
+      'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800',
+    category: 'Wearables',
+    model: 'PW-Pro',
+    color: 'Midnight',
+    size: '42mm',
+    battery: '7d',
+    weight: '38g',
+    description: 'Training-ready smartwatch with GPS and recovery insights.',
+    stock: 22,
+    stockStatus: StockStatus.IN_STOCK,
+  },
+  {
+    id: 'p-soundfold-savanna',
+    name: 'SoundFold Mini Speaker',
+    brand: 'SoundFold',
+    supplierId: 's-savanna',
+    supplierName: 'Savanna Electronics',
+    price: 69,
+    rating: 4.2,
+    imageUrl:
+      'https://images.unsplash.com/photo-1608043152269-423dbba4e7e1?w=800',
+    category: 'Audio',
+    model: 'SF-Mini',
+    color: 'Sand',
+    size: 'Compact',
+    battery: '12h',
+    weight: '310g',
+    description: 'Portable Bluetooth speaker with punchy midrange for travel.',
+    stock: 48,
+    stockStatus: StockStatus.IN_STOCK,
+  },
 ];
 
 async function main() {
   for (const supplier of suppliers) {
     await prisma.supplier.upsert({
       where: { id: supplier.id },
-      update: { name: supplier.name },
-      create: supplier,
+      update: {
+        name: supplier.name,
+        verificationStatus: supplier.verificationStatus,
+      },
+      create: {
+        id: supplier.id,
+        name: supplier.name,
+        verificationStatus: supplier.verificationStatus,
+      },
     });
   }
 
@@ -183,6 +260,12 @@ async function main() {
       name: 'John Doe',
       role: UserRole.SUPPLIER,
       supplierId: 's-kijani',
+    },
+    {
+      email: 'supplier@savanna.example',
+      name: 'Asha Otieno',
+      role: UserRole.SUPPLIER,
+      supplierId: 's-savanna',
     },
     {
       email: 'admin@winger.example',

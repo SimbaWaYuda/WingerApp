@@ -28,6 +28,10 @@ export type CreateOrderDto = {
   city?: string;
 };
 
+export type ValidateCartDto = {
+  items: CreateOrderItemDto[];
+};
+
 export type UpdateItemStatusDto = {
   status?: OrderStatus;
   trackingCode?: string;
@@ -43,6 +47,128 @@ export class OrdersService {
     private readonly stripe: StripeService,
     private readonly onboarding: OnboardingService,
   ) {}
+
+  /**
+   * Refresh trusted price/stock for cart lines without placing an order.
+   * Clients must not trust local cached prices at checkout.
+   */
+  async validateCart(dto: ValidateCartDto, user: AuthUser) {
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customers can validate a cart');
+    }
+    if (!dto.items?.length) {
+      throw new BadRequestException('Cart is empty');
+    }
+
+    const quantities = new Map<string, number>();
+    for (const item of dto.items) {
+      const qty = Number(item.quantity);
+      if (!item.productId || !Number.isFinite(qty) || qty < 1) {
+        throw new BadRequestException('Invalid cart item');
+      }
+      quantities.set(
+        item.productId,
+        (quantities.get(item.productId) ?? 0) + Math.floor(qty),
+      );
+    }
+
+    const productIds = [...quantities.keys()];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      include: { supplier: { select: { verificationStatus: true } } },
+    });
+    const byId = new Map(products.map((p) => [p.id, p]));
+
+    let subtotal = 0;
+    let ok = true;
+    const lines = productIds.map((productId) => {
+      const requestedQty = quantities.get(productId)!;
+      const product = byId.get(productId);
+      if (!product) {
+        ok = false;
+        return {
+          productId,
+          available: false,
+          reason: 'NOT_FOUND',
+          requestedQty,
+          availableQty: 0,
+          unitPrice: 0,
+          lineTotal: 0,
+          product: null as null,
+        };
+      }
+
+      const unitPrice = Number(product.price);
+      const availableQty = product.stock;
+      const clampedQty = Math.min(requestedQty, availableQty);
+      const priceChanged = false; // client sends no price — server is source of truth
+      const insufficient = requestedQty > availableQty || availableQty <= 0;
+      if (insufficient) ok = false;
+
+      const lineTotal = unitPrice * clampedQty;
+      subtotal += lineTotal;
+
+      return {
+        productId,
+        available: !insufficient,
+        reason: insufficient
+          ? availableQty <= 0
+            ? 'OUT_OF_STOCK'
+            : 'INSUFFICIENT_STOCK'
+          : null,
+        requestedQty,
+        availableQty,
+        unitPrice,
+        previousPrice:
+          product.previousPrice == null
+            ? null
+            : Number(product.previousPrice),
+        lineTotal,
+        priceChanged,
+        product: {
+          id: product.id,
+          name: product.name,
+          brand: product.brand,
+          supplierId: product.supplierId,
+          supplierName: product.supplierName,
+          supplierVerified:
+            product.supplier?.verificationStatus === 'APPROVED' ||
+            product.supplier?.verificationStatus === 'VERIFIED',
+          price: unitPrice,
+          previousPrice:
+            product.previousPrice == null
+              ? undefined
+              : Number(product.previousPrice),
+          rating: product.rating,
+          imageUrl: product.imageUrl,
+          category: product.category,
+          model: product.model,
+          color: product.color,
+          size: product.size,
+          battery: product.battery,
+          weight: product.weight,
+          description: product.description,
+          stock: product.stock,
+          stockStatus:
+            product.stockStatus === StockStatus.LOW_STOCK
+              ? 'lowStock'
+              : product.stockStatus === StockStatus.OUT_OF_STOCK
+                ? 'outOfStock'
+                : 'inStock',
+        },
+      };
+    });
+
+    return {
+      ok,
+      currency: 'usd',
+      subtotal,
+      total: subtotal,
+      deliveryFee: 0,
+      tax: 0,
+      lines,
+    };
+  }
 
   async create(dto: CreateOrderDto, user: AuthUser) {
     if (user.role !== UserRole.CUSTOMER) {
