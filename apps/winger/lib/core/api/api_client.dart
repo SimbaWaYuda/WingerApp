@@ -230,6 +230,25 @@ class ApiClient {
     }).toList();
   }
 
+  Future<List<CatalogSupplier>> fetchSuppliers() async {
+    final response = await http
+        .get(_uri('/products/suppliers'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 3));
+    if (response.statusCode != 200) {
+      throw Exception('Suppliers HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.map((raw) {
+      final row = raw as Map<String, dynamic>;
+      return CatalogSupplier(
+        id: row['id'] as String? ?? '',
+        name: row['name'] as String? ?? 'Supplier',
+        productCount: row['productCount'] as int? ?? 0,
+      );
+    }).where((s) => s.id.isNotEmpty).toList();
+  }
+
   Future<ProductPage> browseProducts({
     String query = '',
     String? category,
@@ -237,6 +256,7 @@ class ApiClient {
     String? supplierId,
     double? minPrice,
     double? maxPrice,
+    double? minRating,
     bool inStock = false,
     String sort = 'relevance',
     int page = 1,
@@ -252,6 +272,7 @@ class ApiClient {
       if (supplierId != null && supplierId.isNotEmpty) 'supplierId': supplierId,
       if (minPrice != null) 'minPrice': minPrice.toString(),
       if (maxPrice != null) 'maxPrice': maxPrice.toString(),
+      if (minRating != null) 'minRating': minRating.toString(),
       if (inStock) 'inStock': 'true',
     };
     final response = await http

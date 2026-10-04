@@ -30,6 +30,12 @@ export type CategoryDto = {
   productCount: number;
 };
 
+export type SupplierFacetDto = {
+  id: string;
+  name: string;
+  productCount: number;
+};
+
 export type ProductBrowseQuery = {
   q?: string;
   category?: string;
@@ -37,6 +43,7 @@ export type ProductBrowseQuery = {
   supplierId?: string;
   minPrice?: number;
   maxPrice?: number;
+  minRating?: number;
   inStock?: boolean;
   sort?: string;
   page?: number;
@@ -81,6 +88,19 @@ export class ProductsService {
     });
     return grouped.map((row) => ({
       name: row.brand,
+      productCount: row._count._all,
+    }));
+  }
+
+  async listSuppliers(): Promise<SupplierFacetDto[]> {
+    const grouped = await this.prisma.product.groupBy({
+      by: ['supplierId', 'supplierName'],
+      _count: { _all: true },
+      orderBy: { supplierName: 'asc' },
+    });
+    return grouped.map((row) => ({
+      id: row.supplierId,
+      name: row.supplierName,
       productCount: row._count._all,
     }));
   }
@@ -150,6 +170,9 @@ function buildWhere(query: ProductBrowseQuery): Prisma.ProductWhereInput {
   }
   if (query.maxPrice != null && Number.isFinite(query.maxPrice)) {
     and.push({ price: { lte: query.maxPrice } });
+  }
+  if (query.minRating != null && Number.isFinite(query.minRating)) {
+    and.push({ rating: { gte: query.minRating } });
   }
   if (query.inStock) {
     and.push({ stock: { gt: 0 } });

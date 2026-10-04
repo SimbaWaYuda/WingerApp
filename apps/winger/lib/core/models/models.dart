@@ -66,6 +66,18 @@ class CatalogCategory {
   final int productCount;
 }
 
+class CatalogSupplier {
+  const CatalogSupplier({
+    required this.id,
+    required this.name,
+    required this.productCount,
+  });
+
+  final String id;
+  final String name;
+  final int productCount;
+}
+
 class ProductPage {
   const ProductPage({
     required this.items,

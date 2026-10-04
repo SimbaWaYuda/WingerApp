@@ -15,6 +15,11 @@ export class ProductsController {
     return this.productsService.listBrands();
   }
 
+  @Get('suppliers')
+  listSuppliers() {
+    return this.productsService.listSuppliers();
+  }
+
   @Get()
   findAll(
     @Query('q') q?: string,
@@ -23,6 +28,7 @@ export class ProductsController {
     @Query('supplierId') supplierId?: string,
     @Query('minPrice') minPrice?: string,
     @Query('maxPrice') maxPrice?: string,
+    @Query('minRating') minRating?: string,
     @Query('inStock') inStock?: string,
     @Query('sort') sort?: string,
     @Query('page') page?: string,
@@ -35,6 +41,7 @@ export class ProductsController {
       supplierId != null ||
       minPrice != null ||
       maxPrice != null ||
+      minRating != null ||
       inStock != null ||
       sort != null ||
       pageSize != null;
@@ -51,6 +58,7 @@ export class ProductsController {
       supplierId,
       minPrice: minPrice != null ? Number(minPrice) : undefined,
       maxPrice: maxPrice != null ? Number(maxPrice) : undefined,
+      minRating: minRating != null ? Number(minRating) : undefined,
       inStock: inStock === '1' || inStock === 'true',
       sort,
       page: page != null ? Number(page) : 1,

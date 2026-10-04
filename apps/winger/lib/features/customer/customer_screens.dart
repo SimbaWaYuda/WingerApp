@@ -421,6 +421,9 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   late final TextEditingController _queryCtrl;
   String? _category;
   String? _brand;
+  String? _supplierId;
+  String? _supplierName;
+  double? _minRating;
   /// null = any; otherwise [min, max] with null max meaning open-ended.
   (double?, double?)? _priceRange;
   String _sort = 'relevance';
@@ -429,6 +432,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   Future<ProductPage>? _future;
   Future<List<CatalogCategory>>? _categoriesFuture;
   Future<List<CatalogCategory>>? _brandsFuture;
+  Future<List<CatalogSupplier>>? _suppliersFuture;
 
   @override
   void initState() {
@@ -438,6 +442,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     final catalog = context.read<CatalogRepository>();
     _categoriesFuture = catalog.getCategories();
     _brandsFuture = catalog.getBrands();
+    _suppliersFuture = catalog.getSuppliers();
     _reload();
   }
 
@@ -451,11 +456,101 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     _queryCtrl.clear();
     _category = null;
     _brand = null;
+    _supplierId = null;
+    _supplierName = null;
+    _minRating = null;
     _priceRange = null;
     _inStockOnly = false;
     _sort = 'relevance';
     _page = 1;
     _reload();
+  }
+
+  String? _priceLabel(WingerStrings s) {
+    if (_priceRange == null) return null;
+    if (_priceRange!.$1 == null && _priceRange!.$2 == 100) return s.t('priceUnder100');
+    if (_priceRange!.$1 == 100 && _priceRange!.$2 == 250) return s.t('price100to250');
+    if (_priceRange!.$1 == 250 && _priceRange!.$2 == 500) return s.t('price250to500');
+    if (_priceRange!.$1 == 500 && _priceRange!.$2 == null) return s.t('priceOver500');
+    return s.t('price');
+  }
+
+  List<({String label, VoidCallback onClear})> _activeFilters(WingerStrings s) {
+    final chips = <({String label, VoidCallback onClear})>[];
+    final q = _queryCtrl.text.trim();
+    if (q.isNotEmpty) {
+      chips.add((
+        label: '"$q"',
+        onClear: () {
+          _queryCtrl.clear();
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
+    if (_category != null) {
+      chips.add((
+        label: _category!,
+        onClear: () {
+          _category = null;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
+    if (_brand != null) {
+      chips.add((
+        label: _brand!,
+        onClear: () {
+          _brand = null;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
+    if (_supplierId != null) {
+      chips.add((
+        label: _supplierName ?? _supplierId!,
+        onClear: () {
+          _supplierId = null;
+          _supplierName = null;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
+    final price = _priceLabel(s);
+    if (price != null) {
+      chips.add((
+        label: price,
+        onClear: () {
+          _priceRange = null;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
+    if (_minRating != null) {
+      chips.add((
+        label: _minRating == 4.5 ? s.t('rating45plus') : s.t('rating4plus'),
+        onClear: () {
+          _minRating = null;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
+    if (_inStockOnly) {
+      chips.add((
+        label: s.t('inStockOnly'),
+        onClear: () {
+          _inStockOnly = false;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
+    return chips;
   }
 
   void _reload() {
@@ -464,8 +559,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             query: _queryCtrl.text,
             category: _category,
             brand: _brand,
+            supplierId: _supplierId,
             minPrice: _priceRange?.$1,
             maxPrice: _priceRange?.$2,
+            minRating: _minRating,
             inStock: _inStockOnly,
             sort: _sort,
             page: _page,
@@ -521,6 +618,38 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
           onSubmitted: (_) {
             _page = 1;
             _reload();
+          },
+        ),
+        Builder(
+          builder: (context) {
+            final active = _activeFilters(s);
+            if (active.isEmpty) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(s.t('activeFilters'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final chip in active)
+                        InputChip(
+                          label: Text(chip.label),
+                          onDeleted: chip.onClear,
+                          deleteIcon: const Icon(Icons.close, size: 16),
+                        ),
+                      ActionChip(
+                        label: Text(s.t('clearFilters')),
+                        onPressed: _clearFilters,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
           },
         ),
         const SizedBox(height: 12),
@@ -643,6 +772,84 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
               selected: _priceRange?.$1 == 500 && _priceRange?.$2 == null,
               onSelected: (_) {
                 _priceRange = (500.0, null);
+                _page = 1;
+                _reload();
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        FutureBuilder<List<CatalogSupplier>>(
+          future: _suppliersFuture,
+          builder: (context, snapshot) {
+            final suppliers = snapshot.data ?? const <CatalogSupplier>[];
+            if (suppliers.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(s.t('suppliers'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilterChip(
+                      label: Text(s.t('allSuppliers')),
+                      selected: _supplierId == null,
+                      onSelected: (_) {
+                        _supplierId = null;
+                        _supplierName = null;
+                        _page = 1;
+                        _reload();
+                      },
+                    ),
+                    for (final supplier in suppliers)
+                      FilterChip(
+                        label: Text(supplier.name),
+                        selected: _supplierId == supplier.id,
+                        onSelected: (_) {
+                          _supplierId = supplier.id;
+                          _supplierName = supplier.name;
+                          _page = 1;
+                          _reload();
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+            );
+          },
+        ),
+        Text(s.t('rating'), style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChip(
+              label: Text(s.t('anyRating')),
+              selected: _minRating == null,
+              onSelected: (_) {
+                _minRating = null;
+                _page = 1;
+                _reload();
+              },
+            ),
+            FilterChip(
+              label: Text(s.t('rating4plus')),
+              selected: _minRating == 4.0,
+              onSelected: (_) {
+                _minRating = 4.0;
+                _page = 1;
+                _reload();
+              },
+            ),
+            FilterChip(
+              label: Text(s.t('rating45plus')),
+              selected: _minRating == 4.5,
+              onSelected: (_) {
+                _minRating = 4.5;
                 _page = 1;
                 _reload();
               },

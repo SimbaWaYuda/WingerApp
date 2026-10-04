@@ -81,12 +81,38 @@ class CatalogRepository {
     ];
   }
 
+  Future<List<CatalogSupplier>> getSuppliers() async {
+    try {
+      final remote = await api.fetchSuppliers();
+      if (remote.isNotEmpty) return remote;
+    } catch (_) {}
+    final products = await db.getProducts();
+    final counts = <String, int>{};
+    final names = <String, String>{};
+    for (final product in products) {
+      counts[product.supplierId] = (counts[product.supplierId] ?? 0) + 1;
+      names[product.supplierId] = product.supplierName;
+    }
+    final ids = counts.keys.toList()
+      ..sort((a, b) => (names[a] ?? a).compareTo(names[b] ?? b));
+    return [
+      for (final id in ids)
+        CatalogSupplier(
+          id: id,
+          name: names[id] ?? id,
+          productCount: counts[id]!,
+        ),
+    ];
+  }
+
   Future<ProductPage> browseProducts({
     String query = '',
     String? category,
     String? brand,
+    String? supplierId,
     double? minPrice,
     double? maxPrice,
+    double? minRating,
     bool inStock = false,
     String sort = 'relevance',
     int page = 1,
@@ -97,8 +123,10 @@ class CatalogRepository {
         query: query,
         category: category,
         brand: brand,
+        supplierId: supplierId,
         minPrice: minPrice,
         maxPrice: maxPrice,
+        minRating: minRating,
         inStock: inStock,
         sort: sort,
         page: page,
@@ -120,11 +148,17 @@ class CatalogRepository {
             .where((p) => p.brand.toLowerCase() == brand.toLowerCase())
             .toList();
       }
+      if (supplierId != null && supplierId.isNotEmpty) {
+        local = local.where((p) => p.supplierId == supplierId).toList();
+      }
       if (minPrice != null) {
         local = local.where((p) => p.price >= minPrice).toList();
       }
       if (maxPrice != null) {
         local = local.where((p) => p.price <= maxPrice).toList();
+      }
+      if (minRating != null) {
+        local = local.where((p) => p.rating >= minRating).toList();
       }
       if (inStock) {
         local = local.where((p) => p.stock > 0).toList();
