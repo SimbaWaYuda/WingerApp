@@ -3,12 +3,14 @@ import 'package:flutter/foundation.dart';
 import '../api/api_client.dart';
 import '../data/mock_catalog.dart';
 import '../models/models.dart';
+import '../offline/offline_database.dart';
 import '../repositories/cart_repository.dart';
 
 class AppSession extends ChangeNotifier {
   AppSession();
 
   CartRepository? _cartRepository;
+  OfflineDatabase? _db;
   ApiClient? _api;
 
   UserRole? role;
@@ -25,6 +27,8 @@ class AppSession extends ChangeNotifier {
   LocaleCode localeCode = LocaleCode.en;
   final List<CartItem> _cart = [];
   final List<String> compareIds = [];
+  final List<String> wishlistIds = [];
+  final List<String> recentlyViewedIds = [];
   CustomerOrder? lastOrder;
   bool apiOnline = false;
   int pendingSyncCount = 0;
@@ -34,6 +38,7 @@ class AppSession extends ChangeNotifier {
   int get cartCount => _cart.fold(0, (sum, item) => sum + item.quantity);
   double get cartTotal => _cart.fold(0, (sum, item) => sum + item.lineTotal);
   bool get isSignedIn => role != null;
+  bool isWishlisted(String productId) => wishlistIds.contains(productId);
 
   Map<String, String> get authHeaders => {
         if (accessToken != null) 'Authorization': 'Bearer $accessToken',
@@ -52,6 +57,10 @@ class AppSession extends ChangeNotifier {
     _cartRepository = repository;
   }
 
+  void attachDatabase(OfflineDatabase db) {
+    _db = db;
+  }
+
   void attachApi(ApiClient api) {
     _api = api;
   }
@@ -63,7 +72,38 @@ class AppSession extends ChangeNotifier {
         ..clear()
         ..addAll(items);
     }
+    if (_db != null) {
+      final wished = await _db!.loadWishlistIds();
+      final recent = await _db!.loadRecentlyViewedIds();
+      wishlistIds
+        ..clear()
+        ..addAll(wished);
+      recentlyViewedIds
+        ..clear()
+        ..addAll(recent);
+    }
     notifyListeners();
+  }
+
+  Future<void> toggleWishlist(String productId) async {
+    final next = !wishlistIds.contains(productId);
+    if (next) {
+      wishlistIds.insert(0, productId);
+    } else {
+      wishlistIds.remove(productId);
+    }
+    notifyListeners();
+    await _db?.setWishlist(productId, next);
+  }
+
+  Future<void> markProductViewed(String productId) async {
+    recentlyViewedIds.remove(productId);
+    recentlyViewedIds.insert(0, productId);
+    if (recentlyViewedIds.length > 12) {
+      recentlyViewedIds.removeRange(12, recentlyViewedIds.length);
+    }
+    notifyListeners();
+    await _db?.touchRecentlyViewed(productId);
   }
 
   Future<void> setLocale(LocaleCode code) async {

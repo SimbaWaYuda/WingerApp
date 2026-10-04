@@ -46,7 +46,13 @@ GoRouter createRouter(AppSession session) {
         routes: [
           GoRoute(path: '/customer', builder: (context, state) => const CustomerHomeScreen()),
           GoRoute(path: '/customer/onboarding', builder: (context, state) => const CustomerOnboardingScreen()),
-          GoRoute(path: '/customer/search', builder: (context, state) => const CustomerSearchScreen()),
+          GoRoute(
+            path: '/customer/search',
+            builder: (context, state) => CustomerSearchScreen(
+              initialCategory: state.uri.queryParameters['category'],
+              initialQuery: state.uri.queryParameters['q'],
+            ),
+          ),
           GoRoute(path: '/customer/compare', builder: (context, state) => const CompareScreen()),
           GoRoute(
             path: '/customer/product/:id',
@@ -54,6 +60,7 @@ GoRouter createRouter(AppSession session) {
                 ProductDetailScreen(productId: state.pathParameters['id']!),
           ),
           GoRoute(path: '/customer/cart', builder: (context, state) => const CartScreen()),
+          GoRoute(path: '/customer/wishlist', builder: (context, state) => const WishlistScreen()),
           GoRoute(path: '/customer/checkout', builder: (context, state) => const CheckoutScreen()),
           GoRoute(path: '/customer/orders', builder: (context, state) => const OrdersScreen()),
           GoRoute(path: '/customer/account', builder: (context, state) => const CustomerAccountScreen()),

@@ -49,11 +49,14 @@ class CustomerHomeScreen extends StatefulWidget {
 
 class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
   late Future<List<Product>> _products;
+  late Future<List<CatalogCategory>> _categories;
 
   @override
   void initState() {
     super.initState();
-    _products = context.read<CatalogRepository>().getProducts();
+    final catalog = context.read<CatalogRepository>();
+    _products = catalog.getProducts();
+    _categories = catalog.getCategories();
     _stampBrowse();
   }
 
@@ -66,6 +69,45 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
     } catch (_) {}
   }
 
+  List<Product> _byIds(List<Product> all, List<String> ids) {
+    final map = {for (final p in all) p.id: p};
+    return [for (final id in ids) if (map[id] != null) map[id]!];
+  }
+
+  Widget _productStrip({
+    required List<Product> products,
+    required bool wide,
+    required AppSession session,
+  }) {
+    if (products.isEmpty) {
+      return Text('—', style: TextStyle(color: WingerColors.muted));
+    }
+    final height = wide ? 320.0 : 300.0;
+    return SizedBox(
+      height: height,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: products.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final product = products[index];
+          return SizedBox(
+            width: wide ? 210 : 180,
+            child: ProductCard(
+              product: product,
+              wishlisted: session.isWishlisted(product.id),
+              compareSelected: session.compareIds.contains(product.id),
+              onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+              onCompare: () => session.toggleCompare(product.id),
+              onAddToCart: () => unawaited(session.addToCart(product)),
+              onTap: () => context.go('/customer/product/${product.id}'),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
@@ -73,9 +115,21 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
     final wide = MediaQuery.sizeOf(context).width >= 900;
 
     return FutureBuilder(
-      future: _products,
+      future: Future.wait([_products, _categories]),
       builder: (context, snapshot) {
-        final products = snapshot.data ?? MockCatalog.products;
+        final products = snapshot.data != null
+            ? snapshot.data![0] as List<Product>
+            : MockCatalog.products;
+        final categories = snapshot.data != null
+            ? snapshot.data![1] as List<CatalogCategory>
+            : <CatalogCategory>[];
+        final featured = [...products]..sort((a, b) => b.rating.compareTo(a.rating));
+        final deals = products
+            .where((p) => p.previousPrice != null && p.previousPrice! > p.price)
+            .toList();
+        final recent = _byIds(products, session.recentlyViewedIds);
+        final wishlisted = _byIds(products, session.wishlistIds);
+
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
@@ -83,22 +137,37 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
             Container(
               padding: EdgeInsets.all(wide ? 32 : 20),
               decoration: BoxDecoration(
-                color: WingerColors.brand,
+                gradient: LinearGradient(
+                  colors: [WingerColors.brand, WingerColors.brand.withValues(alpha: 0.85)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
                 borderRadius: BorderRadius.circular(24),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    s.t('heroTitle'),
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    'Winger',
+                    style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                           color: Colors.white,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w900,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    s.t('heroTitle'),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Colors.white.withValues(alpha: 0.92),
+                          fontWeight: FontWeight.w600,
                         ),
                   ),
                   const SizedBox(height: 16),
                   FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: WingerColors.brand),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: WingerColors.attention,
+                      foregroundColor: WingerColors.attentionInk,
+                    ),
                     onPressed: () => context.go('/customer/search'),
                     child: Text(s.t('explore')),
                   ),
@@ -112,26 +181,80 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
               decoration: InputDecoration(
                 hintText: s.t('searchHint'),
                 prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(
-                  onPressed: () => context.go('/customer/cart'),
-                  icon: Badge(
-                    isLabelVisible: session.cartCount > 0,
-                    label: Text('${session.cartCount}'),
-                    child: const Icon(Icons.shopping_cart_outlined),
-                  ),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: () => context.go('/customer/wishlist'),
+                      icon: Badge(
+                        isLabelVisible: session.wishlistIds.isNotEmpty,
+                        label: Text('${session.wishlistIds.length}'),
+                        child: const Icon(Icons.favorite_border),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => context.go('/customer/cart'),
+                      icon: Badge(
+                        isLabelVisible: session.cartCount > 0,
+                        label: Text('${session.cartCount}'),
+                        child: const Icon(Icons.shopping_cart_outlined),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+            if (categories.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              Text(
+                s.t('categories'),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final category in categories)
+                    ActionChip(
+                      label: Text('${category.name} (${category.productCount})'),
+                      backgroundColor: WingerColors.brandMuted,
+                      onPressed: () => context.go(
+                        '/customer/search?category=${Uri.encodeComponent(category.name)}',
+                      ),
+                    ),
+                ],
+              ),
+            ],
+            if (deals.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              Text(
+                s.t('currentOffers'),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 10),
+              _productStrip(products: deals.take(8).toList(), wide: wide, session: session),
+            ],
+            const SizedBox(height: 24),
             Row(
               children: [
-                Text(s.t('products'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                Text(
+                  s.t('featuredProducts'),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
                 const Spacer(),
                 TextButton(
                   onPressed: () => context.go('/customer/compare'),
                   child: Text('${s.t('compare')} (${session.compareIds.length})'),
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            _productStrip(products: featured.take(8).toList(), wide: wide, session: session),
+            const SizedBox(height: 24),
+            Text(
+              s.t('products'),
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 12),
             GridView.builder(
@@ -142,18 +265,39 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
                 crossAxisCount: wide ? 4 : 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: wide ? 0.72 : 0.68,
+                childAspectRatio: wide ? 0.68 : 0.64,
               ),
               itemBuilder: (context, index) {
                 final product = products[index];
                 return ProductCard(
                   product: product,
+                  wishlisted: session.isWishlisted(product.id),
                   compareSelected: session.compareIds.contains(product.id),
+                  onWishlist: () => unawaited(session.toggleWishlist(product.id)),
                   onCompare: () => session.toggleCompare(product.id),
+                  onAddToCart: () => unawaited(session.addToCart(product)),
                   onTap: () => context.go('/customer/product/${product.id}'),
                 );
               },
             ),
+            if (recent.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              Text(
+                s.t('recentlyViewed'),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 10),
+              _productStrip(products: recent, wide: wide, session: session),
+            ],
+            if (wishlisted.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              Text(
+                s.t('wishlist'),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 10),
+              _productStrip(products: wishlisted, wide: wide, session: session),
+            ],
           ],
         );
       },
@@ -162,66 +306,321 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
 }
 
 class CustomerSearchScreen extends StatefulWidget {
-  const CustomerSearchScreen({super.key});
+  const CustomerSearchScreen({
+    super.key,
+    this.initialCategory,
+    this.initialQuery,
+  });
+
+  final String? initialCategory;
+  final String? initialQuery;
 
   @override
   State<CustomerSearchScreen> createState() => _CustomerSearchScreenState();
 }
 
 class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
-  String _query = '';
-  late Future<List<Product>> _future;
+  late final TextEditingController _queryCtrl;
+  String? _category;
+  String _sort = 'relevance';
+  bool _inStockOnly = false;
+  int _page = 1;
+  Future<ProductPage>? _future;
+  Future<List<CatalogCategory>>? _categoriesFuture;
 
   @override
   void initState() {
     super.initState();
-    _future = context.read<CatalogRepository>().getProducts();
+    _queryCtrl = TextEditingController(text: widget.initialQuery ?? '');
+    _category = widget.initialCategory;
+    _categoriesFuture = context.read<CatalogRepository>().getCategories();
+    _reload();
   }
 
-  void _search(String value) {
+  @override
+  void dispose() {
+    _queryCtrl.dispose();
+    super.dispose();
+  }
+
+  void _reload() {
     setState(() {
-      _query = value;
-      _future = context.read<CatalogRepository>().getProducts(query: value);
+      _future = context.read<CatalogRepository>().browseProducts(
+            query: _queryCtrl.text,
+            category: _category,
+            inStock: _inStockOnly,
+            sort: _sort,
+            page: _page,
+            pageSize: 24,
+          );
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final future = _future;
+
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        Text(s.t('search'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
         TextField(
-          autofocus: true,
+          controller: _queryCtrl,
+          autofocus: widget.initialQuery == null && widget.initialCategory == null,
           decoration: InputDecoration(
             hintText: s.t('searchHint'),
             prefixIcon: const Icon(Icons.search),
+            suffixIcon: IconButton(
+              onPressed: () {
+                _page = 1;
+                _reload();
+              },
+              icon: const Icon(Icons.arrow_forward),
+            ),
           ),
-          onChanged: _search,
+          onSubmitted: (_) {
+            _page = 1;
+            _reload();
+          },
         ),
-        const SizedBox(height: 16),
-        FutureBuilder(
-          future: _future,
+        const SizedBox(height: 12),
+        FutureBuilder<List<CatalogCategory>>(
+          future: _categoriesFuture,
           builder: (context, snapshot) {
-            final products = snapshot.data ?? MockCatalog.search(_query);
-            return Column(
+            final categories = snapshot.data ?? const <CatalogCategory>[];
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
-                for (final product in products)
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.network(product.imageUrl, width: 56, height: 56, fit: BoxFit.cover),
-                    ),
-                    title: Text(product.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-                    subtitle: Text('${product.supplierName} · \$${product.price.toStringAsFixed(2)}'),
-                    onTap: () => context.go('/customer/product/${product.id}'),
+                FilterChip(
+                  label: Text(s.t('allCategories')),
+                  selected: _category == null,
+                  onSelected: (_) {
+                    _category = null;
+                    _page = 1;
+                    _reload();
+                  },
+                ),
+                for (final category in categories)
+                  FilterChip(
+                    label: Text(category.name),
+                    selected: _category == category.name,
+                    onSelected: (_) {
+                      _category = category.name;
+                      _page = 1;
+                      _reload();
+                    },
                   ),
               ],
             );
           },
         ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            FilterChip(
+              label: Text(s.t('inStockOnly')),
+              selected: _inStockOnly,
+              onSelected: (value) {
+                _inStockOnly = value;
+                _page = 1;
+                _reload();
+              },
+            ),
+            DropdownButton<String>(
+              value: _sort,
+              underline: const SizedBox.shrink(),
+              items: [
+                DropdownMenuItem(value: 'relevance', child: Text(s.t('sortRelevance'))),
+                DropdownMenuItem(value: 'price_asc', child: Text(s.t('sortPriceAsc'))),
+                DropdownMenuItem(value: 'price_desc', child: Text(s.t('sortPriceDesc'))),
+                DropdownMenuItem(value: 'rating', child: Text(s.t('sortRating'))),
+                DropdownMenuItem(value: 'newest', child: Text(s.t('sortNewest'))),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                _sort = value;
+                _page = 1;
+                _reload();
+              },
+            ),
+            TextButton(
+              onPressed: () {
+                _queryCtrl.clear();
+                _category = null;
+                _inStockOnly = false;
+                _sort = 'relevance';
+                _page = 1;
+                _reload();
+              },
+              child: Text(s.t('clearFilters')),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (future == null)
+          const Center(child: CircularProgressIndicator())
+        else
+          FutureBuilder<ProductPage>(
+            future: future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final page = snapshot.data;
+              final items = page?.items ?? const <Product>[];
+              if (items.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 32),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.search_off, size: 48, color: WingerColors.muted),
+                      const SizedBox(height: 12),
+                      Text(s.t('noResults'), style: TextStyle(color: WingerColors.muted)),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () {
+                          _queryCtrl.clear();
+                          _category = null;
+                          _inStockOnly = false;
+                          _page = 1;
+                          _reload();
+                        },
+                        child: Text(s.t('clearFilters')),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${page!.total} ${s.t('products').toLowerCase()}',
+                    style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 12),
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: items.length,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: wide ? 4 : 2,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: wide ? 0.68 : 0.64,
+                    ),
+                    itemBuilder: (context, index) {
+                      final product = items[index];
+                      return ProductCard(
+                        product: product,
+                        wishlisted: session.isWishlisted(product.id),
+                        compareSelected: session.compareIds.contains(product.id),
+                        onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                        onCompare: () => session.toggleCompare(product.id),
+                        onAddToCart: () => unawaited(session.addToCart(product)),
+                        onTap: () => context.go('/customer/product/${product.id}'),
+                      );
+                    },
+                  ),
+                  if (page.totalPages > 1) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        OutlinedButton(
+                          onPressed: _page <= 1
+                              ? null
+                              : () {
+                                  _page -= 1;
+                                  _reload();
+                                },
+                          child: Text(s.t('back')),
+                        ),
+                        const SizedBox(width: 12),
+                        Text('${s.t('page')} $_page / ${page.totalPages}'),
+                        const SizedBox(width: 12),
+                        OutlinedButton(
+                          onPressed: _page >= page.totalPages
+                              ? null
+                              : () {
+                                  _page += 1;
+                                  _reload();
+                                },
+                          child: Text(s.t('continueRole')),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
       ],
+    );
+  }
+}
+
+class WishlistScreen extends StatelessWidget {
+  const WishlistScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    final catalog = context.read<CatalogRepository>();
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+
+    return FutureBuilder<List<Product>>(
+      future: catalog.getProducts(),
+      builder: (context, snapshot) {
+        final all = snapshot.data ?? const <Product>[];
+        final map = {for (final p in all) p.id: p};
+        final items = [
+          for (final id in session.wishlistIds)
+            if (map[id] != null) map[id]!,
+        ];
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(s.t('wishlist'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 12),
+            if (items.isEmpty)
+              Text(s.t('wishlistEmpty'), style: TextStyle(color: WingerColors.muted))
+            else
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: items.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: wide ? 4 : 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: wide ? 0.68 : 0.64,
+                ),
+                itemBuilder: (context, index) {
+                  final product = items[index];
+                  return ProductCard(
+                    product: product,
+                    wishlisted: true,
+                    onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                    onAddToCart: () => unawaited(session.addToCart(product)),
+                    onTap: () => context.go('/customer/product/${product.id}'),
+                  );
+                },
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -252,6 +651,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   void initState() {
     super.initState();
     _future = context.read<CatalogRepository>().getProduct(widget.productId);
+    unawaited(_recordView());
+  }
+
+  Future<void> _recordView() async {
+    await context.read<AppSession>().markProductViewed(widget.productId);
   }
 
   @override
@@ -316,8 +720,40 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             const SizedBox(height: 8),
             Text('\$${product.price.toStringAsFixed(2)}',
                 style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: WingerColors.brand)),
+            if (product.previousPrice != null && product.previousPrice! > product.price) ...[
+              const SizedBox(height: 4),
+              Text(
+                '\$${product.previousPrice!.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  decoration: TextDecoration.lineThrough,
+                  color: WingerColors.muted,
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
-            Text('${product.supplierName} · ★ ${product.rating}'),
+            Row(
+              children: [
+                Text('${product.supplierName} · ★ ${product.rating}'),
+                if (product.supplierVerified) ...[
+                  const SizedBox(width: 6),
+                  const Icon(Icons.verified, size: 18, color: WingerColors.brand),
+                ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              product.stockStatus == StockStatus.outOfStock
+                  ? s.t('outOfStock')
+                  : product.stockStatus == StockStatus.lowStock
+                      ? '${s.t('lowStock')} · ${product.stock}'
+                      : '${s.t('inStock')} · ${product.stock}',
+              style: TextStyle(
+                color: product.stockStatus == StockStatus.outOfStock
+                    ? WingerColors.dangerInk
+                    : WingerColors.successInk,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             const SizedBox(height: 16),
             Text(product.description),
             const SizedBox(height: 16),
@@ -349,18 +785,31 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 const SizedBox(width: 12),
                 IconButton(onPressed: qty > 1 ? () => setState(() => qty--) : null, icon: const Icon(Icons.remove_circle_outline)),
                 Text('$qty', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-                IconButton(onPressed: () => setState(() => qty++), icon: const Icon(Icons.add_circle_outline)),
+                IconButton(
+                  onPressed: qty < product.stock ? () => setState(() => qty++) : null,
+                  icon: const Icon(Icons.add_circle_outline),
+                ),
               ],
             ),
             const SizedBox(height: 12),
             FilledButton(
-              onPressed: () async {
-                session.setDeliveryMethod(_deliveryToSession(selected));
-                await session.addToCart(product, quantity: qty);
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('addToCart'))));
-              },
+              onPressed: product.stock <= 0
+                  ? null
+                  : () async {
+                      session.setDeliveryMethod(_deliveryToSession(selected));
+                      await session.addToCart(product, quantity: qty.clamp(1, product.stock));
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('addToCart'))));
+                    },
               child: Text(s.t('addToCart')),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => unawaited(session.toggleWishlist(product.id)),
+              icon: Icon(
+                session.isWishlisted(product.id) ? Icons.favorite : Icons.favorite_border,
+              ),
+              label: Text(s.t('wishlist')),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
@@ -1115,7 +1564,12 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
               : Text(s.t('obSaveProfile')),
         ),
         const SizedBox(height: 24),
-        ListTile(leading: const Icon(Icons.favorite_border), title: Text(s.t('wishlist'))),
+        ListTile(
+          leading: const Icon(Icons.favorite_border),
+          title: Text(s.t('wishlist')),
+          trailing: Text('${session.wishlistIds.length}'),
+          onTap: () => context.go('/customer/wishlist'),
+        ),
         ListTile(leading: const Icon(Icons.notifications_none), title: Text(s.t('notifications'))),
         ListTile(leading: const Icon(Icons.support_agent), title: Text(s.t('support'))),
         ListTile(

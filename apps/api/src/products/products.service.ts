@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { StockStatus } from '@prisma/client';
+import { Prisma, StockStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type ProductDto = {
@@ -8,6 +8,7 @@ export type ProductDto = {
   brand: string;
   supplierId: string;
   supplierName: string;
+  supplierVerified: boolean;
   price: number;
   previousPrice?: number;
   rating: number;
@@ -21,34 +22,147 @@ export type ProductDto = {
   description: string;
   stock: number;
   stockStatus: 'inStock' | 'lowStock' | 'outOfStock';
+  createdAt?: string;
+};
+
+export type CategoryDto = {
+  name: string;
+  productCount: number;
+};
+
+export type ProductBrowseQuery = {
+  q?: string;
+  category?: string;
+  brand?: string;
+  supplierId?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  inStock?: boolean;
+  sort?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type ProductBrowseResult = {
+  items: ProductDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 };
 
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Backward-compatible list used by existing clients. */
   async findAll(query?: string): Promise<ProductDto[]> {
-    const q = query?.trim();
-    const products = await this.prisma.product.findMany({
-      where: q
-        ? {
-            OR: [
-              { name: { contains: q, mode: 'insensitive' } },
-              { brand: { contains: q, mode: 'insensitive' } },
-              { supplierName: { contains: q, mode: 'insensitive' } },
-              { category: { contains: q, mode: 'insensitive' } },
-            ],
-          }
-        : undefined,
-      orderBy: { name: 'asc' },
+    const result = await this.browse({ q: query, pageSize: 200, page: 1 });
+    return result.items;
+  }
+
+  async listCategories(): Promise<CategoryDto[]> {
+    const grouped = await this.prisma.product.groupBy({
+      by: ['category'],
+      _count: { _all: true },
+      orderBy: { category: 'asc' },
     });
-    return products.map(toDto);
+    return grouped.map((row) => ({
+      name: row.category,
+      productCount: row._count._all,
+    }));
+  }
+
+  async browse(query: ProductBrowseQuery = {}): Promise<ProductBrowseResult> {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(50, Math.max(1, Number(query.pageSize) || 24));
+    const where = buildWhere(query);
+    const orderBy = buildOrderBy(query.sort);
+
+    const [total, products] = await this.prisma.$transaction([
+      this.prisma.product.count({ where }),
+      this.prisma.product.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { supplier: { select: { verificationStatus: true } } },
+      }),
+    ]);
+
+    return {
+      items: products.map(toDto),
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
   }
 
   async findOne(id: string): Promise<ProductDto> {
-    const product = await this.prisma.product.findUnique({ where: { id } });
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: { supplier: { select: { verificationStatus: true } } },
+    });
     if (!product) throw new NotFoundException(`Product ${id} not found`);
     return toDto(product);
+  }
+}
+
+function buildWhere(query: ProductBrowseQuery): Prisma.ProductWhereInput {
+  const and: Prisma.ProductWhereInput[] = [];
+  const q = query.q?.trim();
+  if (q) {
+    and.push({
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { brand: { contains: q, mode: 'insensitive' } },
+        { supplierName: { contains: q, mode: 'insensitive' } },
+        { category: { contains: q, mode: 'insensitive' } },
+        { model: { contains: q, mode: 'insensitive' } },
+        { id: { contains: q, mode: 'insensitive' } },
+      ],
+    });
+  }
+  if (query.category?.trim()) {
+    and.push({ category: { equals: query.category.trim(), mode: 'insensitive' } });
+  }
+  if (query.brand?.trim()) {
+    and.push({ brand: { equals: query.brand.trim(), mode: 'insensitive' } });
+  }
+  if (query.supplierId?.trim()) {
+    and.push({ supplierId: query.supplierId.trim() });
+  }
+  if (query.minPrice != null && Number.isFinite(query.minPrice)) {
+    and.push({ price: { gte: query.minPrice } });
+  }
+  if (query.maxPrice != null && Number.isFinite(query.maxPrice)) {
+    and.push({ price: { lte: query.maxPrice } });
+  }
+  if (query.inStock) {
+    and.push({ stock: { gt: 0 } });
+  }
+  return and.length ? { AND: and } : {};
+}
+
+function buildOrderBy(
+  sort?: string,
+): Prisma.ProductOrderByWithRelationInput | Prisma.ProductOrderByWithRelationInput[] {
+  switch ((sort ?? 'relevance').toLowerCase()) {
+    case 'price_asc':
+      return { price: 'asc' };
+    case 'price_desc':
+      return { price: 'desc' };
+    case 'rating':
+    case 'popularity':
+      return [{ rating: 'desc' }, { name: 'asc' }];
+    case 'newest':
+      return { createdAt: 'desc' };
+    case 'name':
+      return { name: 'asc' };
+    case 'relevance':
+    default:
+      return { name: 'asc' };
   }
 }
 
@@ -71,6 +185,8 @@ function toDto(product: {
   description: string;
   stock: number;
   stockStatus: StockStatus;
+  createdAt?: Date;
+  supplier?: { verificationStatus: string } | null;
 }): ProductDto {
   const price =
     typeof product.price === 'number' ? product.price : product.price.toNumber();
@@ -87,6 +203,9 @@ function toDto(product: {
     brand: product.brand,
     supplierId: product.supplierId,
     supplierName: product.supplierName,
+    supplierVerified:
+      product.supplier?.verificationStatus === 'APPROVED' ||
+      product.supplier?.verificationStatus === 'VERIFIED',
     price,
     previousPrice,
     rating: product.rating,
@@ -100,6 +219,7 @@ function toDto(product: {
     description: product.description,
     stock: product.stock,
     stockStatus: mapStatus(product.stockStatus),
+    createdAt: product.createdAt?.toISOString(),
   };
 }
 

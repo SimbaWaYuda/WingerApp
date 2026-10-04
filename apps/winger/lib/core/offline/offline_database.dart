@@ -92,6 +92,61 @@ class OfflineDatabase {
         attempt_count INTEGER NOT NULL DEFAULT 0
       );
     ''');
+
+    db.execute('''
+      CREATE TABLE IF NOT EXISTS wishlist_ids (
+        product_id TEXT PRIMARY KEY,
+        saved_at TEXT NOT NULL
+      );
+    ''');
+
+    db.execute('''
+      CREATE TABLE IF NOT EXISTS recently_viewed (
+        product_id TEXT PRIMARY KEY,
+        viewed_at TEXT NOT NULL
+      );
+    ''');
+  }
+
+  Future<List<String>> loadWishlistIds() async {
+    final rows = db.select(
+      'SELECT product_id FROM wishlist_ids ORDER BY saved_at DESC',
+    );
+    return rows.map((row) => row['product_id'] as String).toList();
+  }
+
+  Future<void> setWishlist(String productId, bool wished) async {
+    if (wished) {
+      db.execute(
+        '''
+        INSERT INTO wishlist_ids (product_id, saved_at)
+        VALUES (?, ?)
+        ON CONFLICT(product_id) DO UPDATE SET saved_at=excluded.saved_at
+        ''',
+        [productId, DateTime.now().toIso8601String()],
+      );
+    } else {
+      db.execute('DELETE FROM wishlist_ids WHERE product_id = ?', [productId]);
+    }
+  }
+
+  Future<List<String>> loadRecentlyViewedIds({int limit = 12}) async {
+    final rows = db.select(
+      'SELECT product_id FROM recently_viewed ORDER BY viewed_at DESC LIMIT ?',
+      [limit],
+    );
+    return rows.map((row) => row['product_id'] as String).toList();
+  }
+
+  Future<void> touchRecentlyViewed(String productId) async {
+    db.execute(
+      '''
+      INSERT INTO recently_viewed (product_id, viewed_at)
+      VALUES (?, ?)
+      ON CONFLICT(product_id) DO UPDATE SET viewed_at=excluded.viewed_at
+      ''',
+      [productId, DateTime.now().toIso8601String()],
+    );
   }
 
   Future<void> close() async {

@@ -54,6 +54,7 @@ class _WingerAppState extends State<WingerApp> {
     );
     _analytics = Analytics(_api);
     _session.attachCartRepository(_cartRepository);
+    _session.attachDatabase(_db);
     _session.attachApi(_api);
     _router = createRouter(_session);
     _bootstrap();

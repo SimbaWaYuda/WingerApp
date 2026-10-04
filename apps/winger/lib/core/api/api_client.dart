@@ -179,8 +179,97 @@ class ApiClient {
       throw Exception('Products HTTP ${response.statusCode}');
     }
     session.setApiOnline(true);
+    final decoded = jsonDecode(response.body);
+    if (decoded is List) {
+      return decoded
+          .map((raw) => _productFromJson(raw as Map<String, dynamic>))
+          .toList();
+    }
+    if (decoded is Map<String, dynamic>) {
+      final items = decoded['items'] as List<dynamic>? ?? const [];
+      return items
+          .map((raw) => _productFromJson(raw as Map<String, dynamic>))
+          .toList();
+    }
+    return const [];
+  }
+
+  Future<List<CatalogCategory>> fetchCategories() async {
+    final response = await http
+        .get(_uri('/products/categories'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 3));
+    if (response.statusCode != 200) {
+      throw Exception('Categories HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
     final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((raw) => _productFromJson(raw as Map<String, dynamic>)).toList();
+    return data.map((raw) {
+      final row = raw as Map<String, dynamic>;
+      return CatalogCategory(
+        name: row['name'] as String? ?? 'General',
+        productCount: row['productCount'] as int? ?? 0,
+      );
+    }).toList();
+  }
+
+  Future<ProductPage> browseProducts({
+    String query = '',
+    String? category,
+    String? brand,
+    String? supplierId,
+    double? minPrice,
+    double? maxPrice,
+    bool inStock = false,
+    String sort = 'relevance',
+    int page = 1,
+    int pageSize = 24,
+  }) async {
+    final params = <String, String>{
+      'page': '$page',
+      'pageSize': '$pageSize',
+      'sort': sort,
+      if (query.trim().isNotEmpty) 'q': query.trim(),
+      if (category != null && category.isNotEmpty) 'category': category,
+      if (brand != null && brand.isNotEmpty) 'brand': brand,
+      if (supplierId != null && supplierId.isNotEmpty) 'supplierId': supplierId,
+      if (minPrice != null) 'minPrice': minPrice.toString(),
+      if (maxPrice != null) 'maxPrice': maxPrice.toString(),
+      if (inStock) 'inStock': 'true',
+    };
+    final response = await http
+        .get(
+          _uri('/products').replace(queryParameters: params),
+          headers: session.authHeaders,
+        )
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode != 200) {
+      throw Exception('Browse HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    final decoded = jsonDecode(response.body);
+    if (decoded is List) {
+      final items = decoded
+          .map((raw) => _productFromJson(raw as Map<String, dynamic>))
+          .toList();
+      return ProductPage(
+        items: items,
+        total: items.length,
+        page: 1,
+        pageSize: items.length,
+        totalPages: 1,
+      );
+    }
+    final map = decoded as Map<String, dynamic>;
+    final items = (map['items'] as List<dynamic>? ?? const [])
+        .map((raw) => _productFromJson(raw as Map<String, dynamic>))
+        .toList();
+    return ProductPage(
+      items: items,
+      total: map['total'] as int? ?? items.length,
+      page: map['page'] as int? ?? page,
+      pageSize: map['pageSize'] as int? ?? pageSize,
+      totalPages: map['totalPages'] as int? ?? 1,
+    );
   }
 
   Future<Product> fetchProduct(String id) async {
@@ -463,12 +552,14 @@ class ApiClient {
   }
 
   Product _productFromJson(Map<String, dynamic> json) {
+    final stockStatusRaw = json['stockStatus'] as String? ?? 'inStock';
     return Product(
       id: json['id'] as String,
       name: json['name'] as String,
       brand: json['brand'] as String? ?? 'Winger',
       supplierId: json['supplierId'] as String? ?? 'supplier',
       supplierName: json['supplierName'] as String? ?? 'Supplier',
+      supplierVerified: json['supplierVerified'] as bool? ?? false,
       price: (json['price'] as num).toDouble(),
       previousPrice: (json['previousPrice'] as num?)?.toDouble(),
       rating: (json['rating'] as num?)?.toDouble() ?? 4.5,
@@ -482,6 +573,11 @@ class ApiClient {
       weight: json['weight'] as String? ?? '—',
       description: json['description'] as String? ?? '',
       stock: json['stock'] as int? ?? 0,
+      stockStatus: switch (stockStatusRaw) {
+        'lowStock' => StockStatus.lowStock,
+        'outOfStock' => StockStatus.outOfStock,
+        _ => StockStatus.inStock,
+      },
     );
   }
 }

@@ -32,6 +32,7 @@ class Product {
     this.description = '',
     this.stock = 24,
     this.stockStatus = StockStatus.inStock,
+    this.supplierVerified = false,
   });
 
   final String id;
@@ -39,6 +40,7 @@ class Product {
   final String brand;
   final String supplierId;
   final String supplierName;
+  final bool supplierVerified;
   final double price;
   final double? previousPrice;
   final double rating;
@@ -55,6 +57,29 @@ class Product {
 
   double get savings =>
       previousPrice == null ? 0 : (previousPrice! - price).clamp(0, double.infinity);
+}
+
+class CatalogCategory {
+  const CatalogCategory({required this.name, required this.productCount});
+
+  final String name;
+  final int productCount;
+}
+
+class ProductPage {
+  const ProductPage({
+    required this.items,
+    required this.total,
+    required this.page,
+    required this.pageSize,
+    required this.totalPages,
+  });
+
+  final List<Product> items;
+  final int total;
+  final int page;
+  final int pageSize;
+  final int totalPages;
 }
 
 class CartItem {
