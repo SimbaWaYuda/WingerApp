@@ -101,6 +101,20 @@ class CartItem {
   }
 }
 
+class CartShipmentQuote {
+  const CartShipmentQuote({
+    required this.supplierName,
+    required this.deliveryMethod,
+    required this.fee,
+    required this.estimate,
+  });
+
+  final String supplierName;
+  final String deliveryMethod;
+  final double fee;
+  final String estimate;
+}
+
 class CartValidationResult {
   const CartValidationResult({
     required this.ok,
@@ -109,6 +123,8 @@ class CartValidationResult {
     required this.deliveryFee,
     required this.tax,
     required this.lines,
+    this.deliveryMethod = 'standard',
+    this.shipments = const [],
   });
 
   final bool ok;
@@ -116,6 +132,8 @@ class CartValidationResult {
   final double total;
   final double deliveryFee;
   final double tax;
+  final String deliveryMethod;
+  final List<CartShipmentQuote> shipments;
   final List<CartValidationLine> lines;
 }
 

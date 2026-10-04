@@ -301,12 +301,18 @@ class ApiClient {
     return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<CartValidationResult> validateCart(List<CartItem> items) async {
+  Future<CartValidationResult> validateCart(
+    List<CartItem> items, {
+    String? deliveryMethod,
+    String? city,
+  }) async {
     final response = await http
         .post(
           _uri('/orders/validate'),
           headers: session.authHeaders,
           body: jsonEncode({
+            'deliveryMethod': deliveryMethod ?? session.deliveryMethod,
+            'city': city ?? session.city,
             'items': [
               for (final item in items)
                 {
@@ -341,12 +347,25 @@ class ApiClient {
         product: productJson == null ? null : _productFromJson(productJson),
       );
     }).toList();
+    final shipments = (map['shipments'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(
+          (row) => CartShipmentQuote(
+            supplierName: row['supplierName'] as String? ?? 'Supplier',
+            deliveryMethod: row['deliveryMethod'] as String? ?? 'standard',
+            fee: (row['fee'] as num?)?.toDouble() ?? 0,
+            estimate: row['estimate'] as String? ?? '',
+          ),
+        )
+        .toList();
     return CartValidationResult(
       ok: map['ok'] as bool? ?? false,
       subtotal: (map['subtotal'] as num?)?.toDouble() ?? 0,
       total: (map['total'] as num?)?.toDouble() ?? 0,
       deliveryFee: (map['deliveryFee'] as num?)?.toDouble() ?? 0,
       tax: (map['tax'] as num?)?.toDouble() ?? 0,
+      deliveryMethod: map['deliveryMethod'] as String? ?? 'standard',
+      shipments: shipments,
       lines: lines,
     );
   }
@@ -356,6 +375,7 @@ class ApiClient {
     String paymentMethod = 'card',
     String addressLine = 'Westlands',
     String city = 'Nairobi',
+    String? deliveryMethod,
   }) async {
     final response = await http
         .post(
@@ -365,6 +385,7 @@ class ApiClient {
             'paymentMethod': paymentMethod,
             'addressLine': addressLine,
             'city': city,
+            'deliveryMethod': deliveryMethod ?? session.deliveryMethod,
             'items': [
               for (final item in items)
                 {

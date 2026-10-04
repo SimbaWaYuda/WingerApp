@@ -24,6 +24,9 @@ class AppSession extends ChangeNotifier {
   String addressLine = 'Westlands';
   /// express | standard | pickup
   String deliveryMethod = 'standard';
+  double cartDeliveryFee = 0;
+  double cartTax = 0;
+  List<CartShipmentQuote> cartShipments = [];
   LocaleCode localeCode = LocaleCode.en;
   final List<CartItem> _cart = [];
   final List<String> compareIds = [];
@@ -36,7 +39,10 @@ class AppSession extends ChangeNotifier {
 
   List<CartItem> get cart => List.unmodifiable(_cart);
   int get cartCount => _cart.fold(0, (sum, item) => sum + item.quantity);
+  /// Product lines only.
   double get cartTotal => _cart.fold(0, (sum, item) => sum + item.lineTotal);
+  double get cartGrandTotal =>
+      _roundMoney(cartTotal + cartDeliveryFee + cartTax);
   bool get isSignedIn => role != null;
   bool isWishlisted(String productId) => wishlistIds.contains(productId);
 
@@ -120,6 +126,7 @@ class AppSession extends ChangeNotifier {
     }
     if (deliveryMethod == normalized) return;
     deliveryMethod = normalized;
+    _recomputeLocalFees();
     notifyListeners();
   }
 
@@ -133,6 +140,53 @@ class AppSession extends ChangeNotifier {
         return 'Standard 3–5 days';
     }
   }
+
+  String deliveryEstimateFor(String city) {
+    switch (deliveryMethod) {
+      case 'express':
+        return '1–2 days to $city';
+      case 'pickup':
+        return 'Ready for pickup in $city';
+      default:
+        return '3–5 days to $city';
+    }
+  }
+
+  void _recomputeLocalFees() {
+    final suppliers = cartBySupplier.keys.toList();
+    final perShipment = deliveryMethod == 'pickup'
+        ? 0.0
+        : deliveryMethod == 'express'
+            ? 9.99
+            : 4.99;
+    final names = suppliers.isEmpty ? const <String>['Supplier'] : suppliers;
+    cartShipments = [
+      for (final name in names)
+        CartShipmentQuote(
+          supplierName: name,
+          deliveryMethod: deliveryMethod,
+          fee: perShipment,
+          estimate: deliveryEstimateFor(city),
+        ),
+    ];
+    cartDeliveryFee = _roundMoney(
+      cartShipments.fold<double>(0, (sum, s) => sum + s.fee),
+    );
+    cartTax = _roundMoney(cartTotal * 0.08);
+  }
+
+  void _applyFeeQuote({
+    required double deliveryFee,
+    required double tax,
+    required List<CartShipmentQuote> shipments,
+  }) {
+    cartDeliveryFee = deliveryFee;
+    cartTax = tax;
+    cartShipments = List.of(shipments);
+  }
+
+  static double _roundMoney(double value) =>
+      (value * 100).roundToDouble() / 100;
 
   void applyAuth({
     required String token,
@@ -167,6 +221,7 @@ class AppSession extends ChangeNotifier {
     phone = phoneNumber;
     city = cityName;
     addressLine = address;
+    if (_cart.isNotEmpty) _recomputeLocalFees();
     notifyListeners();
   }
 
@@ -212,6 +267,7 @@ class AppSession extends ChangeNotifier {
     } else {
       _cart.add(CartItem(product: product, quantity: nextQty));
     }
+    _recomputeLocalFees();
     notifyListeners();
     await _cartRepository?.upsert(product, nextQty);
     if (accessToken != null && _api != null) {
@@ -230,6 +286,7 @@ class AppSession extends ChangeNotifier {
     if (index >= 0) {
       final product = _cart[index].product;
       _cart[index] = _cart[index].copyWith(quantity: quantity);
+      _recomputeLocalFees();
       notifyListeners();
       await _cartRepository?.upsert(product, quantity);
     }
@@ -237,6 +294,13 @@ class AppSession extends ChangeNotifier {
 
   Future<void> removeFromCart(String productId) async {
     _cart.removeWhere((item) => item.product.id == productId);
+    if (_cart.isEmpty) {
+      cartDeliveryFee = 0;
+      cartTax = 0;
+      cartShipments = [];
+    } else {
+      _recomputeLocalFees();
+    }
     notifyListeners();
     await _cartRepository?.remove(productId);
   }
@@ -244,11 +308,17 @@ class AppSession extends ChangeNotifier {
   /// Sync cart lines with trusted server prices/stock. Returns false if issues remain.
   Future<bool> refreshCartFromServer() async {
     if (_cart.isEmpty || _api == null || accessToken == null) {
+      if (_cart.isNotEmpty) _recomputeLocalFees();
+      notifyListeners();
       return _cart.isNotEmpty &&
           !_cart.any((item) => item.quantity > item.product.stock || item.product.stock <= 0);
     }
     try {
-      final result = await _api!.validateCart(List.of(_cart));
+      final result = await _api!.validateCart(
+        List.of(_cart),
+        deliveryMethod: deliveryMethod,
+        city: city,
+      );
       final next = <CartItem>[];
       for (final line in result.lines) {
         final product = line.product;
@@ -269,10 +339,23 @@ class AppSession extends ChangeNotifier {
       _cart
         ..clear()
         ..addAll(next);
+      if (_cart.isEmpty) {
+        cartDeliveryFee = 0;
+        cartTax = 0;
+        cartShipments = [];
+      } else {
+        _applyFeeQuote(
+          deliveryFee: result.deliveryFee,
+          tax: result.tax,
+          shipments: result.shipments,
+        );
+      }
       notifyListeners();
       return result.ok &&
           !_cart.any((item) => item.quantity > item.product.stock);
     } catch (_) {
+      _recomputeLocalFees();
+      notifyListeners();
       return !_cart.any(
         (item) => item.quantity > item.product.stock || item.product.stock <= 0,
       );
@@ -340,9 +423,13 @@ class AppSession extends ChangeNotifier {
         paymentMethod: paymentMethod,
         addressLine: addressLine,
         city: city,
+        deliveryMethod: deliveryMethod,
       );
       lastOrder = order;
       _cart.clear();
+      cartDeliveryFee = 0;
+      cartTax = 0;
+      cartShipments = [];
       notifyListeners();
       await _cartRepository?.clear();
       return order;
@@ -351,6 +438,9 @@ class AppSession extends ChangeNotifier {
     // Offline / unsigned fallback — keep a local demo order.
     lastOrder = MockCatalog.sampleOrder;
     _cart.clear();
+    cartDeliveryFee = 0;
+    cartTax = 0;
+    cartShipments = [];
     notifyListeners();
     await _cartRepository?.clear();
     return lastOrder!;

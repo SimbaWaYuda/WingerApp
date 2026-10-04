@@ -1625,11 +1625,24 @@ class _CartScreenState extends State<CartScreen> {
               ),
             const SizedBox(height: 12),
           ],
-          Text('${s.t('deliveryFee')}: \$0.00', style: TextStyle(color: WingerColors.muted)),
-          Text('${s.t('tax')}: \$0.00', style: TextStyle(color: WingerColors.muted)),
+          Text(
+            '${s.t('subtotal')}: \$${session.cartTotal.toStringAsFixed(2)}',
+            style: TextStyle(color: WingerColors.muted),
+          ),
+          Text(
+            '${s.t('deliveryFee')}: \$${session.cartDeliveryFee.toStringAsFixed(2)}'
+            '${session.cartBySupplier.length > 1 ? ' · ${session.cartBySupplier.length} ${s.t('suppliers').toLowerCase()}' : ''}',
+            style: TextStyle(color: WingerColors.muted),
+          ),
+          Text(
+            '${s.t('estimatedTax')}: \$${session.cartTax.toStringAsFixed(2)}',
+            style: TextStyle(color: WingerColors.muted),
+          ),
           const SizedBox(height: 4),
-          Text('${s.t('dueToday')}: \$${session.cartTotal.toStringAsFixed(2)}',
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+          Text(
+            '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}',
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+          ),
           const SizedBox(height: 12),
           FilledButton(
             onPressed: hasStockIssue || _refreshing
@@ -1676,6 +1689,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final session = context.read<AppSession>();
     _city = TextEditingController(text: session.city);
     _address = TextEditingController(text: session.addressLine);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(context.read<AppSession>().refreshCartFromServer());
+    });
   }
 
   @override
@@ -1807,9 +1824,27 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ],
               Align(
                 alignment: Alignment.centerRight,
-                child: Text(
-                  '${s.t('dueToday')}: \$${session.cartTotal.toStringAsFixed(2)}',
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${s.t('subtotal')}: \$${session.cartTotal.toStringAsFixed(2)}',
+                      style: TextStyle(color: WingerColors.muted),
+                    ),
+                    Text(
+                      '${s.t('deliveryFee')}: \$${session.cartDeliveryFee.toStringAsFixed(2)}',
+                      style: TextStyle(color: WingerColors.muted),
+                    ),
+                    Text(
+                      '${s.t('estimatedTax')}: \$${session.cartTax.toStringAsFixed(2)}',
+                      style: TextStyle(color: WingerColors.muted),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}',
+                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1858,14 +1893,37 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     label: Text(option.$2),
                     selected: session.deliveryMethod == option.$1,
                     selectedColor: WingerColors.brandMuted,
-                    onSelected: (_) => session.setDeliveryMethod(option.$1),
+                    onSelected: (_) async {
+                      session.setDeliveryMethod(option.$1);
+                      await session.refreshCartFromServer();
+                    },
                   ),
               ],
             ),
+            const SizedBox(height: 12),
+            Text(s.t('shipments'), style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            for (final shipment in session.cartShipments)
+              Card(
+                child: ListTile(
+                  title: Text(shipment.supplierName, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text(
+                    '${shipment.estimate}\n'
+                    '${s.t('deliveryFee')}: \$${shipment.fee.toStringAsFixed(2)}'
+                    '${session.deliveryMethod == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
+                  ),
+                  isThreeLine: true,
+                ),
+              ),
             const SizedBox(height: 8),
             Text(
-              'Selected: ${session.deliveryMethodLabel}',
+              '${s.t('deliveryFee')}: \$${session.cartDeliveryFee.toStringAsFixed(2)} · '
+              '${s.t('estimatedTax')}: \$${session.cartTax.toStringAsFixed(2)}',
               style: TextStyle(color: WingerColors.muted),
+            ),
+            Text(
+              '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}',
+              style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ]
           else ...[
@@ -1896,12 +1954,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Text(
               _payMethod == _CheckoutPayMethod.payOnDelivery
                   ? '${s.t('payOnDeliveryHint')}\n'
-                      '\$${session.cartTotal.toStringAsFixed(2)} · ${session.addressLine}, ${session.city}'
+                      '\$${session.cartGrandTotal.toStringAsFixed(2)} · ${session.addressLine}, ${session.city}'
                   : session.apiOnline && session.accessToken != null
-                      ? 'Pay \$${session.cartTotal.toStringAsFixed(2)} by card '
+                      ? 'Pay \$${session.cartGrandTotal.toStringAsFixed(2)} by card '
                           '(API · demo payment unless Stripe key set)\n'
                           'Ship to ${session.addressLine}, ${session.city}'
-                      : 'Pay \$${session.cartTotal.toStringAsFixed(2)} offline — '
+                      : 'Pay \$${session.cartGrandTotal.toStringAsFixed(2)} offline — '
                           'order saved locally until online',
             ),
           ],
