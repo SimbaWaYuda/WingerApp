@@ -408,10 +408,14 @@ class CustomerSearchScreen extends StatefulWidget {
     super.key,
     this.initialCategory,
     this.initialQuery,
+    this.initialSupplierId,
+    this.initialSupplierName,
   });
 
   final String? initialCategory;
   final String? initialQuery;
+  final String? initialSupplierId;
+  final String? initialSupplierName;
 
   @override
   State<CustomerSearchScreen> createState() => _CustomerSearchScreenState();
@@ -439,6 +443,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     super.initState();
     _queryCtrl = TextEditingController(text: widget.initialQuery ?? '');
     _category = widget.initialCategory;
+    _supplierId = widget.initialSupplierId;
+    _supplierName = widget.initialSupplierName;
     final catalog = context.read<CatalogRepository>();
     _categoriesFuture = catalog.getCategories();
     _brandsFuture = catalog.getBrands();
@@ -1064,8 +1070,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   int qty = 1;
   late Future<Product> _future;
   Future<List<Product>>? _relatedFuture;
+  Future<SupplierProfile>? _supplierFuture;
   _DeliveryOption? _delivery;
   int _galleryIndex = 0;
+  late final PageController _galleryPageCtrl;
 
   static const _deliveryLabels = <_DeliveryOption, String>{
     _DeliveryOption.express: 'Express 1–2 days',
@@ -1076,12 +1084,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _galleryPageCtrl = PageController();
     _future = context.read<CatalogRepository>().getProduct(widget.productId);
     unawaited(_recordView());
     _future.then((product) {
       if (!mounted) return;
       final catalog = context.read<CatalogRepository>();
       setState(() {
+        _supplierFuture = catalog.getSupplierProfile(product.supplierId);
         _relatedFuture = () async {
           final byModel = await catalog.getProducts(query: product.model);
           final byCategory = await catalog.browseProducts(
@@ -1111,6 +1121,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     await context.read<AppSession>().markProductViewed(widget.productId);
   }
 
+  @override
+  void dispose() {
+    _galleryPageCtrl.dispose();
+    super.dispose();
+  }
+
   String _estimateFor(_DeliveryOption option, String city) {
     switch (option) {
       case _DeliveryOption.express:
@@ -1125,10 +1141,23 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   List<String> _galleryUrls(Product product, List<Product> related) {
     final urls = <String>{product.imageUrl};
     for (final item in related) {
-      if (urls.length >= 4) break;
+      if (urls.length >= 6) break;
+      if (item.imageUrl.trim().isEmpty) continue;
       urls.add(item.imageUrl);
     }
     return urls.toList();
+  }
+
+  void _goGallery(int index, int total) {
+    final next = index.clamp(0, total - 1);
+    setState(() => _galleryIndex = next);
+    if (_galleryPageCtrl.hasClients) {
+      _galleryPageCtrl.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   @override
@@ -1189,22 +1218,84 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(20),
                   child: AspectRatio(
-                    aspectRatio: 1.4,
-                    child: Image.network(
-                      gallery[safeIndex],
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: WingerColors.brandMuted,
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.image_outlined),
-                      ),
+                    aspectRatio: 1.15,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        PageView.builder(
+                          controller: _galleryPageCtrl,
+                          itemCount: gallery.length,
+                          onPageChanged: (index) => setState(() => _galleryIndex = index),
+                          itemBuilder: (context, index) {
+                            return Image.network(
+                              gallery[index],
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                color: WingerColors.brandMuted,
+                                alignment: Alignment.center,
+                                child: const Icon(Icons.image_outlined, size: 48),
+                              ),
+                            );
+                          },
+                        ),
+                        if (gallery.length > 1) ...[
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: IconButton(
+                              style: IconButton.styleFrom(
+                                backgroundColor: Colors.black45,
+                                foregroundColor: Colors.white,
+                              ),
+                              onPressed: safeIndex > 0
+                                  ? () => _goGallery(safeIndex - 1, gallery.length)
+                                  : null,
+                              icon: const Icon(Icons.chevron_left),
+                            ),
+                          ),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: IconButton(
+                              style: IconButton.styleFrom(
+                                backgroundColor: Colors.black45,
+                                foregroundColor: Colors.white,
+                              ),
+                              onPressed: safeIndex < gallery.length - 1
+                                  ? () => _goGallery(safeIndex + 1, gallery.length)
+                                  : null,
+                              icon: const Icon(Icons.chevron_right),
+                            ),
+                          ),
+                        ],
+                        Positioned(
+                          right: 12,
+                          bottom: 12,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              s
+                                  .t('imageOf')
+                                  .replaceAll('{current}', '${safeIndex + 1}')
+                                  .replaceAll('{total}', '${gallery.length}'),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
                 if (gallery.length > 1) ...[
                   const SizedBox(height: 10),
                   SizedBox(
-                    height: 64,
+                    height: 72,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: gallery.length,
@@ -1212,8 +1303,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       itemBuilder: (context, index) {
                         final selectedThumb = index == safeIndex;
                         return InkWell(
-                          onTap: () => setState(() => _galleryIndex = index),
-                          child: Container(
+                          onTap: () => _goGallery(index, gallery.length),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 160),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(
@@ -1225,8 +1317,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                               borderRadius: BorderRadius.circular(9),
                               child: Image.network(
                                 gallery[index],
-                                width: 64,
-                                height: 64,
+                                width: 72,
+                                height: 72,
                                 fit: BoxFit.cover,
                               ),
                             ),
@@ -1253,14 +1345,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   ),
                 ],
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Text('${product.supplierName} · ★ ${product.rating}'),
-                    if (product.supplierVerified) ...[
-                      const SizedBox(width: 6),
-                      const Icon(Icons.verified, size: 18, color: WingerColors.brand),
-                    ],
-                  ],
+                Text(
+                  '★ ${product.rating.toStringAsFixed(1)} · ${product.category}',
+                  style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -1275,6 +1362,71 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         : WingerColors.successInk,
                     fontWeight: FontWeight.w700,
                   ),
+                ),
+                const SizedBox(height: 16),
+                FutureBuilder<SupplierProfile>(
+                  future: _supplierFuture,
+                  builder: (context, supplierSnap) {
+                    final profile = supplierSnap.data;
+                    final name = profile?.name ?? product.supplierName;
+                    final verified = profile?.verified ?? product.supplierVerified;
+                    final avg = profile?.ratingAvg ?? product.supplierRatingAvg;
+                    final count = profile?.ratingCount ?? product.supplierRatingCount;
+                    final bio = profile?.businessBio;
+                    final notes = profile?.deliveryNotes;
+                    final productCount = profile?.productCount;
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(s.t('soldBy'), style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                                ),
+                                if (verified)
+                                  const Icon(Icons.verified, size: 18, color: WingerColors.brand),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              count > 0
+                                  ? '${s.t('supplierRating')}: ★ ${avg.toStringAsFixed(1)} ($count)'
+                                  : s.t('noSupplierRatingsYet'),
+                              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+                            ),
+                            if (productCount != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                '$productCount ${s.t('products').toLowerCase()}',
+                                style: TextStyle(color: WingerColors.muted),
+                              ),
+                            ],
+                            if (bio != null && bio.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(bio),
+                            ],
+                            if (notes != null && notes.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(notes, style: TextStyle(color: WingerColors.muted, fontSize: 13)),
+                            ],
+                            const SizedBox(height: 10),
+                            TextButton(
+                              onPressed: () => context.go(
+                                '/customer/search?supplierId=${Uri.encodeComponent(product.supplierId)}'
+                                '&supplier=${Uri.encodeComponent(name)}',
+                              ),
+                              child: Text(s.t('viewSupplierProducts')),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
                 Text(product.description),
@@ -2439,6 +2591,7 @@ class OrderDetailScreen extends StatefulWidget {
 class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Future<CustomerOrder>? _future;
   bool _cancelling = false;
+  bool _rating = false;
 
   @override
   void didChangeDependencies() {
@@ -2448,6 +2601,83 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   Future<CustomerOrder> _load() {
     return context.read<ApiClient>().fetchOrder(widget.orderId);
+  }
+
+  Future<void> _rateSupplier(CustomerOrder order, RateableSupplier supplier) async {
+    final s = WingerStrings.of(context);
+    var stars = 5;
+    final commentCtrl = TextEditingController();
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: Text(s.t('rateSupplierTitle')),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(supplier.supplierName, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
+                  Text(s.t('rateSupplierHint'), style: TextStyle(color: WingerColors.muted)),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var i = 1; i <= 5; i++)
+                        IconButton(
+                          onPressed: () => setLocal(() => stars = i),
+                          icon: Icon(
+                            i <= stars ? Icons.star : Icons.star_border,
+                            color: WingerColors.attentionInk,
+                          ),
+                        ),
+                    ],
+                  ),
+                  TextField(
+                    controller: commentCtrl,
+                    maxLines: 3,
+                    decoration: InputDecoration(labelText: s.t('optionalComment')),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text(s.t('submitRating')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    final comment = commentCtrl.text;
+    commentCtrl.dispose();
+    if (submitted != true || !mounted) return;
+    setState(() => _rating = true);
+    try {
+      await context.read<ApiClient>().submitSupplierReview(
+            orderId: order.id,
+            supplierId: supplier.supplierId,
+            rating: stars,
+            comment: comment,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s.t('ratingSubmitted'))),
+      );
+      setState(() => _future = _load());
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _rating = false);
+    }
   }
 
   Future<void> _cancel(CustomerOrder order) async {
@@ -2578,6 +2808,20 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               const SizedBox(height: 12),
             ],
             Text(s.t('supportHint'), style: TextStyle(color: WingerColors.muted)),
+            if (order.canRateSuppliers.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(s.t('rateSupplier'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 8),
+              for (final supplier in order.canRateSuppliers)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: FilledButton.tonalIcon(
+                    onPressed: _rating ? null : () => _rateSupplier(order, supplier),
+                    icon: const Icon(Icons.star_outline),
+                    label: Text('${s.t('rateSupplier')}: ${supplier.supplierName}'),
+                  ),
+                ),
+            ],
             const SizedBox(height: 16),
             if (order.canCancel)
               OutlinedButton(

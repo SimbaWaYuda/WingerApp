@@ -7,6 +7,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
+import { ReviewsModule } from './reviews/reviews.module';
 import { SyncModule } from './sync/sync.module';
 
 @Module({
@@ -16,6 +17,7 @@ import { SyncModule } from './sync/sync.module';
     ProductsModule,
     SyncModule,
     OrdersModule,
+    ReviewsModule,
     AnalyticsModule,
     OnboardingModule,
   ],

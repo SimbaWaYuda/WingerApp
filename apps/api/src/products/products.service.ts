@@ -9,6 +9,8 @@ export type ProductDto = {
   supplierId: string;
   supplierName: string;
   supplierVerified: boolean;
+  supplierRatingAvg?: number;
+  supplierRatingCount?: number;
   price: number;
   previousPrice?: number;
   rating: number;
@@ -118,7 +120,15 @@ export class ProductsService {
         orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: { supplier: { select: { verificationStatus: true } } },
+        include: {
+          supplier: {
+            select: {
+              verificationStatus: true,
+              ratingAvg: true,
+              ratingCount: true,
+            },
+          },
+        },
       }),
     ]);
 
@@ -134,10 +144,42 @@ export class ProductsService {
   async findOne(id: string): Promise<ProductDto> {
     const product = await this.prisma.product.findUnique({
       where: { id },
-      include: { supplier: { select: { verificationStatus: true } } },
+      include: {
+        supplier: {
+          select: {
+            verificationStatus: true,
+            ratingAvg: true,
+            ratingCount: true,
+          },
+        },
+      },
     });
     if (!product) throw new NotFoundException(`Product ${id} not found`);
     return toDto(product);
+  }
+
+  async getSupplierProfile(id: string) {
+    const supplier = await this.prisma.supplier.findUnique({
+      where: { id },
+    });
+    if (!supplier) throw new NotFoundException(`Supplier ${id} not found`);
+    const productCount = await this.prisma.product.count({
+      where: { supplierId: id },
+    });
+    return {
+      id: supplier.id,
+      name: supplier.name,
+      businessBio: supplier.businessBio,
+      deliveryNotes: supplier.deliveryNotes,
+      verificationStatus: supplier.verificationStatus,
+      verified:
+        supplier.verificationStatus === 'APPROVED' ||
+        supplier.verificationStatus === 'VERIFIED',
+      ratingAvg: supplier.ratingAvg,
+      ratingCount: supplier.ratingCount,
+      productCount,
+      deliveryConfigured: supplier.deliveryConfigured,
+    };
   }
 }
 
@@ -221,7 +263,11 @@ function toDto(product: {
   stock: number;
   stockStatus: StockStatus;
   createdAt?: Date;
-  supplier?: { verificationStatus: string } | null;
+  supplier?: {
+    verificationStatus: string;
+    ratingAvg?: number;
+    ratingCount?: number;
+  } | null;
 }): ProductDto {
   const price =
     typeof product.price === 'number' ? product.price : product.price.toNumber();
@@ -241,6 +287,8 @@ function toDto(product: {
     supplierVerified:
       product.supplier?.verificationStatus === 'APPROVED' ||
       product.supplier?.verificationStatus === 'VERIFIED',
+    supplierRatingAvg: product.supplier?.ratingAvg ?? 0,
+    supplierRatingCount: product.supplier?.ratingCount ?? 0,
     price,
     previousPrice,
     rating: product.rating,

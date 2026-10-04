@@ -4,14 +4,37 @@ import * as bcrypt from 'bcrypt';
 const prisma = new PrismaClient();
 
 const suppliers = [
-  { id: 's-kijani', name: 'Kijani Tech', verificationStatus: 'APPROVED' },
-  { id: 's-atlas', name: 'Atlas Home', verificationStatus: 'APPROVED' },
-  { id: 's-metals', name: 'Metals Outdoor', verificationStatus: 'UNVERIFIED' },
+  {
+    id: 's-kijani',
+    name: 'Kijani Tech',
+    verificationStatus: 'APPROVED',
+    businessBio:
+      'Nairobi-based electronics seller focused on audio and wearables with fast city delivery.',
+    deliveryNotes: 'Express available in Nairobi · Standard nationwide',
+  },
+  {
+    id: 's-atlas',
+    name: 'Atlas Home',
+    verificationStatus: 'APPROVED',
+    businessBio:
+      'Home essentials and lighting for apartments and small offices across East Africa.',
+    deliveryNotes: 'Standard 3–5 days · Pickup at Westlands hub',
+  },
+  {
+    id: 's-metals',
+    name: 'Metals Outdoor',
+    verificationStatus: 'UNVERIFIED',
+    businessBio: 'Trail packs and outdoor gear for weekend adventures.',
+    deliveryNotes: 'Standard shipping only',
+  },
   // Same catalogue SKUs as Kijani at alternate prices — for multi-supplier compare.
   {
     id: 's-savanna',
     name: 'Savanna Electronics',
     verificationStatus: 'APPROVED',
+    businessBio:
+      'Competitive multi-brand electronics with transparent stock and alternate pricing.',
+    deliveryNotes: 'Express & standard · Pickup available',
   },
 ];
 
@@ -212,11 +235,17 @@ async function main() {
       update: {
         name: supplier.name,
         verificationStatus: supplier.verificationStatus,
+        businessBio: supplier.businessBio,
+        deliveryNotes: supplier.deliveryNotes,
+        deliveryConfigured: true,
       },
       create: {
         id: supplier.id,
         name: supplier.name,
         verificationStatus: supplier.verificationStatus,
+        businessBio: supplier.businessBio,
+        deliveryNotes: supplier.deliveryNotes,
+        deliveryConfigured: true,
       },
     });
   }

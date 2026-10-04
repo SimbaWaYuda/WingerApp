@@ -249,6 +249,27 @@ class ApiClient {
     }).where((s) => s.id.isNotEmpty).toList();
   }
 
+  Future<SupplierProfile> fetchSupplierProfile(String supplierId) async {
+    final response = await http
+        .get(_uri('/suppliers/$supplierId'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 3));
+    if (response.statusCode != 200) {
+      throw Exception('Supplier profile HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    final row = jsonDecode(response.body) as Map<String, dynamic>;
+    return SupplierProfile(
+      id: row['id'] as String? ?? supplierId,
+      name: row['name'] as String? ?? 'Supplier',
+      verified: row['verified'] as bool? ?? false,
+      ratingAvg: (row['ratingAvg'] as num?)?.toDouble() ?? 0,
+      ratingCount: row['ratingCount'] as int? ?? 0,
+      productCount: row['productCount'] as int? ?? 0,
+      businessBio: row['businessBio'] as String?,
+      deliveryNotes: row['deliveryNotes'] as String?,
+    );
+  }
+
   Future<ProductPage> browseProducts({
     String query = '',
     String? category,
@@ -691,6 +712,34 @@ class ApiClient {
     }
   }
 
+  Future<void> submitSupplierReview({
+    required String orderId,
+    required String supplierId,
+    required int rating,
+    String? comment,
+  }) async {
+    final response = await http
+        .post(
+          _uri('/reviews'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'orderId': orderId,
+            'supplierId': supplierId,
+            'rating': rating,
+            if (comment != null && comment.trim().isNotEmpty) 'comment': comment.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Review failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+  }
+
   Product _productFromJson(Map<String, dynamic> json) {
     final stockStatusRaw = json['stockStatus'] as String? ?? 'inStock';
     return Product(
@@ -700,6 +749,8 @@ class ApiClient {
       supplierId: json['supplierId'] as String? ?? 'supplier',
       supplierName: json['supplierName'] as String? ?? 'Supplier',
       supplierVerified: json['supplierVerified'] as bool? ?? false,
+      supplierRatingAvg: (json['supplierRatingAvg'] as num?)?.toDouble() ?? 0,
+      supplierRatingCount: json['supplierRatingCount'] as int? ?? 0,
       price: (json['price'] as num).toDouble(),
       previousPrice: (json['previousPrice'] as num?)?.toDouble(),
       rating: (json['rating'] as num?)?.toDouble() ?? 4.5,

@@ -51,6 +51,8 @@ GoRouter createRouter(AppSession session) {
             builder: (context, state) => CustomerSearchScreen(
               initialCategory: state.uri.queryParameters['category'],
               initialQuery: state.uri.queryParameters['q'],
+              initialSupplierId: state.uri.queryParameters['supplierId'],
+              initialSupplierName: state.uri.queryParameters['supplier'],
             ),
           ),
           GoRoute(path: '/customer/compare', builder: (context, state) => const CompareScreen()),

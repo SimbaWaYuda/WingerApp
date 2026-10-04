@@ -205,4 +205,32 @@ class CatalogRepository {
       return await db.getProduct(id) ?? MockCatalog.byId(id);
     }
   }
+
+  Future<SupplierProfile> getSupplierProfile(String supplierId) async {
+    try {
+      return await api.fetchSupplierProfile(supplierId);
+    } catch (_) {
+      final products = await db.getProducts();
+      final match = products.where((p) => p.supplierId == supplierId);
+      if (match.isEmpty) {
+        return SupplierProfile(
+          id: supplierId,
+          name: 'Supplier',
+          verified: false,
+          ratingAvg: 0,
+          ratingCount: 0,
+          productCount: 0,
+        );
+      }
+      final first = match.first;
+      return SupplierProfile(
+        id: supplierId,
+        name: first.supplierName,
+        verified: first.supplierVerified,
+        ratingAvg: first.supplierRatingAvg,
+        ratingCount: first.supplierRatingCount,
+        productCount: match.length,
+      );
+    }
+  }
 }

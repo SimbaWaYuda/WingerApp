@@ -33,6 +33,8 @@ class Product {
     this.stock = 24,
     this.stockStatus = StockStatus.inStock,
     this.supplierVerified = false,
+    this.supplierRatingAvg = 0,
+    this.supplierRatingCount = 0,
   });
 
   final String id;
@@ -41,6 +43,8 @@ class Product {
   final String supplierId;
   final String supplierName;
   final bool supplierVerified;
+  final double supplierRatingAvg;
+  final int supplierRatingCount;
   final double price;
   final double? previousPrice;
   final double rating;
@@ -76,6 +80,28 @@ class CatalogSupplier {
   final String id;
   final String name;
   final int productCount;
+}
+
+class SupplierProfile {
+  const SupplierProfile({
+    required this.id,
+    required this.name,
+    required this.verified,
+    required this.ratingAvg,
+    required this.ratingCount,
+    required this.productCount,
+    this.businessBio,
+    this.deliveryNotes,
+  });
+
+  final String id;
+  final String name;
+  final bool verified;
+  final double ratingAvg;
+  final int ratingCount;
+  final int productCount;
+  final String? businessBio;
+  final String? deliveryNotes;
 }
 
 class ProductPage {
@@ -201,6 +227,7 @@ class CustomerOrder {
     this.addressLine,
     this.city,
     this.paymentMethod,
+    this.canRateSuppliers = const [],
   });
 
   final String id;
@@ -215,6 +242,7 @@ class CustomerOrder {
   final List<OrderItemRow> itemRows;
   final String? addressLine;
   final String? city;
+  final List<RateableSupplier> canRateSuppliers;
 
   bool get canCancel {
     if (status == OrderStatus.cancelled) return false;
@@ -228,6 +256,16 @@ class CustomerOrder {
           itemStatus != OrderStatus.cancelled,
     );
   }
+}
+
+class RateableSupplier {
+  const RateableSupplier({
+    required this.supplierId,
+    required this.supplierName,
+  });
+
+  final String supplierId;
+  final String supplierName;
 }
 
 class OrderItemRow {
@@ -306,6 +344,8 @@ String orderStatusToApi(OrderStatus status) {
 CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
   final items = (json['items'] as List<dynamic>? ?? [])
       .cast<Map<String, dynamic>>();
+  final rateable = (json['canRateSuppliers'] as List<dynamic>? ?? const [])
+      .cast<Map<String, dynamic>>();
   return CustomerOrder(
     id: (json['displayId'] as String?) ?? (json['id'] as String? ?? 'order'),
     total: (json['total'] as num?)?.toDouble() ?? 0,
@@ -343,6 +383,13 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           pickupCode: item['pickupCode'] as String?,
         ),
     ],
+    canRateSuppliers: [
+      for (final row in rateable)
+        RateableSupplier(
+          supplierId: row['supplierId'] as String? ?? '',
+          supplierName: row['supplierName'] as String? ?? 'Supplier',
+        ),
+    ].where((s) => s.supplierId.isNotEmpty).toList(),
   );
 }
 

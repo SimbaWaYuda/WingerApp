@@ -408,7 +408,45 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('Order not found');
     this.assertCanView(order, user);
-    return this.toResponse(order);
+    const base = this.toResponse(order);
+    if (user.role !== UserRole.CUSTOMER || order.customerId !== user.sub) {
+      return base;
+    }
+    const canRateSuppliers = await this.listRateableSuppliers(order, user.sub);
+    return { ...base, canRateSuppliers };
+  }
+
+  private async listRateableSuppliers(
+    order: {
+      id: string;
+      items: Array<{
+        supplierId: string;
+        supplierName: string;
+        status: OrderStatus;
+      }>;
+    },
+    customerId: string,
+  ) {
+    const deliveredBySupplier = new Map<string, string>();
+    for (const item of order.items) {
+      if (item.status === OrderStatus.DELIVERED) {
+        deliveredBySupplier.set(item.supplierId, item.supplierName);
+      }
+    }
+    if (deliveredBySupplier.size === 0) return [];
+
+    const existing = await this.prisma.supplierReview.findMany({
+      where: {
+        orderId: order.id,
+        customerId,
+        supplierId: { in: [...deliveredBySupplier.keys()] },
+      },
+      select: { supplierId: true },
+    });
+    const alreadyRated = new Set(existing.map((row) => row.supplierId));
+    return [...deliveredBySupplier.entries()]
+      .filter(([supplierId]) => !alreadyRated.has(supplierId))
+      .map(([supplierId, supplierName]) => ({ supplierId, supplierName }));
   }
 
   /**
