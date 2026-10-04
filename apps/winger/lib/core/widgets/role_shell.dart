@@ -25,12 +25,15 @@ class RoleShell extends StatelessWidget {
     required this.roleLabel,
     required this.destinations,
     required this.child,
+    this.bottomBar,
   });
 
   final String title;
   final String roleLabel;
   final List<ShellDestination> destinations;
   final Widget child;
+  /// Reserved bottom slot (not an overlay) so page actions stay visible.
+  final Widget? bottomBar;
 
   @override
   Widget build(BuildContext context) {
@@ -64,6 +67,8 @@ class RoleShell extends StatelessWidget {
           },
         ),
         Expanded(child: child),
+        // Wide layout has no bottom nav — reserve space in the column.
+        if (wide && bottomBar != null) bottomBar!,
       ],
     );
 
@@ -87,17 +92,23 @@ class RoleShell extends StatelessWidget {
 
     return Scaffold(
       body: content,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index.clamp(0, destinations.length - 1),
-        onDestinationSelected: (i) => context.go(destinations[i].path),
-        destinations: destinations
-            .map(
-              (d) => NavigationDestination(
-                icon: Icon(d.icon),
-                label: s.t(d.labelKey),
-              ),
-            )
-            .toList(),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (bottomBar != null) bottomBar!,
+          NavigationBar(
+            selectedIndex: index.clamp(0, destinations.length - 1),
+            onDestinationSelected: (i) => context.go(destinations[i].path),
+            destinations: destinations
+                .map(
+                  (d) => NavigationDestination(
+                    icon: Icon(d.icon),
+                    label: s.t(d.labelKey),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
       ),
     );
   }

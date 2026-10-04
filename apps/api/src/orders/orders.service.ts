@@ -382,6 +382,64 @@ export class OrdersService {
     return this.toResponse(order);
   }
 
+  /**
+   * Customer cancel before any line has shipped/delivered.
+   * Restores inventory and marks payment REFUNDED when already PAID.
+   */
+  async cancel(id: string, user: AuthUser) {
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customers can cancel their orders');
+    }
+
+    const order = await this.prisma.order.findFirst({
+      where: {
+        OR: [{ id }, { displayId: id }],
+        customerId: user.sub,
+      },
+      include: { items: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.status === OrderStatus.CANCELLED) {
+      return this.toResponse(order, 'Order already cancelled');
+    }
+
+    const blocked = order.items.some(
+      (item) =>
+        item.status === OrderStatus.SHIPPED ||
+        item.status === OrderStatus.DELIVERED,
+    );
+    if (blocked) {
+      throw new BadRequestException(
+        'Cannot cancel after a supplier has shipped or delivered an item',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.updateMany({
+        where: { orderId: order.id },
+        data: { status: OrderStatus.CANCELLED },
+      });
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.CANCELLED,
+          paymentStatus:
+            order.paymentStatus === PaymentStatus.PAID
+              ? PaymentStatus.REFUNDED
+              : order.paymentStatus,
+        },
+      });
+    });
+
+    await this.restoreStock(order.id, user.sub, 'ORDER_CANCELLED');
+
+    const updated = await this.prisma.order.findUnique({
+      where: { id: order.id },
+      include: { items: true },
+    });
+    return this.toResponse(updated!, 'Order cancelled and stock restored');
+  }
+
   async updateItemStatus(
     orderId: string,
     itemId: string,
@@ -455,7 +513,11 @@ export class OrdersService {
     return this.toResponse(order);
   }
 
-  private async restoreStock(orderId: string, userId: string) {
+  private async restoreStock(
+    orderId: string,
+    userId: string,
+    reason = 'ORDER_PAYMENT_FAILED',
+  ) {
     const items = await this.prisma.orderItem.findMany({ where: { orderId } });
     await this.prisma.$transaction(async (tx) => {
       for (const item of items) {
@@ -473,8 +535,8 @@ export class OrdersService {
             productId: product.id,
             supplierId: product.supplierId,
             delta: item.quantity,
-            reason: 'ORDER_PAYMENT_FAILED',
-            eventId: `order-restore-${orderId}-${product.id}-${Date.now()}`,
+            reason,
+            eventId: `order-restore-${reason}-${orderId}-${product.id}-${Date.now()}`,
             userId,
             quantityAfter: next,
           },

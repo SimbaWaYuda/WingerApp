@@ -383,6 +383,36 @@ class ApiClient {
         .toList();
   }
 
+  Future<CustomerOrder> fetchOrder(String orderId) async {
+    final response = await http
+        .get(_uri('/orders/$orderId'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode != 200) {
+      throw Exception('Order HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<CustomerOrder> cancelOrder(String orderId) async {
+    final response = await http
+        .post(
+          _uri('/orders/$orderId/cancel'),
+          headers: session.authHeaders,
+          body: jsonEncode({}),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Cancel failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   Future<CustomerOrder> updateOrderItemStatus({
     required String orderId,
     required String itemId,

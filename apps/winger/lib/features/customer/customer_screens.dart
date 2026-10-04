@@ -31,11 +31,109 @@ class CustomerShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    final location = GoRouterState.of(context).uri.path;
+    final onCompare = location.startsWith('/customer/compare');
+    final showTray = session.compareIds.isNotEmpty && !onCompare;
+
     return RoleShell(
       title: s.t('home'),
       roleLabel: 'Customer',
       destinations: customerDestinations,
+      bottomBar: showTray
+          ? _CompareTray(
+              count: session.compareIds.length,
+              onClear: session.clearCompare,
+              onCompare: () => context.go('/customer/compare'),
+            )
+          : null,
       child: child,
+    );
+  }
+}
+
+Future<void> _showAddedToCartChoices(BuildContext context, {String? productName}) async {
+  final s = WingerStrings.of(context);
+  final choice = await showDialog<String>(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        title: Text(s.t('addedToCart')),
+        content: Text(
+          productName == null || productName.isEmpty
+              ? s.t('addedToCart')
+              : productName,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('continue'),
+            child: Text(s.t('continueShopping')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('checkout'),
+            child: Text(s.t('checkout')),
+          ),
+        ],
+      );
+    },
+  );
+  if (!context.mounted) return;
+  if (choice == 'checkout') {
+    context.go('/customer/checkout');
+  } else if (choice == 'continue') {
+    context.go('/customer');
+  }
+}
+
+class _CompareTray extends StatelessWidget {
+  const _CompareTray({
+    required this.count,
+    required this.onClear,
+    required this.onCompare,
+  });
+
+  final int count;
+  final VoidCallback onClear;
+  final VoidCallback onCompare;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return Material(
+      color: WingerColors.brand,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Comparing $count products',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: onClear,
+                style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                child: Text(s.t('clearFilters')),
+              ),
+              const SizedBox(width: 4),
+              FilledButton(
+                onPressed: onCompare,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: WingerColors.brand,
+                ),
+                child: Text(s.t('compare')),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -366,7 +464,25 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(s.t('search'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                s.t('search'),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+            IconButton(
+              tooltip: s.t('cart'),
+              onPressed: () => context.go('/customer/cart'),
+              icon: Badge(
+                isLabelVisible: session.cartCount > 0,
+                label: Text('${session.cartCount}'),
+                child: const Icon(Icons.shopping_cart_outlined),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 12),
         TextField(
           controller: _queryCtrl,
@@ -916,7 +1032,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           session.setDeliveryMethod(_deliveryToSession(selected));
                           await session.addToCart(product, quantity: qty.clamp(1, product.stock));
                           if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('addToCart'))));
+                          await _showAddedToCartChoices(context, productName: product.name);
                         },
                   child: Text(s.t('addToCart')),
                 ),
@@ -948,20 +1064,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                 item.id,
                           }.toList();
                           session.setCompare(sameModelIds);
-                          final messenger = ScaffoldMessenger.of(context);
-                          messenger.showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                session.compareIds.length < 2
-                                    ? 'Only one ${product.model} offer found — add another supplier from Search'
-                                    : 'Comparing ${session.compareIds.length} ${product.model} offers',
-                              ),
-                              action: SnackBarAction(
-                                label: s.t('compare'),
-                                onPressed: () => context.go('/customer/compare'),
-                              ),
-                            ),
-                          );
+                          // Navigate directly — tray in CustomerShell shows
+                          // status without overlaying Cart / other actions.
+                          ScaffoldMessenger.of(context).clearSnackBars();
                           context.go('/customer/compare');
                         },
                         icon: Icon(
@@ -1883,66 +1988,242 @@ class _OrdersScreenState extends State<OrdersScreen> {
             const SizedBox(height: 12),
             for (final order in orders) ...[
               Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(order.id, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-                          const SizedBox(width: 12),
-                          StatusBadge(status: order.status),
-                          const Spacer(),
-                          Text('\$${order.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w800)),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${order.paymentStatus} · ${order.paymentMode}',
-                        style: TextStyle(color: WingerColors.muted),
-                      ),
-                      const SizedBox(height: 12),
-                      for (final leg in order.shipments)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      '${leg.supplierName} · ${leg.productName}',
-                                      style: const TextStyle(fontWeight: FontWeight.w600),
-                                    ),
+                child: InkWell(
+                  onTap: () => context.go('/customer/orders/${order.id}'),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(order.id, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                            const SizedBox(width: 12),
+                            StatusBadge(status: order.status),
+                            const Spacer(),
+                            Text('\$${order.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${order.paymentStatus} · ${order.paymentMode}',
+                          style: TextStyle(color: WingerColors.muted),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${s.t('placedOn')}: ${order.placedAt.toLocal().toString().split('.').first}',
+                          style: TextStyle(color: WingerColors.muted, fontSize: 12),
+                        ),
+                        const SizedBox(height: 12),
+                        for (final leg in order.shipments.take(2))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '${leg.supplierName} · ${leg.productName}',
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
                                   ),
-                                  StatusBadge(status: leg.status),
-                                ],
-                              ),
-                              if (leg.trackingCode != null) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${s.t('trackingCode')}: ${leg.trackingCode}',
-                                  style: TextStyle(color: WingerColors.muted, fontSize: 12),
                                 ),
+                                StatusBadge(status: leg.status),
                               ],
-                              if (leg.pickupCode != null) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${s.t('pickupCode')}: ${leg.pickupCode}',
-                                  style: TextStyle(color: WingerColors.muted, fontSize: 12),
-                                ),
-                              ],
-                            ],
+                            ),
+                          ),
+                        if (order.shipments.length > 2)
+                          Text(
+                            '+${order.shipments.length - 2} more',
+                            style: TextStyle(color: WingerColors.muted, fontSize: 12),
+                          ),
+                        const SizedBox(height: 4),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            s.t('orderDetails'),
+                            style: const TextStyle(
+                              color: WingerColors.brand,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: 8),
             ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class OrderDetailScreen extends StatefulWidget {
+  const OrderDetailScreen({super.key, required this.orderId});
+
+  final String orderId;
+
+  @override
+  State<OrderDetailScreen> createState() => _OrderDetailScreenState();
+}
+
+class _OrderDetailScreenState extends State<OrderDetailScreen> {
+  Future<CustomerOrder>? _future;
+  bool _cancelling = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _future ??= _load();
+  }
+
+  Future<CustomerOrder> _load() {
+    return context.read<ApiClient>().fetchOrder(widget.orderId);
+  }
+
+  Future<void> _cancel(CustomerOrder order) async {
+    final s = WingerStrings.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.t('cancelOrder')),
+        content: Text(s.t('cancelOrderConfirm')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.t('cancelOrder'))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _cancelling = true);
+    try {
+      await context.read<ApiClient>().cancelOrder(order.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s.t('orderCancelled'))),
+      );
+      setState(() => _future = _load());
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _cancelling = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final future = _future;
+    if (future == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return FutureBuilder<CustomerOrder>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError || snapshot.data == null) {
+          return ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              TextButton.icon(
+                onPressed: () => context.go('/customer/orders'),
+                icon: const Icon(Icons.arrow_back),
+                label: Text(s.t('orders')),
+              ),
+              Text(snapshot.error?.toString() ?? 'Order not found'),
+            ],
+          );
+        }
+        final order = snapshot.data!;
+        final shipmentsBySupplier = <String, List<ShipmentLeg>>{};
+        for (final leg in order.shipments) {
+          shipmentsBySupplier.putIfAbsent(leg.supplierName, () => []).add(leg);
+        }
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            TextButton.icon(
+              onPressed: () => context.go('/customer/orders'),
+              icon: const Icon(Icons.arrow_back),
+              label: Text(s.t('orders')),
+            ),
+            Text(s.t('orderDetails'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(order.id, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
+                        const SizedBox(width: 12),
+                        StatusBadge(status: order.status),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('${s.t('placedOn')}: ${order.placedAt.toLocal()}'),
+                    Text('${order.paymentStatus} · ${order.paymentMode}${order.paymentMethod != null ? ' · ${order.paymentMethod}' : ''}'),
+                    Text('\$${order.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                    if (order.addressLine != null || order.city != null) ...[
+                      const SizedBox(height: 8),
+                      Text(s.t('deliveryAddress'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                      Text('${order.addressLine ?? ''} · ${order.city ?? ''}'),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(s.t('shipments'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+            const SizedBox(height: 8),
+            for (final entry in shipmentsBySupplier.entries) ...[
+              Text(entry.key, style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              for (final leg in entry.value)
+                Card(
+                  child: ListTile(
+                    title: Text(leg.productName),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (leg.trackingCode != null)
+                          Text('${s.t('trackingCode')}: ${leg.trackingCode}'),
+                        if (leg.pickupCode != null)
+                          Text('${s.t('pickupCode')}: ${leg.pickupCode}'),
+                        if (leg.trackingCode == null && leg.pickupCode == null)
+                          Text(s.t('fulfillment'), style: TextStyle(color: WingerColors.muted)),
+                      ],
+                    ),
+                    trailing: StatusBadge(status: leg.status),
+                  ),
+                ),
+              const SizedBox(height: 12),
+            ],
+            Text(s.t('supportHint'), style: TextStyle(color: WingerColors.muted)),
+            const SizedBox(height: 16),
+            if (order.canCancel)
+              OutlinedButton(
+                onPressed: _cancelling ? null : () => _cancel(order),
+                child: _cancelling
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(s.t('cancelOrder')),
+              ),
           ],
         );
       },
@@ -2079,19 +2360,40 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
               : Text(s.t('obSaveProfile')),
         ),
         const SizedBox(height: 24),
+        Text(s.t('deliveryAddress'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        const SizedBox(height: 4),
+        Text(
+          '${session.addressLine}, ${session.city}',
+          style: TextStyle(color: WingerColors.muted),
+        ),
+        const SizedBox(height: 16),
+        ListTile(
+          leading: const Icon(Icons.receipt_long_outlined),
+          title: Text(s.t('orders')),
+          onTap: () => context.go('/customer/orders'),
+        ),
         ListTile(
           leading: const Icon(Icons.favorite_border),
           title: Text(s.t('wishlist')),
           trailing: Text('${session.wishlistIds.length}'),
           onTap: () => context.go('/customer/wishlist'),
         ),
-        ListTile(leading: const Icon(Icons.notifications_none), title: Text(s.t('notifications'))),
-        ListTile(leading: const Icon(Icons.support_agent), title: Text(s.t('support'))),
+        ListTile(
+          leading: const Icon(Icons.history),
+          title: Text(s.t('recentlyViewed')),
+          trailing: Text('${session.recentlyViewedIds.length}'),
+          onTap: () => context.go('/customer/recent'),
+        ),
         ListTile(
           leading: const Icon(Icons.shopping_cart_outlined),
           title: Text(s.t('cart')),
           trailing: Text('${session.cartCount}'),
           onTap: () => context.go('/customer/cart'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.support_agent),
+          title: Text(s.t('support')),
+          subtitle: Text(s.t('supportHint')),
         ),
         ListTile(
           leading: const Icon(Icons.logout),
@@ -2102,6 +2404,64 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
           },
         ),
       ],
+    );
+  }
+}
+
+class RecentlyViewedScreen extends StatelessWidget {
+  const RecentlyViewedScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    final catalog = context.read<CatalogRepository>();
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+
+    return FutureBuilder<List<Product>>(
+      future: catalog.getProducts(),
+      builder: (context, snapshot) {
+        final all = snapshot.data ?? const <Product>[];
+        final map = {for (final p in all) p.id: p};
+        final items = [
+          for (final id in session.recentlyViewedIds)
+            if (map[id] != null) map[id]!,
+        ];
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(
+              s.t('recentlyViewed'),
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 12),
+            if (items.isEmpty)
+              Text(s.t('recentlyViewedEmpty'), style: TextStyle(color: WingerColors.muted))
+            else
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: items.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: wide ? 4 : 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: wide ? 0.68 : 0.64,
+                ),
+                itemBuilder: (context, index) {
+                  final product = items[index];
+                  return ProductCard(
+                    product: product,
+                    wishlisted: session.isWishlisted(product.id),
+                    onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                    onAddToCart: () => unawaited(session.addToCart(product)),
+                    onTap: () => context.go('/customer/product/${product.id}'),
+                  );
+                },
+              ),
+          ],
+        );
+      },
     );
   }
 }

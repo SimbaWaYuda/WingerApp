@@ -43,6 +43,12 @@ export class OrdersController {
     return this.ordersService.list(user);
   }
 
+  @Post(':id/cancel')
+  @Roles(UserRole.CUSTOMER)
+  cancel(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ordersService.cancel(id, user);
+  }
+
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ordersService.findOne(id, user);

@@ -61,8 +61,14 @@ GoRouter createRouter(AppSession session) {
           ),
           GoRoute(path: '/customer/cart', builder: (context, state) => const CartScreen()),
           GoRoute(path: '/customer/wishlist', builder: (context, state) => const WishlistScreen()),
+          GoRoute(path: '/customer/recent', builder: (context, state) => const RecentlyViewedScreen()),
           GoRoute(path: '/customer/checkout', builder: (context, state) => const CheckoutScreen()),
           GoRoute(path: '/customer/orders', builder: (context, state) => const OrdersScreen()),
+          GoRoute(
+            path: '/customer/orders/:id',
+            builder: (context, state) =>
+                OrderDetailScreen(orderId: state.pathParameters['id']!),
+          ),
           GoRoute(path: '/customer/account', builder: (context, state) => const CustomerAccountScreen()),
         ],
       ),

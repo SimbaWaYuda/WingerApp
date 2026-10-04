@@ -168,6 +168,9 @@ class CustomerOrder {
     this.paymentMode = 'demo',
     this.customerName = '',
     this.itemRows = const [],
+    this.addressLine,
+    this.city,
+    this.paymentMethod,
   });
 
   final String id;
@@ -177,8 +180,24 @@ class CustomerOrder {
   final DateTime placedAt;
   final String paymentStatus;
   final String paymentMode;
+  final String? paymentMethod;
   final String customerName;
   final List<OrderItemRow> itemRows;
+  final String? addressLine;
+  final String? city;
+
+  bool get canCancel {
+    if (status == OrderStatus.cancelled) return false;
+    final statuses = itemRows.isNotEmpty
+        ? itemRows.map((item) => item.status)
+        : <OrderStatus>[status];
+    return statuses.every(
+      (itemStatus) =>
+          itemStatus != OrderStatus.shipped &&
+          itemStatus != OrderStatus.delivered &&
+          itemStatus != OrderStatus.cancelled,
+    );
+  }
 }
 
 class OrderItemRow {
@@ -263,7 +282,10 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
     status: orderStatusFromApi(json['status'] as String?),
     paymentStatus: json['paymentStatus'] as String? ?? 'PENDING',
     paymentMode: json['paymentMode'] as String? ?? 'demo',
+    paymentMethod: json['paymentMethod'] as String?,
     customerName: json['customerName'] as String? ?? '',
+    addressLine: json['addressLine'] as String?,
+    city: json['city'] as String?,
     placedAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
         DateTime.now(),
     itemRows: [
