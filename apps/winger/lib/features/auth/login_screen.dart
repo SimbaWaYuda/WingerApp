@@ -62,11 +62,20 @@ class _LoginScreenState extends State<LoginScreen> {
         UserRole.admin => '/admin',
       });
     } catch (error) {
-      // Keep UX moving offline with local role shell.
-      session.signInLocal(_role, mail: _email.text.trim());
+      // Only fall back to local shell when the API is unreachable.
+      // Commission/returns need a real JWT — local mode has no Bearer token.
+      final apiReachable = await api.healthCheck();
       if (!mounted) return;
+      if (apiReachable) {
+        setState(() {
+          _error = error.toString().replaceFirst('Exception: ', '');
+        });
+        return;
+      }
+      session.signInLocal(_role, mail: _email.text.trim());
       setState(() {
-        _error = 'API login unavailable — continuing in local demo mode.\n$error';
+        _error =
+            'API offline — continuing in local demo mode (Payments/Commission need API login).\n$error';
       });
       context.go(switch (_role) {
         UserRole.customer => '/customer',

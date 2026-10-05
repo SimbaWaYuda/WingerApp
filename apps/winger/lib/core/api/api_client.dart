@@ -13,6 +13,15 @@ class ApiClient {
 
   Uri _uri(String path) => Uri.parse('${session.apiBaseUrl}$path');
 
+  void _requireAccessToken() {
+    final token = session.accessToken;
+    if (token == null || token.isEmpty) {
+      throw Exception(
+        'Missing Bearer token — sign out and sign in again with API credentials (not local demo mode).',
+      );
+    }
+  }
+
   Future<bool> healthCheck() async {
     try {
       final response =
@@ -640,7 +649,143 @@ class ApiClient {
     return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<Map<String, dynamic>> fetchSupplierDashboard() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/suppliers/me/dashboard'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Supplier dashboard HTTP ${response.statusCode}',
+      );
+    }
+    session.setApiOnline(true);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<List<Product>> fetchMyProducts() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/products/mine'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'My products HTTP ${response.statusCode}',
+      );
+    }
+    session.setApiOnline(true);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((raw) => _productFromJson(raw as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Product> createMyProduct(Map<String, dynamic> body) async {
+    _requireAccessToken();
+    final response = await http
+        .post(
+          _uri('/products'),
+          headers: session.authHeaders,
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final err = _tryJson(response.body);
+      throw Exception(
+        err?['message']?.toString() ??
+            'Create product failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<Product> updateMyProduct(String id, Map<String, dynamic> body) async {
+    _requireAccessToken();
+    final response = await http
+        .patch(
+          _uri('/products/$id'),
+          headers: session.authHeaders,
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final err = _tryJson(response.body);
+      throw Exception(
+        err?['message']?.toString() ??
+            'Update product failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<Product> uploadProductImages(String productId, List<String> paths) async {
+    _requireAccessToken();
+    if (paths.isEmpty) {
+      throw Exception('Select at least one image to upload');
+    }
+    final request = http.MultipartRequest(
+      'POST',
+      _uri('/products/$productId/images'),
+    );
+    request.headers['Authorization'] = 'Bearer ${session.accessToken}';
+    for (final path in paths) {
+      request.files.add(await http.MultipartFile.fromPath('files', path));
+    }
+    final streamed = await request.send().timeout(const Duration(seconds: 30));
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final err = _tryJson(response.body);
+      throw Exception(
+        err?['message']?.toString() ??
+            'Image upload failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<Product> deleteProductImage(String productId, String imageId) async {
+    _requireAccessToken();
+    final response = await http
+        .delete(
+          _uri('/products/$productId/images/$imageId'),
+          headers: {
+            if (session.accessToken != null)
+              'Authorization': 'Bearer ${session.accessToken}',
+          },
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final err = _tryJson(response.body);
+      throw Exception(
+        err?['message']?.toString() ??
+            'Delete image failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  String resolveMediaUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return trimmed;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('/')) {
+      return '${session.apiBaseUrl}$trimmed';
+    }
+    return '${session.apiBaseUrl}/$trimmed';
+  }
+
   Future<Map<String, dynamic>> fetchCommissionSettings() async {
+    _requireAccessToken();
     final response = await http
         .get(_uri('/commissions/settings'), headers: session.authHeaders)
         .timeout(const Duration(seconds: 8));
@@ -671,6 +816,7 @@ class ApiClient {
   Future<List<Map<String, dynamic>>> fetchCommissionAgreements({
     String? supplierId,
   }) async {
+    _requireAccessToken();
     final query = supplierId != null
         ? '?supplierId=${Uri.encodeComponent(supplierId)}'
         : '';
@@ -738,6 +884,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> fetchSupplierCommissionSummary() async {
+    _requireAccessToken();
     final response = await http
         .get(_uri('/commissions/supplier/summary'), headers: session.authHeaders)
         .timeout(const Duration(seconds: 8));
@@ -752,6 +899,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> fetchAdminSupplierCommissionTotals() async {
+    _requireAccessToken();
     final response = await http
         .get(
           _uri('/commissions/admin/supplier-totals'),
@@ -982,6 +1130,25 @@ class ApiClient {
 
   Product _productFromJson(Map<String, dynamic> json) {
     final stockStatusRaw = json['stockStatus'] as String? ?? 'inStock';
+    final rawImages = json['images'] as List<dynamic>? ?? const [];
+    final images = rawImages
+        .whereType<Map>()
+        .map(
+          (raw) => ProductImageRef(
+            id: raw['id']?.toString() ?? '',
+            url: resolveMediaUrl(raw['url']?.toString() ?? ''),
+            sortOrder: (raw['sortOrder'] as num?)?.toInt() ?? 0,
+          ),
+        )
+        .where((image) => image.id.isNotEmpty && image.url.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    final cover = resolveMediaUrl(
+      json['imageUrl'] as String? ??
+          (images.isNotEmpty
+              ? images.first.url
+              : 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800'),
+    );
     return Product(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -994,8 +1161,10 @@ class ApiClient {
       price: (json['price'] as num).toDouble(),
       previousPrice: (json['previousPrice'] as num?)?.toDouble(),
       rating: (json['rating'] as num?)?.toDouble() ?? 4.5,
-      imageUrl: json['imageUrl'] as String? ??
-          'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800',
+      imageUrl: cover,
+      images: images.isNotEmpty
+          ? images
+          : [ProductImageRef(id: 'cover-${json['id']}', url: cover)],
       category: json['category'] as String? ?? 'General',
       model: json['model'] as String? ?? 'Standard',
       color: json['color'] as String? ?? 'Default',

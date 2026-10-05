@@ -1,5 +1,29 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ProductsService } from './products.service';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFiles,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { UserRole } from '@prisma/client';
+import { memoryStorage } from 'multer';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
+import { AuthUser } from '../auth/auth.types';
+import {
+  ProductsService,
+  UpsertSupplierProductDto,
+} from './products.service';
 
 @Controller('products')
 export class ProductsController {
@@ -28,6 +52,23 @@ export class ProductsController {
   @Get('sizes')
   listSizes() {
     return this.productsService.listSizes();
+  }
+
+  @Get('mine')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPPLIER)
+  listMine(@CurrentUser() user: AuthUser) {
+    return this.productsService.listMine(user);
+  }
+
+  @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPPLIER)
+  create(
+    @CurrentUser() user: AuthUser,
+    @Body() body: UpsertSupplierProductDto,
+  ) {
+    return this.productsService.createForSupplier(body, user);
   }
 
   @Get()
@@ -82,8 +123,65 @@ export class ProductsController {
     });
   }
 
+  @Post(':id/images')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPPLIER)
+  @UseInterceptors(
+    FilesInterceptor('files', 8, {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (!file.mimetype?.startsWith('image/')) {
+          return cb(
+            new BadRequestException('Only image uploads are allowed') as Error,
+            false,
+          );
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  uploadImages(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    return this.productsService.addImages(
+      id,
+      (files ?? []).map((file) => ({
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+        buffer: file.buffer,
+      })),
+      user,
+    );
+  }
+
+  @Delete(':id/images/:imageId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPPLIER)
+  removeImage(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.productsService.removeImage(id, imageId, user);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.productsService.findOne(id);
+  }
+
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPPLIER)
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: UpsertSupplierProductDto,
+  ) {
+    return this.productsService.updateForSupplier(id, body, user);
   }
 }

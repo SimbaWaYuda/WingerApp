@@ -1,8 +1,11 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
-import '../../core/data/mock_catalog.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
 import '../../core/offline/sync_engine.dart';
@@ -39,37 +42,147 @@ class SupplierShell extends StatelessWidget {
   }
 }
 
-class SupplierDashboardScreen extends StatelessWidget {
+class SupplierDashboardScreen extends StatefulWidget {
   const SupplierDashboardScreen({super.key});
+
+  @override
+  State<SupplierDashboardScreen> createState() => _SupplierDashboardScreenState();
+}
+
+class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
+  Future<Map<String, dynamic>>? _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _future ??= _load();
+  }
+
+  Future<Map<String, dynamic>> _load() {
+    final session = context.read<AppSession>();
+    if (session.accessToken == null) {
+      throw Exception(
+        'Missing Bearer token — sign out and sign in again with API credentials.',
+      );
+    }
+    return context.read<ApiClient>().fetchSupplierDashboard();
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final wide = MediaQuery.sizeOf(context).width >= 900;
+    final future = _future;
+    if (future == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const OnboardingChecklistCard(journeyRoute: '/supplier/onboarding'),
-        Text(s.t('overview'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 16),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: wide ? 4 : 2,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: wide ? 1.4 : 1.25,
-          children: [for (final kpi in MockCatalog.supplierKpis) KpiCard(data: kpi)],
-        ),
-        const SizedBox(height: 20),
-        Text(s.t('orders'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-        const SizedBox(height: 8),
-        const Text(
-          'Open Orders for live supplier lines from the API.',
-          style: TextStyle(color: WingerColors.muted),
-        ),
-      ],
+    return FutureBuilder<Map<String, dynamic>>(
+      future: future,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final kpis = <KpiCardData>[
+          KpiCardData(
+            label: s.t('grossSales'),
+            value: '\$${((data?['grossSales'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}',
+            delta: '${data?['orderLineCount'] ?? 0} ${s.t('lines')}',
+          ),
+          KpiCardData(
+            label: s.t('openLines'),
+            value: '${data?['openLines'] ?? 0}',
+            delta: '${data?['shippedLines'] ?? 0} ${s.t('shipped')}',
+          ),
+          KpiCardData(
+            label: s.t('settleableCommission'),
+            value: '\$${((data?['settleableCommission'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            delta: s.t('settleable'),
+          ),
+          KpiCardData(
+            label: s.t('products'),
+            value: '${data?['productCount'] ?? 0}',
+            delta: '${data?['lowStockCount'] ?? 0} ${s.t('lowStock')}',
+            positive: ((data?['lowStockCount'] as num?)?.toInt() ?? 0) == 0,
+          ),
+        ];
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            const OnboardingChecklistCard(journeyRoute: '/supplier/onboarding'),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    s.t('overview'),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => setState(() => _future = _load()),
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            if (data?['supplierName'] != null)
+              Text(
+                '${data!['supplierName']}',
+                style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+              ),
+            const SizedBox(height: 16),
+            if (snapshot.connectionState != ConnectionState.done)
+              const Center(child: CircularProgressIndicator())
+            else if (snapshot.hasError) ...[
+              Text(
+                snapshot.error.toString().replaceFirst('Exception: ', ''),
+                style: const TextStyle(color: WingerColors.dangerInk),
+              ),
+              const SizedBox(height: 8),
+              FilledButton(
+                onPressed: () {
+                  context.read<AppSession>().signOut();
+                  context.go('/login');
+                },
+                child: Text(s.t('signInAgain')),
+              ),
+            ] else ...[
+              GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: wide ? 4 : 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: wide ? 1.4 : 1.25,
+                children: [for (final kpi in kpis) KpiCard(data: kpi)],
+              ),
+              const SizedBox(height: 20),
+              Text(s.t('orders'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 8),
+              Text(
+                s.t('supplierDashboardHint'),
+                style: TextStyle(color: WingerColors.muted),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: () => context.go('/supplier/orders'),
+                    child: Text(s.t('orders')),
+                  ),
+                  FilledButton.tonal(
+                    onPressed: () => context.go('/supplier/products'),
+                    child: Text(s.t('products')),
+                  ),
+                  FilledButton.tonal(
+                    onPressed: () => context.go('/supplier/payments'),
+                    child: Text(s.t('payments')),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -81,8 +194,11 @@ class SupplierOrdersScreen extends StatefulWidget {
   State<SupplierOrdersScreen> createState() => _SupplierOrdersScreenState();
 }
 
+enum _FulfillmentFilter { all, open, ready, shipped, delivered }
+
 class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
   Future<List<CustomerOrder>>? _future;
+  _FulfillmentFilter _filter = _FulfillmentFilter.all;
 
   @override
   void didChangeDependencies() {
@@ -104,6 +220,22 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
     setState(() {
       _future = next;
     });
+  }
+
+  bool _matchesFilter(OrderItemRow item) {
+    switch (_filter) {
+      case _FulfillmentFilter.all:
+        return true;
+      case _FulfillmentFilter.open:
+        return item.status == OrderStatus.processing ||
+            item.status == OrderStatus.partial;
+      case _FulfillmentFilter.ready:
+        return item.status == OrderStatus.readyForPickup;
+      case _FulfillmentFilter.shipped:
+        return item.status == OrderStatus.shipped;
+      case _FulfillmentFilter.delivered:
+        return item.status == OrderStatus.delivered;
+    }
   }
 
   /// Unique per order line — never derived from product id alone.
@@ -250,10 +382,35 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
       future: future,
       builder: (context, snapshot) {
         final orders = snapshot.data ?? [];
+        final pairs = <({CustomerOrder order, OrderItemRow item})>[
+          for (final order in orders)
+            for (final item in order.itemRows)
+              if (_matchesFilter(item)) (order: order, item: item),
+        ];
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
             Text(s.t('orders'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final entry in <(_FulfillmentFilter, String)>[
+                  (_FulfillmentFilter.all, s.t('filterAll')),
+                  (_FulfillmentFilter.open, s.t('filterOpen')),
+                  (_FulfillmentFilter.ready, s.t('filterReady')),
+                  (_FulfillmentFilter.shipped, s.t('filterShipped')),
+                  (_FulfillmentFilter.delivered, s.t('filterDelivered')),
+                ])
+                  FilterChip(
+                    label: Text(entry.$2),
+                    selected: _filter == entry.$1,
+                    onSelected: (_) => setState(() => _filter = entry.$1),
+                    selectedColor: WingerColors.brandMuted,
+                  ),
+              ],
+            ),
             const SizedBox(height: 12),
             if (snapshot.connectionState != ConnectionState.done)
               const Padding(
@@ -262,10 +419,15 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
               )
             else if (orders.isEmpty)
               Text('No paid orders for your catalogue yet.', style: TextStyle(color: WingerColors.muted))
+            else if (pairs.isEmpty)
+              Text(s.t('noOrdersInFilter'), style: TextStyle(color: WingerColors.muted))
             else
-              for (final order in orders)
-                for (final item in order.itemRows)
-                  Card(
+              for (final pair in pairs)
+                Builder(
+                  builder: (context) {
+                    final order = pair.order;
+                    final item = pair.item;
+                    return Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
@@ -365,7 +527,9 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                         ],
                       ),
                     ),
-                  ),
+                  );
+                  },
+                ),
           ],
         );
       },
@@ -381,7 +545,8 @@ class SupplierProductsScreen extends StatefulWidget {
 }
 
 class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
-  Future<List<({String productId, String name, String supplierId, int quantity})>>? _future;
+  Future<List<Product>>? _future;
+  bool _busy = false;
 
   String get _supplierId =>
       context.read<AppSession>().supplierId ?? 's-kijani';
@@ -389,35 +554,105 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _future ??= context.read<InventoryRepository>().listForSupplier(_supplierId);
+    _future ??= _load();
+  }
+
+  Future<List<Product>> _load() {
+    final session = context.read<AppSession>();
+    if (session.accessToken == null) {
+      throw Exception(
+        'Missing Bearer token — sign out and sign in again with API credentials.',
+      );
+    }
+    return context.read<ApiClient>().fetchMyProducts();
   }
 
   void _reload() {
-    _future = context.read<InventoryRepository>().listForSupplier(_supplierId);
+    setState(() => _future = _load());
   }
 
-  Future<void> _receive(String productId, String name) async {
+  Future<void> _receive(Product product) async {
     final inventory = context.read<InventoryRepository>();
     final session = context.read<AppSession>();
     final sync = context.read<SyncEngine>();
     final next = await inventory.receiveStock(
-      productId: productId,
+      productId: product.id,
       supplierId: _supplierId,
       quantity: 20,
       userId: session.userId,
     );
     await sync.flush();
     if (!mounted) return;
-    setState(_reload);
+    _reload();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           session.apiOnline
-              ? 'Received +20 for $name · stock $next · synced'
-              : 'Received +20 for $name · stock $next · queued offline',
+              ? 'Received +20 for ${product.name} · stock $next · synced'
+              : 'Received +20 for ${product.name} · stock $next · queued offline',
         ),
       ),
     );
+  }
+
+  Future<void> _openEditor({Product? product}) async {
+    final s = WingerStrings.of(context);
+    final draft = await showDialog<_ProductEditorResult>(
+      context: context,
+      builder: (ctx) => _ProductEditorDialog(product: product),
+    );
+    if (draft == null || !mounted) return;
+    if (draft.name.isEmpty ||
+        draft.price == null ||
+        draft.price! < 0 ||
+        draft.stock == null ||
+        draft.stock! < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s.t('productFormInvalid'))),
+      );
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      final api = context.read<ApiClient>();
+      final body = <String, dynamic>{
+        'name': draft.name,
+        'brand': draft.brand,
+        'price': draft.price,
+        'stock': draft.stock,
+        'category': draft.category.isEmpty ? 'General' : draft.category,
+        'description': draft.description,
+      };
+      late Product saved;
+      if (product == null) {
+        saved = await api.createMyProduct(body);
+      } else {
+        for (final imageId in draft.removedImageIds) {
+          await api.deleteProductImage(product.id, imageId);
+        }
+        saved = await api.updateMyProduct(product.id, body);
+      }
+      if (draft.pendingPaths.isNotEmpty) {
+        await api.uploadProductImages(saved.id, draft.pendingPaths);
+      }
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            product == null ? s.t('productCreated') : s.t('productUpdated'),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -427,7 +662,7 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
     if (future == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    return FutureBuilder(
+    return FutureBuilder<List<Product>>(
       future: future,
       builder: (context, snapshot) {
         final rows = snapshot.data ?? [];
@@ -441,22 +676,20 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const Spacer(),
+                FilledButton.icon(
+                  onPressed: _busy ? null : () => _openEditor(),
+                  icon: const Icon(Icons.add),
+                  label: Text(s.t('addProduct')),
+                ),
                 IconButton(
-                  tooltip: 'Refresh stock from API',
-                  onPressed: () {
-                    final next = context
-                        .read<InventoryRepository>()
-                        .listForSupplier(_supplierId, refreshFromServer: true);
-                    setState(() {
-                      _future = next;
-                    });
-                  },
+                  tooltip: s.t('retry'),
+                  onPressed: _reload,
                   icon: const Icon(Icons.refresh),
                 ),
               ],
             ),
             Text(
-              'Stock synced from API · offline receive supported',
+              s.t('supplierProductsHint'),
               style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 12),
@@ -465,38 +698,64 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                 padding: EdgeInsets.only(top: 24),
                 child: Center(child: CircularProgressIndicator()),
               )
+            else if (snapshot.hasError)
+              Text(
+                snapshot.error.toString().replaceFirst('Exception: ', ''),
+                style: const TextStyle(color: WingerColors.dangerInk),
+              )
             else if (rows.isEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 24),
                 child: Text(
-                  'No products for this supplier yet.',
+                  s.t('noSupplierProducts'),
                   style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
                 ),
               )
             else
-              for (final row in rows)
+              for (final product in rows)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     child: Row(
                       children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            product.imageUrl,
+                            width: 56,
+                            height: 56,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 56,
+                              height: 56,
+                              color: WingerColors.brandMuted,
+                              child: const Icon(Icons.image_outlined),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(row.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                              Text(product.name, style: const TextStyle(fontWeight: FontWeight.w700)),
                               const SizedBox(height: 4),
                               Text(
-                                'Stock: ${row.quantity}',
+                                '\$${product.price.toStringAsFixed(2)} · ${s.t('stock')}: ${product.stock} · ${product.galleryUrls.length} ${s.t('photos')}',
                                 style: TextStyle(color: WingerColors.muted),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: _busy ? null : () => _openEditor(product: product),
+                          child: Text(s.t('edit')),
+                        ),
+                        const SizedBox(width: 8),
                         FilledButton(
-                          onPressed: () => _receive(row.productId, row.name),
-                          child: const Text('Receive +20'),
+                          onPressed: _busy ? null : () => _receive(product),
+                          child: Text(s.t('receiveStock')),
                         ),
                       ],
                     ),
@@ -505,6 +764,235 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
           ],
         );
       },
+    );
+  }
+}
+
+class _ProductEditorResult {
+  const _ProductEditorResult({
+    required this.name,
+    required this.brand,
+    required this.price,
+    required this.stock,
+    required this.category,
+    required this.description,
+    required this.pendingPaths,
+    required this.removedImageIds,
+  });
+
+  final String name;
+  final String brand;
+  final double? price;
+  final int? stock;
+  final String category;
+  final String description;
+  final List<String> pendingPaths;
+  final List<String> removedImageIds;
+}
+
+class _ProductEditorDialog extends StatefulWidget {
+  const _ProductEditorDialog({this.product});
+
+  final Product? product;
+
+  @override
+  State<_ProductEditorDialog> createState() => _ProductEditorDialogState();
+}
+
+class _ProductEditorDialogState extends State<_ProductEditorDialog> {
+  static const _maxImages = 8;
+
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _brandCtrl;
+  late final TextEditingController _priceCtrl;
+  late final TextEditingController _stockCtrl;
+  late final TextEditingController _categoryCtrl;
+  late final TextEditingController _descCtrl;
+  late List<ProductImageRef> _existing;
+  final List<String> _pendingPaths = [];
+  final List<String> _removedImageIds = [];
+
+  @override
+  void initState() {
+    super.initState();
+    final product = widget.product;
+    _nameCtrl = TextEditingController(text: product?.name ?? '');
+    _brandCtrl = TextEditingController(text: product?.brand ?? '');
+    _priceCtrl = TextEditingController(
+      text: product != null ? product.price.toStringAsFixed(2) : '',
+    );
+    _stockCtrl = TextEditingController(
+      text: product != null ? '${product.stock}' : '10',
+    );
+    _categoryCtrl = TextEditingController(text: product?.category ?? 'General');
+    _descCtrl = TextEditingController(text: product?.description ?? '');
+    _existing = [...?product?.images];
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _brandCtrl.dispose();
+    _priceCtrl.dispose();
+    _stockCtrl.dispose();
+    _categoryCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
+  }
+
+  int get _totalCount => _existing.length + _pendingPaths.length;
+
+  Future<void> _pickImages() async {
+    final remaining = _maxImages - _totalCount;
+    if (remaining <= 0) return;
+    final result = await FilePicker.pickFiles(type: FileType.image);
+    if (result.isEmpty) return;
+    final paths = result
+        .map((file) => file.path)
+        .whereType<String>()
+        .where((path) => path.isNotEmpty)
+        .take(remaining)
+        .toList();
+    if (paths.isEmpty) return;
+    setState(() => _pendingPaths.addAll(paths));
+  }
+
+  void _submit() {
+    Navigator.pop(
+      context,
+      _ProductEditorResult(
+        name: _nameCtrl.text.trim(),
+        brand: _brandCtrl.text.trim(),
+        price: double.tryParse(_priceCtrl.text.trim()),
+        stock: int.tryParse(_stockCtrl.text.trim()),
+        category: _categoryCtrl.text.trim(),
+        description: _descCtrl.text.trim(),
+        pendingPaths: List<String>.from(_pendingPaths),
+        removedImageIds: List<String>.from(_removedImageIds),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return AlertDialog(
+      title: Text(widget.product == null ? s.t('addProduct') : s.t('editProduct')),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(s.t('photos'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text(
+                s.t('productPhotosHint'),
+                style: TextStyle(color: WingerColors.muted, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final image in _existing)
+                    _EditorThumb(
+                      child: Image.network(
+                        image.url,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.broken_image_outlined),
+                      ),
+                      onRemove: () {
+                        setState(() {
+                          _existing.removeWhere((row) => row.id == image.id);
+                          if (!image.id.startsWith('cover-')) {
+                            _removedImageIds.add(image.id);
+                          }
+                        });
+                      },
+                    ),
+                  for (var i = 0; i < _pendingPaths.length; i++)
+                    _EditorThumb(
+                      child: Image.file(
+                        File(_pendingPaths[i]),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.broken_image_outlined),
+                      ),
+                      onRemove: () => setState(() => _pendingPaths.removeAt(i)),
+                    ),
+                  if (_totalCount < _maxImages)
+                    OutlinedButton.icon(
+                      onPressed: _pickImages,
+                      icon: const Icon(Icons.add_photo_alternate_outlined),
+                      label: Text(s.t('addPhotos')),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(controller: _nameCtrl, decoration: InputDecoration(labelText: s.t('productName'))),
+              TextField(controller: _brandCtrl, decoration: InputDecoration(labelText: s.t('brand'))),
+              TextField(
+                controller: _priceCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(labelText: s.t('price')),
+              ),
+              TextField(
+                controller: _stockCtrl,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: s.t('stock')),
+              ),
+              TextField(controller: _categoryCtrl, decoration: InputDecoration(labelText: s.t('categories'))),
+              TextField(
+                controller: _descCtrl,
+                maxLines: 3,
+                decoration: InputDecoration(labelText: s.t('description')),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('back'))),
+        FilledButton(onPressed: _submit, child: Text(s.t('save'))),
+      ],
+    );
+  }
+}
+
+class _EditorThumb extends StatelessWidget {
+  const _EditorThumb({required this.child, required this.onRemove});
+
+  final Widget child;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(width: 72, height: 72, child: child),
+        ),
+        Positioned(
+          top: 0,
+          right: 0,
+          child: Material(
+            color: Colors.black54,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onRemove,
+              child: const Padding(
+                padding: EdgeInsets.all(2),
+                child: Icon(Icons.close, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -536,6 +1024,12 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
   }
 
   Future<_SupplierFinance> _load() async {
+    final session = context.read<AppSession>();
+    if (session.accessToken == null || session.accessToken!.isEmpty) {
+      throw Exception(
+        'Missing Bearer token — sign out and sign in again with API credentials (not local demo mode).',
+      );
+    }
     final api = context.read<ApiClient>();
     final summary = await api.fetchSupplierCommissionSummary();
     final agreements = await api.fetchCommissionAgreements();
@@ -623,12 +1117,26 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
             const SizedBox(height: 16),
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())
-            else if (snapshot.hasError)
+            else if (snapshot.hasError) ...[
               Text(
                 snapshot.error.toString().replaceFirst('Exception: ', ''),
                 style: const TextStyle(color: WingerColors.dangerInk),
-              )
-            else ...[
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: () {
+                  context.read<AppSession>().signOut();
+                  context.go('/login');
+                },
+                icon: const Icon(Icons.login),
+                label: Text(s.t('signInAgain')),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => setState(() => _future = _load()),
+                child: Text(s.t('retry')),
+              ),
+            ] else ...[
               GridView.count(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),

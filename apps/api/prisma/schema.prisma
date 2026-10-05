@@ -229,12 +229,24 @@ model Product {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
+  images          ProductImage[]
   inventoryLedger InventoryLedger[]
   orderItems      OrderItem[]
 
   @@index([supplierId])
   @@index([category])
   @@index([name])
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([productId, sortOrder])
 }
 
 model Order {

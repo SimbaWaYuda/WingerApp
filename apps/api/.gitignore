@@ -4,3 +4,5 @@ coverage
 .env
 .pgdata
 *.log
+uploads/products/**
+!uploads/.gitkeep

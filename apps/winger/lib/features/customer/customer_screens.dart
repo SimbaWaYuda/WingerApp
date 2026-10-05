@@ -1559,7 +1559,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   List<String> _galleryUrls(Product product, List<Product> related) {
-    final urls = <String>{product.imageUrl};
+    final urls = <String>{...product.galleryUrls};
     for (final item in related) {
       if (urls.length >= 6) break;
       if (item.imageUrl.trim().isEmpty) continue;

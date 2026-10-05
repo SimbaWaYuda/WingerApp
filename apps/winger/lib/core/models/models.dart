@@ -12,6 +12,18 @@ enum OrderStatus {
 
 enum StockStatus { inStock, lowStock, outOfStock }
 
+class ProductImageRef {
+  const ProductImageRef({
+    required this.id,
+    required this.url,
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final String url;
+  final int sortOrder;
+}
+
 class Product {
   const Product({
     required this.id,
@@ -23,6 +35,7 @@ class Product {
     required this.rating,
     required this.imageUrl,
     required this.category,
+    this.images = const [],
     this.previousPrice,
     this.model = 'Standard',
     this.color = 'Graphite',
@@ -49,6 +62,7 @@ class Product {
   final double? previousPrice;
   final double rating;
   final String imageUrl;
+  final List<ProductImageRef> images;
   final String category;
   final String model;
   final String color;
@@ -58,6 +72,14 @@ class Product {
   final String description;
   final int stock;
   final StockStatus stockStatus;
+
+  List<String> get galleryUrls {
+    if (images.isNotEmpty) {
+      return images.map((image) => image.url).where((url) => url.trim().isNotEmpty).toList();
+    }
+    if (imageUrl.trim().isNotEmpty) return [imageUrl];
+    return const [];
+  }
 
   double get savings =>
       previousPrice == null ? 0 : (previousPrice! - price).clamp(0, double.infinity);
