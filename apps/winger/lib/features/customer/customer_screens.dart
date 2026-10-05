@@ -12,6 +12,7 @@ import '../../core/repositories/catalog_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
 import '../../core/widgets/product_card.dart';
+import '../../core/widgets/product_photo.dart';
 import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
@@ -1558,14 +1559,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
   }
 
-  List<String> _galleryUrls(Product product, List<Product> related) {
-    final urls = <String>{...product.galleryUrls};
-    for (final item in related) {
-      if (urls.length >= 6) break;
-      if (item.imageUrl.trim().isEmpty) continue;
-      urls.add(item.imageUrl);
-    }
-    return urls.toList();
+  List<String> _galleryUrls(Product product) {
+    final urls = product.galleryUrls;
+    // Prefer real product photos only — never pad with unrelated catalogue images.
+    if (urls.isEmpty) return const [''];
+    return urls;
   }
 
   void _goGallery(int index, int total) {
@@ -1622,7 +1620,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           future: _relatedFuture,
           builder: (context, relatedSnap) {
             final related = relatedSnap.data ?? const <Product>[];
-            final gallery = _galleryUrls(product, related);
+            final gallery = _galleryUrls(product);
             final safeIndex = _galleryIndex.clamp(0, gallery.length - 1);
             return ListView(
               padding: const EdgeInsets.all(20),
@@ -1635,82 +1633,97 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     label: Text(s.t('home')),
                   ),
                 ),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: AspectRatio(
-                    aspectRatio: 1.15,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        PageView.builder(
-                          controller: _galleryPageCtrl,
-                          itemCount: gallery.length,
-                          onPageChanged: (index) => setState(() => _galleryIndex = index),
-                          itemBuilder: (context, index) {
-                            return Image.network(
-                              gallery[index],
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: WingerColors.brandMuted,
-                                alignment: Alignment.center,
-                                child: const Icon(Icons.image_outlined, size: 48),
-                              ),
-                            );
-                          },
+                Builder(
+                  builder: (context) {
+                    final screen = MediaQuery.sizeOf(context);
+                    final galleryHeight = (screen.height * 0.36).clamp(220.0, 340.0);
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: screen.width >= 900 ? 520 : double.infinity,
+                          maxHeight: galleryHeight,
                         ),
-                        if (gallery.length > 1) ...[
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: IconButton(
-                              style: IconButton.styleFrom(
-                                backgroundColor: Colors.black45,
-                                foregroundColor: Colors.white,
-                              ),
-                              onPressed: safeIndex > 0
-                                  ? () => _goGallery(safeIndex - 1, gallery.length)
-                                  : null,
-                              icon: const Icon(Icons.chevron_left),
-                            ),
-                          ),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: IconButton(
-                              style: IconButton.styleFrom(
-                                backgroundColor: Colors.black45,
-                                foregroundColor: Colors.white,
-                              ),
-                              onPressed: safeIndex < gallery.length - 1
-                                  ? () => _goGallery(safeIndex + 1, gallery.length)
-                                  : null,
-                              icon: const Icon(Icons.chevron_right),
-                            ),
-                          ),
-                        ],
-                        Positioned(
-                          right: 12,
-                          bottom: 12,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              s
-                                  .t('imageOf')
-                                  .replaceAll('{current}', '${safeIndex + 1}')
-                                  .replaceAll('{total}', '${gallery.length}'),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                              ),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: galleryHeight,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                PageView.builder(
+                                  controller: _galleryPageCtrl,
+                                  itemCount: gallery.length,
+                                  onPageChanged: (index) => setState(() => _galleryIndex = index),
+                                  itemBuilder: (context, index) {
+                                    return ColoredBox(
+                                      color: WingerColors.brandMuted,
+                                      child: ProductPhoto(
+                                        url: gallery[index],
+                                        fit: BoxFit.contain,
+                                        iconSize: 40,
+                                      ),
+                                    );
+                                  },
+                                ),
+                                if (gallery.length > 1) ...[
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: IconButton(
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: Colors.black45,
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      onPressed: safeIndex > 0
+                                          ? () => _goGallery(safeIndex - 1, gallery.length)
+                                          : null,
+                                      icon: const Icon(Icons.chevron_left),
+                                    ),
+                                  ),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: IconButton(
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: Colors.black45,
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      onPressed: safeIndex < gallery.length - 1
+                                          ? () => _goGallery(safeIndex + 1, gallery.length)
+                                          : null,
+                                      icon: const Icon(Icons.chevron_right),
+                                    ),
+                                  ),
+                                ],
+                                Positioned(
+                                  right: 12,
+                                  bottom: 12,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black54,
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Text(
+                                      s
+                                          .t('imageOf')
+                                          .replaceAll('{current}', '${safeIndex + 1}')
+                                          .replaceAll('{total}', '${gallery.length}'),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  },
                 ),
                 if (gallery.length > 1) ...[
                   const SizedBox(height: 10),
@@ -1735,11 +1748,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             ),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(9),
-                              child: Image.network(
-                                gallery[index],
+                              child: SizedBox(
                                 width: 72,
                                 height: 72,
-                                fit: BoxFit.cover,
+                                child: ProductPhoto(
+                                  url: gallery[index],
+                                  iconSize: 20,
+                                ),
                               ),
                             ),
                           ),
@@ -1850,15 +1865,24 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
                 const SizedBox(height: 16),
                 Text(product.description),
-                const SizedBox(height: 20),
-                Text(s.t('specifications'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-                const SizedBox(height: 8),
-                _SpecRow(label: s.t('sku'), value: product.model),
-                _SpecRow(label: 'Category', value: product.category),
-                _SpecRow(label: 'Color', value: product.color),
-                _SpecRow(label: 'Size', value: product.size),
-                _SpecRow(label: 'Battery', value: product.battery),
-                _SpecRow(label: 'Weight', value: product.weight),
+                if (product.visibleSpecs.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  Text(s.t('specifications'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                  const SizedBox(height: 8),
+                  for (final spec in product.visibleSpecs)
+                    _SpecRow(
+                      label: switch (spec.label) {
+                        'sku' => s.t('sku'),
+                        'categories' => s.t('categories'),
+                        'color' => s.t('color'),
+                        'size' => s.t('size'),
+                        'battery' => s.t('battery'),
+                        'weight' => s.t('weight'),
+                        _ => spec.label,
+                      },
+                      value: spec.value,
+                    ),
+                ],
                 const SizedBox(height: 20),
                 Text(
                   '${s.t('deliveryTo')}: ${session.city}',

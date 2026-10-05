@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,7 +19,10 @@ import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 
 const MAX_PRODUCT_IMAGES = 8;
-const DEFAULT_PRODUCT_IMAGE =
+/** Empty cover — clients show a neutral “no photo” tile (never a fake product shot). */
+const DEFAULT_PRODUCT_IMAGE = '';
+/** Old default Unsplash headphones URL still treated as “missing photo”. */
+const LEGACY_DEFAULT_PRODUCT_IMAGE =
   'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800';
 
 const productDetailInclude = {
@@ -34,6 +38,11 @@ const productDetailInclude = {
   },
 } satisfies Prisma.ProductInclude;
 
+export type ProductSpecDto = {
+  label: string;
+  value: string;
+};
+
 export type UpsertSupplierProductDto = {
   name?: string;
   brand?: string;
@@ -48,6 +57,7 @@ export type UpsertSupplierProductDto = {
   size?: string;
   battery?: string;
   weight?: string;
+  extraSpecs?: ProductSpecDto[];
 };
 
 export type ProductImageDto = {
@@ -76,6 +86,7 @@ export type ProductDto = {
   size: string;
   battery: string;
   weight: string;
+  extraSpecs: ProductSpecDto[];
   description: string;
   stock: number;
   stockStatus: 'inStock' | 'lowStock' | 'outOfStock';
@@ -357,6 +368,41 @@ export class ProductsService {
     return products.map(toDto);
   }
 
+  async bulkImportForSupplier(
+    items: UpsertSupplierProductDto[],
+    user: AuthUser,
+  ) {
+    if (user.role !== UserRole.SUPPLIER || !user.supplierId) {
+      throw new ForbiddenException('Supplier account required');
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new BadRequestException('products array is required');
+    }
+    if (items.length > 100) {
+      throw new BadRequestException('Import at most 100 products at a time');
+    }
+
+    const created: { row: number; id: string; name: string }[] = [];
+    const errors: { row: number; message: string }[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const row = i + 1;
+      try {
+        const product = await this.createForSupplier(items[i] ?? {}, user);
+        created.push({ row, id: product.id, name: product.name });
+      } catch (error) {
+        errors.push({ row, message: nestErrorMessage(error) });
+      }
+    }
+
+    return {
+      createdCount: created.length,
+      errorCount: errors.length,
+      created,
+      errors,
+    };
+  }
+
   async createForSupplier(dto: UpsertSupplierProductDto, user: AuthUser) {
     if (user.role !== UserRole.SUPPLIER || !user.supplierId) {
       throw new ForbiddenException('Supplier account required');
@@ -402,6 +448,7 @@ export class ProductsService {
         size: (dto.size?.trim() || 'Standard').slice(0, 80),
         battery: (dto.battery?.trim() || '—').slice(0, 80),
         weight: (dto.weight?.trim() || '—').slice(0, 80),
+        extraSpecs: normalizeExtraSpecs(dto.extraSpecs),
         ...(customImageUrl
           ? {
               images: {
@@ -465,6 +512,9 @@ export class ProductsService {
     if (dto.size != null) data.size = dto.size.trim().slice(0, 80) || existing.size;
     if (dto.battery != null) data.battery = dto.battery.trim().slice(0, 80) || existing.battery;
     if (dto.weight != null) data.weight = dto.weight.trim().slice(0, 80) || existing.weight;
+    if (dto.extraSpecs !== undefined) {
+      data.extraSpecs = normalizeExtraSpecs(dto.extraSpecs);
+    }
     if (dto.stock != null) {
       const stock = Math.floor(Number(dto.stock));
       if (!Number.isFinite(stock) || stock < 0) {
@@ -518,6 +568,7 @@ export class ProductsService {
     let sortOrder = existingCount;
     const createdUrls: string[] = [];
     for (const file of files) {
+      assertImageQuality(file);
       const ext = extensionForUpload(file);
       const imageId = randomUUID();
       const filename = `${imageId}${ext}`;
@@ -612,7 +663,7 @@ function buildProductId(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 24);
-  const suffix = Date.now().toString(36).slice(-5);
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
   return `p-${slug || 'item'}-${suffix}`;
 }
 
@@ -682,6 +733,37 @@ function buildOrderBy(
   }
 }
 
+function nestErrorMessage(error: unknown): string {
+  if (error instanceof HttpException) {
+    const response = error.getResponse();
+    if (typeof response === 'string') return response;
+    if (response && typeof response === 'object' && 'message' in response) {
+      const message = (response as { message: string | string[] }).message;
+      return Array.isArray(message) ? message.join(', ') : String(message);
+    }
+    return error.message;
+  }
+  if (error instanceof Error) return error.message;
+  return 'Import failed';
+}
+
+function normalizeExtraSpecs(raw: unknown): ProductSpecDto[] {
+  if (!Array.isArray(raw)) return [];
+  const specs: ProductSpecDto[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const label = String((item as { label?: unknown }).label ?? '').trim();
+    const value = String((item as { value?: unknown }).value ?? '').trim();
+    if (!label || !value) continue;
+    specs.push({
+      label: label.slice(0, 80),
+      value: value.slice(0, 160),
+    });
+    if (specs.length >= 20) break;
+  }
+  return specs;
+}
+
 function toDto(product: {
   id: string;
   name: string;
@@ -698,6 +780,7 @@ function toDto(product: {
   size: string;
   battery: string;
   weight: string;
+  extraSpecs?: unknown;
   description: string;
   stock: number;
   stockStatus: StockStatus;
@@ -750,6 +833,7 @@ function toDto(product: {
     size: product.size,
     battery: product.battery,
     weight: product.weight,
+    extraSpecs: normalizeExtraSpecs(product.extraSpecs),
     description: product.description,
     stock: product.stock,
     stockStatus: mapStatus(product.stockStatus),
@@ -758,25 +842,115 @@ function toDto(product: {
 }
 
 function isPlaceholderImage(url: string): boolean {
+  const trimmed = (url ?? '').trim();
   return (
-    !url ||
-    url === DEFAULT_PRODUCT_IMAGE ||
-    url.startsWith('https://images.unsplash.com/')
+    !trimmed ||
+    trimmed === DEFAULT_PRODUCT_IMAGE ||
+    trimmed === LEGACY_DEFAULT_PRODUCT_IMAGE ||
+    trimmed.includes('photo-1505740420928-5e560c06d30e')
   );
+}
+
+const MIN_IMAGE_EDGE = 600;
+const MIN_IMAGE_BYTES = 20 * 1024;
+
+function assertImageQuality(file: UploadedProductFile) {
+  if (!file.buffer?.length || file.buffer.length < MIN_IMAGE_BYTES) {
+    throw new BadRequestException(
+      'Image is too small. Upload an original photo at least 600×600 px (not a web thumbnail).',
+    );
+  }
+  const size = readImageSize(file.buffer);
+  if (size && (size.width < MIN_IMAGE_EDGE || size.height < MIN_IMAGE_EDGE)) {
+    throw new BadRequestException(
+      `Image is ${size.width}×${size.height}. Upload a clearer photo (at least 600×600 px).`,
+    );
+  }
+}
+
+function readImageSize(
+  buffer: Buffer,
+): { width: number; height: number } | null {
+  // PNG
+  if (
+    buffer.length >= 24 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+  }
+  // GIF
+  if (
+    buffer.length >= 10 &&
+    buffer[0] === 0x47 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46
+  ) {
+    return { width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) };
+  }
+  // JPEG — scan for SOF0/SOF2
+  if (buffer.length > 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 < buffer.length) {
+      if (buffer[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = buffer[offset + 1];
+      if (marker === 0xc0 || marker === 0xc2) {
+        return {
+          height: buffer.readUInt16BE(offset + 5),
+          width: buffer.readUInt16BE(offset + 7),
+        };
+      }
+      if (marker === 0xd9 || marker === 0xda) break;
+      const size = buffer.readUInt16BE(offset + 2);
+      if (size < 2) break;
+      offset += 2 + size;
+    }
+  }
+  // WebP VP8X / VP8
+  if (
+    buffer.length >= 30 &&
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    const chunk = buffer.toString('ascii', 12, 16);
+    if (chunk === 'VP8X' && buffer.length >= 30) {
+      const width =
+        1 + buffer[24] + (buffer[25] << 8) + (buffer[26] << 16);
+      const height =
+        1 + buffer[27] + (buffer[28] << 8) + (buffer[29] << 16);
+      return { width, height };
+    }
+    if (chunk === 'VP8 ' && buffer.length >= 30) {
+      return {
+        width: buffer.readUInt16LE(26) & 0x3fff,
+        height: buffer.readUInt16LE(28) & 0x3fff,
+      };
+    }
+  }
+  return null;
 }
 
 function extensionForUpload(file: UploadedProductFile): string {
   const fromName = extname(file.originalname || '').toLowerCase();
-  if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(fromName)) {
-    return fromName === '.jpeg' ? '.jpg' : fromName;
+  if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'].includes(fromName)) {
+    if (fromName === '.jpeg') return '.jpg';
+    if (fromName === '.heic' || fromName === '.heif') return '.jpg';
+    return fromName;
   }
-  switch (file.mimetype) {
+  switch ((file.mimetype || '').toLowerCase()) {
     case 'image/png':
       return '.png';
     case 'image/webp':
       return '.webp';
     case 'image/gif':
       return '.gif';
+    case 'image/bmp':
+      return '.bmp';
     default:
       return '.jpg';
   }

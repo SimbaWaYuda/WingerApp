@@ -24,6 +24,13 @@ class ProductImageRef {
   final int sortOrder;
 }
 
+class ProductSpec {
+  const ProductSpec({required this.label, required this.value});
+
+  final String label;
+  final String value;
+}
+
 class Product {
   const Product({
     required this.id,
@@ -36,6 +43,7 @@ class Product {
     required this.imageUrl,
     required this.category,
     this.images = const [],
+    this.extraSpecs = const [],
     this.previousPrice,
     this.model = 'Standard',
     this.color = 'Graphite',
@@ -63,6 +71,7 @@ class Product {
   final double rating;
   final String imageUrl;
   final List<ProductImageRef> images;
+  final List<ProductSpec> extraSpecs;
   final String category;
   final String model;
   final String color;
@@ -75,10 +84,37 @@ class Product {
 
   List<String> get galleryUrls {
     if (images.isNotEmpty) {
-      return images.map((image) => image.url).where((url) => url.trim().isNotEmpty).toList();
+      return images
+          .map((image) => image.url)
+          .where((url) => url.trim().isNotEmpty)
+          .toList();
     }
     if (imageUrl.trim().isNotEmpty) return [imageUrl];
     return const [];
+  }
+
+  /// Built-in + custom specs with empty / unused defaults removed.
+  List<ProductSpec> get visibleSpecs {
+    bool filled(String value, {Set<String> ignore = const {}}) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || trimmed == '—') return false;
+      return !ignore.contains(trimmed);
+    }
+
+    return [
+      if (filled(model, ignore: {'Standard'})) ProductSpec(label: 'sku', value: model),
+      if (filled(category, ignore: {'General'}))
+        ProductSpec(label: 'categories', value: category),
+      if (filled(color, ignore: {'Default', 'Graphite'}))
+        ProductSpec(label: 'color', value: color),
+      if (filled(size, ignore: {'Standard', 'One size'}))
+        ProductSpec(label: 'size', value: size),
+      if (filled(battery)) ProductSpec(label: 'battery', value: battery),
+      if (filled(weight)) ProductSpec(label: 'weight', value: weight),
+      ...extraSpecs.where(
+        (spec) => spec.label.trim().isNotEmpty && filled(spec.value),
+      ),
+    ];
   }
 
   double get savings =>

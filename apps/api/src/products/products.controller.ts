@@ -15,6 +15,7 @@ import {
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
 import { memoryStorage } from 'multer';
+import { extname } from 'path';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -24,6 +25,35 @@ import {
   ProductsService,
   UpsertSupplierProductDto,
 } from './products.service';
+
+const IMAGE_EXTENSIONS = new Set([
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.webp',
+  '.gif',
+  '.bmp',
+  '.heic',
+  '.heif',
+]);
+
+function isAllowedImageUpload(file: {
+  mimetype?: string;
+  originalname?: string;
+}): boolean {
+  const mime = (file.mimetype || '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+  // Windows often sends application/octet-stream for valid photos.
+  const ext = extname(file.originalname || '').toLowerCase();
+  if (
+    mime === 'application/octet-stream' ||
+    mime === 'binary/octet-stream' ||
+    mime === ''
+  ) {
+    return IMAGE_EXTENSIONS.has(ext);
+  }
+  return IMAGE_EXTENSIONS.has(ext);
+}
 
 @Controller('products')
 export class ProductsController {
@@ -69,6 +99,16 @@ export class ProductsController {
     @Body() body: UpsertSupplierProductDto,
   ) {
     return this.productsService.createForSupplier(body, user);
+  }
+
+  @Post('bulk')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPPLIER)
+  bulkImport(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { products?: UpsertSupplierProductDto[] },
+  ) {
+    return this.productsService.bulkImportForSupplier(body?.products ?? [], user);
   }
 
   @Get()
@@ -131,13 +171,15 @@ export class ProductsController {
       storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
-        if (!file.mimetype?.startsWith('image/')) {
-          return cb(
-            new BadRequestException('Only image uploads are allowed') as Error,
-            false,
-          );
+        if (isAllowedImageUpload(file)) {
+          return cb(null, true);
         }
-        cb(null, true);
+        return cb(
+          new BadRequestException(
+            'Only image files are allowed (JPG, PNG, WebP, GIF).',
+          ) as Error,
+          false,
+        );
       },
     }),
   )

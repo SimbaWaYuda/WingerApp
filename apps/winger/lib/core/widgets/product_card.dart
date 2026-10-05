@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../theme/winger_colors.dart';
+import 'product_photo.dart';
 
 class ProductCard extends StatelessWidget {
   const ProductCard({
@@ -46,15 +47,7 @@ class ProductCard extends StatelessWidget {
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                   child: AspectRatio(
                     aspectRatio: 1.35,
-                    child: Image.network(
-                      product.imageUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: WingerColors.brandMuted,
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.image_outlined, color: WingerColors.brand),
-                      ),
-                    ),
+                    child: ProductPhoto(url: product.imageUrl),
                   ),
                 ),
                 if (onWishlist != null)

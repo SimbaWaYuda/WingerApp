@@ -123,6 +123,13 @@ class WingerStrings {
       'imageOf': '{current} of {total}',
       'recentlyViewedEmpty': 'No recently viewed products yet.',
       'sku': 'SKU / Model',
+      'battery': 'Battery',
+      'weight': 'Weight',
+      'specificationsHint':
+          'Leave blank to hide on the product page. Add custom fields for anything else (Material, Voltage…).',
+      'addSpecField': 'Add custom field',
+      'customSpecLabel': 'Field name',
+      'customSpecValue': 'Value',
       'deliveryEstimate': 'Estimated arrival',
       'stockWarning': 'Only {n} left in stock',
       'unavailableItem': 'Unavailable or low stock — update quantity',
@@ -165,6 +172,13 @@ class WingerStrings {
       'noOrdersInFilter': 'No order lines match this filter.',
       'addProduct': 'Add product',
       'editProduct': 'Edit product',
+      'importCsv': 'Import CSV',
+      'downloadCsvTemplate': 'Download CSV template',
+      'csvTemplateSaved': 'CSV template saved',
+      'bulkImportHint':
+          'Bulk import up to 100 products from a CSV (name + price required). Use the table icon for a template.',
+      'importCsvConfirm': 'Import {n} products from this CSV?',
+      'importCsvResult': 'Imported {ok} products · {fail} failed',
       'edit': 'Edit',
       'productName': 'Product name',
       'brand': 'Brand',
@@ -179,7 +193,12 @@ class WingerStrings {
       'receiveStock': 'Receive +20',
       'photos': 'Photos',
       'addPhotos': 'Add photos',
-      'productPhotosHint': 'Up to 8 images · JPG, PNG, WebP · max 5 MB each',
+      'productPhotosHint':
+          'Up to 8 images · JPG/PNG/WebP/GIF · min 600×600 · max 5 MB · use original photos, not web thumbnails',
+      'productImageUploadFailed':
+          'Could not upload that file. Use JPG, PNG, WebP, or GIF under 5 MB.',
+      'productImageTooSmall':
+          'That image is too small (needs at least 600×600). Save/download the full-size photo, then try again.',
       'netPayout': 'Net payout',
       'signOut': 'Sign out',
       'apiStatus': 'API',
@@ -256,6 +275,8 @@ class WingerStrings {
       'noCommissionLines': 'No commission lines yet (new orders only).',
       'save': 'Save',
       'signInAgain': 'Sign in again',
+      'apiLoginRequired':
+          'Supplier dashboard needs an API login. Sign out, then sign in again while the API is online.',
       'retry': 'Retry',
       'platformAlerts': 'Platform alerts',
       'operationalQueue': 'Operational queue',
@@ -455,6 +476,13 @@ class WingerStrings {
       'imageOf': '{current} de {total}',
       'recentlyViewedEmpty': 'Aún no hay productos vistos recientemente.',
       'sku': 'SKU / Modelo',
+      'battery': 'Batería',
+      'weight': 'Peso',
+      'specificationsHint':
+          'Déjalo vacío para ocultarlo. Añade campos personalizados (Material, Voltaje…).',
+      'addSpecField': 'Añadir campo personalizado',
+      'customSpecLabel': 'Nombre del campo',
+      'customSpecValue': 'Valor',
       'deliveryEstimate': 'Llegada estimada',
       'stockWarning': 'Solo quedan {n} en stock',
       'unavailableItem': 'No disponible o stock bajo — actualiza la cantidad',
@@ -497,6 +525,13 @@ class WingerStrings {
       'noOrdersInFilter': 'Ninguna línea coincide con este filtro.',
       'addProduct': 'Añadir producto',
       'editProduct': 'Editar producto',
+      'importCsv': 'Importar CSV',
+      'downloadCsvTemplate': 'Descargar plantilla CSV',
+      'csvTemplateSaved': 'Plantilla CSV guardada',
+      'bulkImportHint':
+          'Importa hasta 100 productos desde CSV (nombre + precio obligatorios). Usa el icono de tabla para la plantilla.',
+      'importCsvConfirm': '¿Importar {n} productos de este CSV?',
+      'importCsvResult': 'Importados {ok} · fallidos {fail}',
       'edit': 'Editar',
       'productName': 'Nombre del producto',
       'brand': 'Marca',
@@ -511,7 +546,12 @@ class WingerStrings {
       'receiveStock': 'Recibir +20',
       'photos': 'Fotos',
       'addPhotos': 'Añadir fotos',
-      'productPhotosHint': 'Hasta 8 imágenes · JPG, PNG, WebP · máx. 5 MB cada una',
+      'productPhotosHint':
+          'Hasta 8 imágenes · JPG/PNG/WebP/GIF · mín. 600×600 · máx. 5 MB · usa fotos originales, no miniaturas web',
+      'productImageUploadFailed':
+          'No se pudo subir ese archivo. Usa JPG, PNG, WebP o GIF de menos de 5 MB.',
+      'productImageTooSmall':
+          'Esa imagen es demasiado pequeña (mín. 600×600). Guarda la foto a tamaño completo e inténtalo de nuevo.',
       'netPayout': 'Pago neto',
       'signOut': 'Cerrar sesión',
       'apiStatus': 'API',
@@ -588,6 +628,8 @@ class WingerStrings {
       'noCommissionLines': 'Aún no hay líneas de comisión (solo pedidos nuevos).',
       'save': 'Guardar',
       'signInAgain': 'Iniciar sesión de nuevo',
+      'apiLoginRequired':
+          'El panel del proveedor necesita inicio de sesión API. Cierra sesión e inicia de nuevo con la API en línea.',
       'retry': 'Reintentar',
       'platformAlerts': 'Alertas de plataforma',
       'operationalQueue': 'Cola operativa',
@@ -787,6 +829,13 @@ class WingerStrings {
       'imageOf': '{current} kati ya {total}',
       'recentlyViewedEmpty': 'Bado hakuna bidhaa zilizotazamwa hivi karibuni.',
       'sku': 'SKU / Model',
+      'battery': 'Betri',
+      'weight': 'Uzito',
+      'specificationsHint':
+          'Acha tupu kuficha. Ongeza sehemu maalum (Nyenzo, Voltage…).',
+      'addSpecField': 'Ongeza sehemu maalum',
+      'customSpecLabel': 'Jina la sehemu',
+      'customSpecValue': 'Thamani',
       'deliveryEstimate': 'Makadirio ya kuwasili',
       'stockWarning': 'Zimebaki {n} tu',
       'unavailableItem': 'Haipatikani au stock ndogo — sasisha idadi',
@@ -829,6 +878,13 @@ class WingerStrings {
       'noOrdersInFilter': 'Hakuna mistari inayolingana na kichujio hiki.',
       'addProduct': 'Ongeza bidhaa',
       'editProduct': 'Hariri bidhaa',
+      'importCsv': 'Ingiza CSV',
+      'downloadCsvTemplate': 'Pakua kiolezo cha CSV',
+      'csvTemplateSaved': 'Kiolezo cha CSV kimehifadhiwa',
+      'bulkImportHint':
+          'Ingiza hadi bidhaa 100 kutoka CSV (jina + bei zinahitajika). Tumia ikoni ya jedwali kwa kiolezo.',
+      'importCsvConfirm': 'Ingiza bidhaa {n} kutoka CSV hii?',
+      'importCsvResult': 'Zimeingizwa {ok} · zimeshindikana {fail}',
       'edit': 'Hariri',
       'productName': 'Jina la bidhaa',
       'brand': 'Chapa',
@@ -843,7 +899,12 @@ class WingerStrings {
       'receiveStock': 'Pokea +20',
       'photos': 'Picha',
       'addPhotos': 'Ongeza picha',
-      'productPhotosHint': 'Hadí 8 picha · JPG, PNG, WebP · hadí 5 MB kila moja',
+      'productPhotosHint':
+          'Hadí 8 picha · JPG/PNG/WebP/GIF · angalau 600×600 · hadí 5 MB · tumia picha halisi, si vijipicha vya wavuti',
+      'productImageUploadFailed':
+          'Imeshindikana kupakia faili hiyo. Tumia JPG, PNG, WebP au GIF chini ya 5 MB.',
+      'productImageTooSmall':
+          'Picha hiyo ni ndogo mno (angalau 600×600). Hifadhi picha kamili kisha jaribu tena.',
       'netPayout': 'Malipo halisi',
       'signOut': 'Toka',
       'apiStatus': 'API',
@@ -920,6 +981,8 @@ class WingerStrings {
       'noCommissionLines': 'Bado hakuna mistari ya kamisheni (oda mpya tu).',
       'save': 'Hifadhi',
       'signInAgain': 'Ingia tena',
+      'apiLoginRequired':
+          'Dashibodi ya msambazaji inahitaji kuingia kwa API. Toka kisha ingia tena API ikiwa online.',
       'retry': 'Jaribu tena',
       'platformAlerts': 'Tahadhari za jukwaa',
       'operationalQueue': 'Foleni ya operesheni',

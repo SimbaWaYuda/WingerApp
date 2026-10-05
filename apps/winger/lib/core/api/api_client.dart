@@ -704,6 +704,31 @@ class ApiClient {
     return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<Map<String, dynamic>> bulkImportProducts(
+    List<Map<String, dynamic>> products,
+  ) async {
+    _requireAccessToken();
+    if (products.isEmpty) {
+      throw Exception('No products to import');
+    }
+    final response = await http
+        .post(
+          _uri('/products/bulk'),
+          headers: session.authHeaders,
+          body: jsonEncode({'products': products}),
+        )
+        .timeout(const Duration(seconds: 60));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final err = _tryJson(response.body);
+      throw Exception(
+        err?['message']?.toString() ??
+            'Bulk import failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Product> updateMyProduct(String id, Map<String, dynamic> body) async {
     _requireAccessToken();
     final response = await http
@@ -1143,12 +1168,10 @@ class ApiClient {
         .where((image) => image.id.isNotEmpty && image.url.isNotEmpty)
         .toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
-    final cover = resolveMediaUrl(
-      json['imageUrl'] as String? ??
-          (images.isNotEmpty
-              ? images.first.url
-              : 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800'),
-    );
+    final rawCover = (json['imageUrl'] as String?)?.trim() ?? '';
+    final cover = rawCover.isNotEmpty
+        ? resolveMediaUrl(rawCover)
+        : (images.isNotEmpty ? images.first.url : '');
     return Product(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -1164,13 +1187,25 @@ class ApiClient {
       imageUrl: cover,
       images: images.isNotEmpty
           ? images
-          : [ProductImageRef(id: 'cover-${json['id']}', url: cover)],
+          : (cover.isNotEmpty
+              ? [ProductImageRef(id: 'cover-${json['id']}', url: cover)]
+              : const []),
       category: json['category'] as String? ?? 'General',
       model: json['model'] as String? ?? 'Standard',
       color: json['color'] as String? ?? 'Default',
       size: json['size'] as String? ?? 'Standard',
       battery: json['battery'] as String? ?? '—',
       weight: json['weight'] as String? ?? '—',
+      extraSpecs: (json['extraSpecs'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map(
+            (raw) => ProductSpec(
+              label: raw['label']?.toString().trim() ?? '',
+              value: raw['value']?.toString().trim() ?? '',
+            ),
+          )
+          .where((spec) => spec.label.isNotEmpty && spec.value.isNotEmpty)
+          .toList(),
       description: json['description'] as String? ?? '',
       stock: json['stock'] as int? ?? 0,
       stockStatus: switch (stockStatusRaw) {

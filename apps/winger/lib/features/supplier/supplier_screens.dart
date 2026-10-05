@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +13,9 @@ import '../../core/offline/sync_engine.dart';
 import '../../core/repositories/inventory_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
+import '../../core/util/product_csv.dart';
 import '../../core/widgets/kpi_card.dart';
+import '../../core/widgets/product_photo.dart';
 import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
@@ -58,11 +61,12 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
     _future ??= _load();
   }
 
-  Future<Map<String, dynamic>> _load() {
+  Future<Map<String, dynamic>> _load() async {
     final session = context.read<AppSession>();
-    if (session.accessToken == null) {
+    final token = session.accessToken;
+    if (token == null || token.isEmpty) {
       throw Exception(
-        'Missing Bearer token — sign out and sign in again with API credentials.',
+        'Missing Bearer token — sign out and sign in again with API credentials (not local demo mode).',
       );
     }
     return context.read<ApiClient>().fetchSupplierDashboard();
@@ -132,17 +136,33 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())
             else if (snapshot.hasError) ...[
-              Text(
-                snapshot.error.toString().replaceFirst('Exception: ', ''),
-                style: const TextStyle(color: WingerColors.dangerInk),
-              ),
-              const SizedBox(height: 8),
-              FilledButton(
-                onPressed: () {
-                  context.read<AppSession>().signOut();
-                  context.go('/login');
-                },
-                child: Text(s.t('signInAgain')),
+              Card(
+                color: WingerColors.brandMuted,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.t('apiLoginRequired'),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        snapshot.error.toString().replaceFirst('Exception: ', ''),
+                        style: TextStyle(color: WingerColors.muted),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: () {
+                          context.read<AppSession>().signOut();
+                          context.go('/login');
+                        },
+                        child: Text(s.t('signInAgain')),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ] else ...[
               GridView.count(
@@ -557,11 +577,12 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
     _future ??= _load();
   }
 
-  Future<List<Product>> _load() {
+  Future<List<Product>> _load() async {
     final session = context.read<AppSession>();
-    if (session.accessToken == null) {
+    final token = session.accessToken;
+    if (token == null || token.isEmpty) {
       throw Exception(
-        'Missing Bearer token — sign out and sign in again with API credentials.',
+        'Missing Bearer token — sign out and sign in again with API credentials (not local demo mode).',
       );
     }
     return context.read<ApiClient>().fetchMyProducts();
@@ -595,6 +616,96 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
     );
   }
 
+  Future<void> _downloadCsvTemplate() async {
+    final s = WingerStrings.of(context);
+    final saved = await FilePicker.saveFile(
+      dialogTitle: s.t('downloadCsvTemplate'),
+      fileName: 'winger-products-template.csv',
+      bytes: productCsvTemplateBytes(),
+    );
+    if (!mounted || saved == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(s.t('csvTemplateSaved'))),
+    );
+  }
+
+  Future<void> _importCsv() async {
+    final s = WingerStrings.of(context);
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv', 'txt'],
+      compressionQuality: 0,
+    );
+    if (picked.isEmpty || !mounted) return;
+    final file = picked.first;
+    final path = file.path;
+    if (path == null || path.isEmpty) return;
+
+    late final List<Map<String, dynamic>> products;
+    try {
+      final bytes = await File(path).readAsBytes();
+      if (bytes.isEmpty) {
+        throw const FormatException('Could not read CSV file');
+      }
+      products = parseProductCsv(decodeCsvBytes(bytes));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e is FormatException
+                ? e.message
+                : e.toString().replaceFirst('Exception: ', ''),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final preview = products.take(5).map((p) => '• ${p['name']}').join('\n');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.t('importCsv')),
+        content: Text(
+          '${s.t('importCsvConfirm').replaceAll('{n}', '${products.length}')}\n\n$preview'
+          '${products.length > 5 ? '\n…' : ''}',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.t('importCsv'))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final result = await context.read<ApiClient>().bulkImportProducts(products);
+      if (!mounted) return;
+      final created = result['createdCount'] as int? ?? 0;
+      final failed = result['errorCount'] as int? ?? 0;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            s
+                .t('importCsvResult')
+                .replaceAll('{ok}', '$created')
+                .replaceAll('{fail}', '$failed'),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _openEditor({Product? product}) async {
     final s = WingerStrings.of(context);
     final draft = await showDialog<_ProductEditorResult>(
@@ -622,6 +733,14 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
         'price': draft.price,
         'stock': draft.stock,
         'category': draft.category.isEmpty ? 'General' : draft.category,
+        'model': draft.model.isEmpty ? 'Standard' : draft.model,
+        'color': draft.color.isEmpty ? 'Default' : draft.color,
+        'size': draft.size.isEmpty ? 'Standard' : draft.size,
+        'battery': draft.battery.isEmpty ? '—' : draft.battery,
+        'weight': draft.weight.isEmpty ? '—' : draft.weight,
+        'extraSpecs': draft.extraSpecs
+            .map((spec) => {'label': spec.label, 'value': spec.value})
+            .toList(),
         'description': draft.description,
       };
       late Product saved;
@@ -647,8 +766,12 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
       );
     } catch (e) {
       if (!mounted) return;
+      final raw = e.toString().replaceFirst('Exception: ', '');
+      final message = raw.toLowerCase().contains('image')
+          ? s.t('productImageUploadFailed')
+          : raw;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(content: Text(message)),
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -676,10 +799,21 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const Spacer(),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _importCsv,
+                  icon: const Icon(Icons.upload_file_outlined),
+                  label: Text(s.t('importCsv')),
+                ),
+                const SizedBox(width: 8),
                 FilledButton.icon(
                   onPressed: _busy ? null : () => _openEditor(),
                   icon: const Icon(Icons.add),
                   label: Text(s.t('addProduct')),
+                ),
+                IconButton(
+                  tooltip: s.t('downloadCsvTemplate'),
+                  onPressed: _busy ? null : _downloadCsvTemplate,
+                  icon: const Icon(Icons.table_view_outlined),
                 ),
                 IconButton(
                   tooltip: s.t('retry'),
@@ -691,6 +825,10 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
             Text(
               s.t('supplierProductsHint'),
               style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+            ),
+            Text(
+              s.t('bulkImportHint'),
+              style: TextStyle(color: WingerColors.muted, fontSize: 12),
             ),
             const SizedBox(height: 12),
             if (snapshot.connectionState != ConnectionState.done)
@@ -720,17 +858,10 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            product.imageUrl,
+                          child: SizedBox(
                             width: 56,
                             height: 56,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              width: 56,
-                              height: 56,
-                              color: WingerColors.brandMuted,
-                              child: const Icon(Icons.image_outlined),
-                            ),
+                            child: ProductPhoto(url: product.imageUrl, iconSize: 22),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -775,6 +906,12 @@ class _ProductEditorResult {
     required this.price,
     required this.stock,
     required this.category,
+    required this.model,
+    required this.color,
+    required this.size,
+    required this.battery,
+    required this.weight,
+    required this.extraSpecs,
     required this.description,
     required this.pendingPaths,
     required this.removedImageIds,
@@ -785,9 +922,29 @@ class _ProductEditorResult {
   final double? price;
   final int? stock;
   final String category;
+  final String model;
+  final String color;
+  final String size;
+  final String battery;
+  final String weight;
+  final List<ProductSpec> extraSpecs;
   final String description;
   final List<String> pendingPaths;
   final List<String> removedImageIds;
+}
+
+class _ExtraSpecEditors {
+  _ExtraSpecEditors({String label = '', String value = ''})
+      : labelCtrl = TextEditingController(text: label),
+        valueCtrl = TextEditingController(text: value);
+
+  final TextEditingController labelCtrl;
+  final TextEditingController valueCtrl;
+
+  void dispose() {
+    labelCtrl.dispose();
+    valueCtrl.dispose();
+  }
 }
 
 class _ProductEditorDialog extends StatefulWidget {
@@ -807,8 +964,14 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
   late final TextEditingController _priceCtrl;
   late final TextEditingController _stockCtrl;
   late final TextEditingController _categoryCtrl;
+  late final TextEditingController _modelCtrl;
+  late final TextEditingController _colorCtrl;
+  late final TextEditingController _sizeCtrl;
+  late final TextEditingController _batteryCtrl;
+  late final TextEditingController _weightCtrl;
   late final TextEditingController _descCtrl;
   late List<ProductImageRef> _existing;
+  final List<_ExtraSpecEditors> _extraSpecs = [];
   final List<String> _pendingPaths = [];
   final List<String> _removedImageIds = [];
 
@@ -824,9 +987,37 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     _stockCtrl = TextEditingController(
       text: product != null ? '${product.stock}' : '10',
     );
-    _categoryCtrl = TextEditingController(text: product?.category ?? 'General');
+    _categoryCtrl = TextEditingController(
+      text: product == null || product.category == 'General' ? '' : product.category,
+    );
+    _modelCtrl = TextEditingController(
+      text: product == null || product.model == 'Standard' ? '' : product.model,
+    );
+    _colorCtrl = TextEditingController(
+      text: product == null ||
+              product.color == 'Default' ||
+              product.color == 'Graphite'
+          ? ''
+          : product.color,
+    );
+    _sizeCtrl = TextEditingController(
+      text: product == null ||
+              product.size == 'Standard' ||
+              product.size == 'One size'
+          ? ''
+          : product.size,
+    );
+    _batteryCtrl = TextEditingController(
+      text: product == null || product.battery == '—' ? '' : product.battery,
+    );
+    _weightCtrl = TextEditingController(
+      text: product == null || product.weight == '—' ? '' : product.weight,
+    );
     _descCtrl = TextEditingController(text: product?.description ?? '');
     _existing = [...?product?.images];
+    for (final spec in product?.extraSpecs ?? const <ProductSpec>[]) {
+      _extraSpecs.add(_ExtraSpecEditors(label: spec.label, value: spec.value));
+    }
   }
 
   @override
@@ -836,25 +1027,71 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     _priceCtrl.dispose();
     _stockCtrl.dispose();
     _categoryCtrl.dispose();
+    _modelCtrl.dispose();
+    _colorCtrl.dispose();
+    _sizeCtrl.dispose();
+    _batteryCtrl.dispose();
+    _weightCtrl.dispose();
     _descCtrl.dispose();
+    for (final row in _extraSpecs) {
+      row.dispose();
+    }
     super.dispose();
   }
 
   int get _totalCount => _existing.length + _pendingPaths.length;
 
+  static const _minImageEdge = 600;
+
   Future<void> _pickImages() async {
+    final s = WingerStrings.of(context);
     final remaining = _maxImages - _totalCount;
     if (remaining <= 0) return;
-    final result = await FilePicker.pickFiles(type: FileType.image);
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+      compressionQuality: 0,
+    );
     if (result.isEmpty) return;
-    final paths = result
-        .map((file) => file.path)
-        .whereType<String>()
-        .where((path) => path.isNotEmpty)
-        .take(remaining)
-        .toList();
-    if (paths.isEmpty) return;
-    setState(() => _pendingPaths.addAll(paths));
+
+    final accepted = <String>[];
+    var rejectedSmall = 0;
+    for (final file in result.take(remaining * 2)) {
+      final path = file.path;
+      if (path == null || path.isEmpty) continue;
+      if (accepted.length >= remaining) break;
+      final ok = await _isImageLargeEnough(path);
+      if (ok) {
+        accepted.add(path);
+      } else {
+        rejectedSmall += 1;
+      }
+    }
+
+    if (!mounted) return;
+    if (accepted.isNotEmpty) {
+      setState(() => _pendingPaths.addAll(accepted));
+    }
+    if (rejectedSmall > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s.t('productImageTooSmall'))),
+      );
+    }
+  }
+
+  Future<bool> _isImageLargeEnough(String path) async {
+    try {
+      final bytes = await File(path).readAsBytes();
+      if (bytes.length < 20 * 1024) return false;
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final width = frame.image.width;
+      final height = frame.image.height;
+      frame.image.dispose();
+      return width >= _minImageEdge && height >= _minImageEdge;
+    } catch (_) {
+      return false;
+    }
   }
 
   void _submit() {
@@ -866,6 +1103,20 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
         price: double.tryParse(_priceCtrl.text.trim()),
         stock: int.tryParse(_stockCtrl.text.trim()),
         category: _categoryCtrl.text.trim(),
+        model: _modelCtrl.text.trim(),
+        color: _colorCtrl.text.trim(),
+        size: _sizeCtrl.text.trim(),
+        battery: _batteryCtrl.text.trim(),
+        weight: _weightCtrl.text.trim(),
+        extraSpecs: [
+          for (final row in _extraSpecs)
+            if (row.labelCtrl.text.trim().isNotEmpty &&
+                row.valueCtrl.text.trim().isNotEmpty)
+              ProductSpec(
+                label: row.labelCtrl.text.trim(),
+                value: row.valueCtrl.text.trim(),
+              ),
+        ],
         description: _descCtrl.text.trim(),
         pendingPaths: List<String>.from(_pendingPaths),
         removedImageIds: List<String>.from(_removedImageIds),
@@ -898,16 +1149,12 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                 children: [
                   for (final image in _existing)
                     _EditorThumb(
-                      child: Image.network(
-                        image.url,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            const Icon(Icons.broken_image_outlined),
-                      ),
+                      child: ProductPhoto(url: image.url, iconSize: 22),
                       onRemove: () {
                         setState(() {
                           _existing.removeWhere((row) => row.id == image.id);
-                          if (!image.id.startsWith('cover-')) {
+                          if (!image.id.startsWith('cover-') &&
+                              !isProductImageMissing(image.url)) {
                             _removedImageIds.add(image.id);
                           }
                         });
@@ -944,7 +1191,60 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(labelText: s.t('stock')),
               ),
+              const SizedBox(height: 8),
+              Text(s.t('specifications'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(
+                s.t('specificationsHint'),
+                style: TextStyle(color: WingerColors.muted, fontSize: 12),
+              ),
               TextField(controller: _categoryCtrl, decoration: InputDecoration(labelText: s.t('categories'))),
+              TextField(controller: _modelCtrl, decoration: InputDecoration(labelText: s.t('sku'))),
+              TextField(controller: _colorCtrl, decoration: InputDecoration(labelText: s.t('color'))),
+              TextField(controller: _sizeCtrl, decoration: InputDecoration(labelText: s.t('size'))),
+              TextField(controller: _batteryCtrl, decoration: InputDecoration(labelText: s.t('battery'))),
+              TextField(controller: _weightCtrl, decoration: InputDecoration(labelText: s.t('weight'))),
+              const SizedBox(height: 8),
+              for (var i = 0; i < _extraSpecs.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _extraSpecs[i].labelCtrl,
+                          decoration: InputDecoration(labelText: s.t('customSpecLabel')),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: _extraSpecs[i].valueCtrl,
+                          decoration: InputDecoration(labelText: s.t('customSpecValue')),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: s.t('remove'),
+                        onPressed: () {
+                          setState(() {
+                            _extraSpecs.removeAt(i).dispose();
+                          });
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                ),
+              if (_extraSpecs.length < 20)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _extraSpecs.add(_ExtraSpecEditors())),
+                    icon: const Icon(Icons.add),
+                    label: Text(s.t('addSpecField')),
+                  ),
+                ),
               TextField(
                 controller: _descCtrl,
                 maxLines: 3,

@@ -223,6 +223,8 @@ model Product {
   size          String      @default("Standard")
   battery       String      @default("—")
   weight        String      @default("—")
+  /// Custom supplier specs: [{ "label": "Material", "value": "Cotton" }]
+  extraSpecs    Json        @default("[]")
   description   String      @default("")
   stock         Int         @default(0)
   stockStatus   StockStatus @default(IN_STOCK)
