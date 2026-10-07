@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import '../../core/api/api_client.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
+import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
+import '../../core/widgets/kpi_card.dart';
 
 class ReturnsInboxScreen extends StatefulWidget {
   const ReturnsInboxScreen({super.key});
@@ -15,31 +17,42 @@ class ReturnsInboxScreen extends StatefulWidget {
 
 class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
+  TabController? _tabs;
   Future<List<OrderReturnRequest>>? _future;
+  Map<String, dynamic>? _overview;
   String? _busyId;
+  bool _isAdmin = false;
+  bool _showOverview = false;
 
   static const _openStatuses = {'REQUESTED', 'IN_REVIEW'};
   static const _closedStatuses = {'APPROVED', 'REJECTED', 'CLOSED'};
 
   @override
-  void initState() {
-    super.initState();
-    _tabs = TabController(length: 2, vsync: this);
-    _tabs.addListener(() {
-      if (!_tabs.indexIsChanging) setState(() {});
-    });
-  }
-
-  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final role = context.read<AppSession>().role;
+    final admin = role == UserRole.admin;
+    final showOverview = admin || role == UserRole.supplier;
+    if (_tabs == null ||
+        _isAdmin != admin ||
+        _showOverview != showOverview) {
+      _tabs?.dispose();
+      _isAdmin = admin;
+      _showOverview = showOverview;
+      _tabs = TabController(length: showOverview ? 3 : 2, vsync: this);
+      _tabs!.addListener(() {
+        if (!_tabs!.indexIsChanging) setState(() {});
+      });
+    }
     _future ??= _load();
+    if (showOverview && _overview == null) {
+      _loadOverview();
+    }
   }
 
   @override
   void dispose() {
-    _tabs.dispose();
+    _tabs?.dispose();
     super.dispose();
   }
 
@@ -47,14 +60,35 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
     return context.read<ApiClient>().fetchReturnsInbox();
   }
 
+  Future<void> _loadOverview() async {
+    if (!_showOverview) return;
+    try {
+      final data = await context.read<ApiClient>().fetchReturnsOverview();
+      if (!mounted) return;
+      setState(() => _overview = data);
+    } catch (_) {
+      // Inbox still usable without overview.
+    }
+  }
+
   Future<void> _reload() async {
     final next = _load();
     setState(() => _future = next);
-    await next;
+    await Future.wait([next, _loadOverview()]);
   }
 
   List<OrderReturnRequest> _filterRows(List<OrderReturnRequest> all) {
-    final wanted = _tabs.index == 0 ? _openStatuses : _closedStatuses;
+    final index = _tabs?.index ?? 0;
+    if (_showOverview && index == 2) {
+      return all
+          .where(
+            (row) =>
+                row.refundStatus == 'PENDING' &&
+                (row.status == 'APPROVED' || row.status == 'CLOSED'),
+          )
+          .toList();
+    }
+    final wanted = index == 0 ? _openStatuses : _closedStatuses;
     return all.where((row) => wanted.contains(row.status)).toList();
   }
 
@@ -255,9 +289,22 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final future = _future;
-    if (future == null) {
+    final tabs = _tabs;
+    if (future == null || tabs == null) {
       return const Center(child: CircularProgressIndicator());
     }
+
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final overview = _overview;
+    final platformOpen = (overview?['openReturns'] as num?)?.toInt();
+    final platformPendingRefunds =
+        (overview?['pendingRefunds'] as num?)?.toInt();
+    final platformIssued = (overview?['refundsIssued'] as num?)?.toInt();
+    final platformRejected = (overview?['rejectedReturns'] as num?)?.toInt();
+    final suppliers = (overview?['suppliers'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map((raw) => Map<String, dynamic>.from(raw))
+        .toList();
 
     return FutureBuilder<List<OrderReturnRequest>>(
       future: future,
@@ -267,6 +314,13 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
             all.where((r) => _openStatuses.contains(r.status)).length;
         final closedCount =
             all.where((r) => _closedStatuses.contains(r.status)).length;
+        final pendingRefundCount = all
+            .where(
+              (r) =>
+                  r.refundStatus == 'PENDING' &&
+                  (r.status == 'APPROVED' || r.status == 'CLOSED'),
+            )
+            .length;
         final rows = _filterRows(all);
 
         return Column(
@@ -285,12 +339,85 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    s.t('returnsInboxHint'),
-                    style: TextStyle(color: WingerColors.muted),
+                    _isAdmin
+                        ? s.t('returnsAdminOverviewHint')
+                        : _showOverview
+                            ? s.t('returnsSupplierOverviewHint')
+                            : s.t('returnsInboxHint'),
+                    style: const TextStyle(color: WingerColors.muted),
                   ),
+                  if (_showOverview) ...[
+                    const SizedBox(height: 12),
+                    GridView.count(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisCount: wide ? 4 : 2,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      childAspectRatio: wide ? 1.55 : 1.35,
+                      children: [
+                        KpiCard(
+                          data: KpiCardData(
+                            label: s.t('returnsOpen'),
+                            value: '${platformOpen ?? openCount}',
+                            delta: s.t('needsReview'),
+                            positive: (platformOpen ?? openCount) == 0,
+                          ),
+                          onTap: () => tabs.animateTo(0),
+                        ),
+                        KpiCard(
+                          data: KpiCardData(
+                            label: s.t('refundsPending'),
+                            value:
+                                '${platformPendingRefunds ?? pendingRefundCount}',
+                            delta: s.t('awaitingRefund'),
+                            positive:
+                                (platformPendingRefunds ?? pendingRefundCount) ==
+                                    0,
+                          ),
+                          onTap: () => tabs.animateTo(2),
+                        ),
+                        KpiCard(
+                          data: KpiCardData(
+                            label: s.t('refundsIssued'),
+                            value: '${platformIssued ?? 0}',
+                            delta: s.t('markedIssued'),
+                            positive: true,
+                          ),
+                        ),
+                        KpiCard(
+                          data: KpiCardData(
+                            label: s.t('returnsRejected'),
+                            value: '${platformRejected ?? 0}',
+                            delta: s.t('returnsClosed'),
+                            positive: true,
+                          ),
+                          onTap: () => tabs.animateTo(1),
+                        ),
+                      ],
+                    ),
+                    if (_isAdmin && suppliers.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        s.t('returnsBySupplier'),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 6),
+                      for (final row in suppliers.take(6))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            '${row['supplierName'] ?? 'Supplier'} · '
+                            '${s.t('returnsOpen')} ${(row['openReturns'] as num?)?.toInt() ?? 0} · '
+                            '${s.t('refundsPending')} ${(row['pendingRefunds'] as num?)?.toInt() ?? 0}',
+                            style: const TextStyle(color: WingerColors.muted),
+                          ),
+                        ),
+                    ],
+                  ],
                   const SizedBox(height: 12),
                   TabBar(
-                    controller: _tabs,
+                    controller: tabs,
                     labelColor: WingerColors.brand,
                     unselectedLabelColor: WingerColors.muted,
                     indicatorColor: WingerColors.brand,
@@ -298,6 +425,11 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                     tabs: [
                       Tab(text: '${s.t('returnsOpen')} ($openCount)'),
                       Tab(text: '${s.t('returnsClosed')} ($closedCount)'),
+                      if (_showOverview)
+                        Tab(
+                          text:
+                              '${s.t('refundsPending')} ($pendingRefundCount)',
+                        ),
                     ],
                   ),
                 ],
@@ -324,10 +456,12 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                       )
                     else if (rows.isEmpty)
                       Text(
-                        _tabs.index == 0
+                        tabs.index == 0
                             ? s.t('returnsOpenEmpty')
-                            : s.t('returnsClosedEmpty'),
-                        style: TextStyle(color: WingerColors.muted),
+                            : tabs.index == 2
+                                ? s.t('refundsPendingEmpty')
+                                : s.t('returnsClosedEmpty'),
+                        style: const TextStyle(color: WingerColors.muted),
                       )
                     else
                       for (final request in rows)

@@ -610,6 +610,140 @@ export class OrdersService {
   }
 
   /**
+   * Returns/refunds KPIs. Admin = platform-wide; supplier = own lines only.
+   */
+  async listReturnsOverview(user: AuthUser) {
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPPLIER) {
+      throw new ForbiddenException(
+        'Only suppliers or admins can view returns overview',
+      );
+    }
+    if (user.role === UserRole.SUPPLIER && !user.supplierId) {
+      throw new ForbiddenException('Supplier account is not linked');
+    }
+
+    const scope =
+      user.role === UserRole.SUPPLIER
+        ? { orderItem: { supplierId: user.supplierId! } }
+        : {};
+
+    const [byStatus, byRefund, pendingRefundRows, openRows] =
+      await Promise.all([
+        this.prisma.returnRequest.groupBy({
+          by: ['status'],
+          where: scope,
+          _count: { _all: true },
+        }),
+        this.prisma.returnRequest.groupBy({
+          by: ['refundStatus'],
+          where: scope,
+          _count: { _all: true },
+        }),
+        this.prisma.returnRequest.findMany({
+          where: {
+            ...scope,
+            refundStatus: ReturnRefundStatus.PENDING,
+            status: {
+              in: [ReturnRequestStatus.APPROVED, ReturnRequestStatus.CLOSED],
+            },
+          },
+          select: {
+            orderItem: { select: { supplierId: true, supplierName: true } },
+          },
+        }),
+        this.prisma.returnRequest.findMany({
+          where: {
+            ...scope,
+            status: {
+              in: [
+                ReturnRequestStatus.REQUESTED,
+                ReturnRequestStatus.IN_REVIEW,
+              ],
+            },
+          },
+          select: {
+            orderItem: { select: { supplierId: true, supplierName: true } },
+          },
+        }),
+      ]);
+
+    const statusCounts: Record<string, number> = {};
+    for (const row of byStatus) {
+      statusCounts[row.status] = row._count._all;
+    }
+    const refundCounts: Record<string, number> = {};
+    for (const row of byRefund) {
+      refundCounts[row.refundStatus] = row._count._all;
+    }
+
+    const openCount =
+      (statusCounts[ReturnRequestStatus.REQUESTED] ?? 0) +
+      (statusCounts[ReturnRequestStatus.IN_REVIEW] ?? 0);
+    const pendingRefunds = pendingRefundRows.length;
+    const refundsIssued = refundCounts[ReturnRefundStatus.ISSUED] ?? 0;
+    const rejected = statusCounts[ReturnRequestStatus.REJECTED] ?? 0;
+    const approved = statusCounts[ReturnRequestStatus.APPROVED] ?? 0;
+
+    type SupplierBucket = {
+      supplierId: string;
+      supplierName: string;
+      openReturns: number;
+      pendingRefunds: number;
+    };
+    const bySupplier = new Map<string, SupplierBucket>();
+    const bump = (
+      supplierId: string,
+      supplierName: string,
+      field: 'openReturns' | 'pendingRefunds',
+    ) => {
+      const cur = bySupplier.get(supplierId) ?? {
+        supplierId,
+        supplierName,
+        openReturns: 0,
+        pendingRefunds: 0,
+      };
+      cur[field] += 1;
+      if (supplierName) cur.supplierName = supplierName;
+      bySupplier.set(supplierId, cur);
+    };
+
+    // Admin-only breakdown across suppliers.
+    let suppliers: SupplierBucket[] = [];
+    if (user.role === UserRole.ADMIN) {
+      for (const row of openRows) {
+        bump(row.orderItem.supplierId, row.orderItem.supplierName, 'openReturns');
+      }
+      for (const row of pendingRefundRows) {
+        bump(
+          row.orderItem.supplierId,
+          row.orderItem.supplierName,
+          'pendingRefunds',
+        );
+      }
+      suppliers = [...bySupplier.values()]
+        .sort(
+          (a, b) =>
+            b.openReturns +
+            b.pendingRefunds -
+            (a.openReturns + a.pendingRefunds),
+        )
+        .slice(0, 12);
+    }
+
+    return {
+      scope: user.role === UserRole.ADMIN ? 'platform' : 'supplier',
+      openReturns: openCount,
+      pendingRefunds,
+      refundsIssued,
+      approvedReturns: approved,
+      rejectedReturns: rejected,
+      byStatus: statusCounts,
+      byRefundStatus: refundCounts,
+      suppliers,
+    };
+  }
+
+  /**
    * Create a no-charge replacement order for a RETURNED line.
    * Stock is reserved again; customer is not re-charged; no new commission snapshot.
    */

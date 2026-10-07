@@ -572,6 +572,22 @@ class ApiClient {
     session.setApiOnline(true);
   }
 
+  Future<Map<String, dynamic>> fetchReturnsOverview() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/orders/returns/overview'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Returns overview HTTP ${response.statusCode}',
+      );
+    }
+    session.setApiOnline(true);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<List<OrderReturnRequest>> fetchReturnsInbox({String? status}) async {
     final uri = status != null && status.trim().isNotEmpty
         ? _uri('/orders/returns').replace(queryParameters: {'status': status.trim()})

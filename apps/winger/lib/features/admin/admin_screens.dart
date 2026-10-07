@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
@@ -13,28 +14,72 @@ import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
 
-const adminDestinations = [
-  ShellDestination(labelKey: 'dashboard', icon: Icons.dashboard_outlined, path: '/admin'),
-  ShellDestination(labelKey: 'suppliers', icon: Icons.storefront_outlined, path: '/admin/suppliers'),
-  ShellDestination(labelKey: 'orders', icon: Icons.receipt_long_outlined, path: '/admin/orders'),
-  ShellDestination(labelKey: 'returns', icon: Icons.assignment_return_outlined, path: '/admin/returns'),
-  ShellDestination(labelKey: 'commission', icon: Icons.percent_outlined, path: '/admin/commissions'),
-  ShellDestination(labelKey: 'delivery', icon: Icons.local_shipping_outlined, path: '/admin/delivery'),
+List<ShellDestination> adminDestinations({int returnsAttention = 0}) => [
+  const ShellDestination(labelKey: 'dashboard', icon: Icons.dashboard_outlined, path: '/admin'),
+  const ShellDestination(labelKey: 'suppliers', icon: Icons.storefront_outlined, path: '/admin/suppliers'),
+  const ShellDestination(labelKey: 'orders', icon: Icons.receipt_long_outlined, path: '/admin/orders'),
+  ShellDestination(
+    labelKey: 'returns',
+    icon: Icons.assignment_return_outlined,
+    path: '/admin/returns',
+    badgeCount: returnsAttention,
+  ),
+  const ShellDestination(labelKey: 'commission', icon: Icons.percent_outlined, path: '/admin/commissions'),
+  const ShellDestination(labelKey: 'delivery', icon: Icons.local_shipping_outlined, path: '/admin/delivery'),
 ];
 
-class AdminShell extends StatelessWidget {
+class AdminShell extends StatefulWidget {
   const AdminShell({super.key, required this.child});
 
   final Widget child;
 
   @override
+  State<AdminShell> createState() => _AdminShellState();
+}
+
+class _AdminShellState extends State<AdminShell> {
+  int _returnsAttention = 0;
+  String? _lastPath;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshReturnsBadge());
+  }
+
+  Future<void> _refreshReturnsBadge() async {
+    if (!mounted) return;
+    final session = context.read<AppSession>();
+    final api = context.read<ApiClient>();
+    if (session.accessToken == null || !session.apiOnline) {
+      if (_returnsAttention != 0) setState(() => _returnsAttention = 0);
+      return;
+    }
+    try {
+      final overview = await api.fetchReturnsOverview();
+      if (!mounted) return;
+      final open = (overview['openReturns'] as num?)?.toInt() ?? 0;
+      final pending = (overview['pendingRefunds'] as num?)?.toInt() ?? 0;
+      final next = open + pending;
+      if (next != _returnsAttention) {
+        setState(() => _returnsAttention = next);
+      }
+    } catch (_) {}
+  }
+
+  @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
+    final location = GoRouterState.of(context).uri.path;
+    if (_lastPath != location) {
+      _lastPath = location;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _refreshReturnsBadge());
+    }
     return RoleShell(
       title: s.t('dashboard'),
       roleLabel: 'Administrator',
-      destinations: adminDestinations,
-      child: child,
+      destinations: adminDestinations(returnsAttention: _returnsAttention),
+      child: widget.child,
     );
   }
 }

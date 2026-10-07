@@ -60,6 +60,12 @@ export class OrdersController {
     return this.ordersService.listReturnsInbox(user, status);
   }
 
+  @Get('returns/overview')
+  @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
+  returnsOverview(@CurrentUser() user: AuthUser) {
+    return this.ordersService.listReturnsOverview(user);
+  }
+
   @Patch('returns/:returnId')
   @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
   updateReturn(

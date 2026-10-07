@@ -91,8 +91,10 @@ class _SupplierShellState extends State<SupplierShell> {
     }
     _loadingBadge = true;
     try {
-      final dash = await context.read<ApiClient>().fetchSupplierDashboard();
-      final next = (dash['openReturns'] as num?)?.toInt() ?? 0;
+      final overview = await context.read<ApiClient>().fetchReturnsOverview();
+      final open = (overview['openReturns'] as num?)?.toInt() ?? 0;
+      final pending = (overview['pendingRefunds'] as num?)?.toInt() ?? 0;
+      final next = open + pending;
       if (!mounted) return;
       if (next != _openReturns) setState(() => _openReturns = next);
     } catch (_) {
