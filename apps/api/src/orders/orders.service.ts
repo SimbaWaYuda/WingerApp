@@ -9,6 +9,7 @@ import {
   OrderStatus,
   PaymentStatus,
   Prisma,
+  ReturnRefundStatus,
   ReturnRequestStatus,
   StockStatus,
   UserRole,
@@ -55,7 +56,9 @@ export type CreateReturnRequestDto = {
 };
 
 export type UpdateReturnRequestDto = {
-  status: ReturnRequestStatus;
+  status?: ReturnRequestStatus;
+  refundStatus?: ReturnRefundStatus;
+  refundNote?: string;
 };
 
 const RETURN_REASONS = new Set([
@@ -727,6 +730,23 @@ export class OrdersService {
         },
       });
 
+      // Exchange path: approved return no longer needs a cash refund.
+      await tx.returnRequest.updateMany({
+        where: {
+          orderItemId: source.id,
+          status: {
+            in: [ReturnRequestStatus.APPROVED, ReturnRequestStatus.CLOSED],
+          },
+          refundStatus: {
+            in: [ReturnRefundStatus.NONE, ReturnRefundStatus.PENDING],
+          },
+        },
+        data: {
+          refundStatus: ReturnRefundStatus.NOT_REQUIRED,
+          refundNote: `Handled via replacement ${displayId}`,
+        },
+      });
+
       return created;
     });
 
@@ -741,9 +761,9 @@ export class OrdersService {
   }
 
   /**
-   * Supplier/admin review of a return request.
+   * Supplier/admin review of a return request and/or manual refund tracking.
    * APPROVED marks the line RETURNED and restores stock for the returned qty.
-   * Payment refund remains manual until commission rules are approved.
+   * Refund money movement stays manual; Slice 5b records ISSUED/PENDING status.
    */
   async updateReturnRequest(
     returnId: string,
@@ -753,9 +773,20 @@ export class OrdersService {
     if (user.role !== UserRole.SUPPLIER && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Only suppliers or admins can review returns');
     }
-    const next = dto.status;
-    if (!Object.values(ReturnRequestStatus).includes(next)) {
+    if (dto.status == null && dto.refundStatus == null) {
+      throw new BadRequestException('status or refundStatus is required');
+    }
+    if (
+      dto.status != null &&
+      !Object.values(ReturnRequestStatus).includes(dto.status)
+    ) {
       throw new BadRequestException('Invalid return status');
+    }
+    if (
+      dto.refundStatus != null &&
+      !Object.values(ReturnRefundStatus).includes(dto.refundStatus)
+    ) {
+      throw new BadRequestException('Invalid refund status');
     }
 
     const row = await this.prisma.returnRequest.findUnique({
@@ -774,57 +805,102 @@ export class OrdersService {
       throw new ForbiddenException('Cannot review another supplier return');
     }
 
-    this.assertReturnTransition(row.status, next);
+    if (dto.status != null) {
+      const next = dto.status;
+      this.assertReturnTransition(row.status, next);
 
-    if (next === ReturnRequestStatus.APPROVED) {
-      if (row.orderItem.status !== OrderStatus.DELIVERED) {
-        throw new BadRequestException(
-          'Only delivered items can be approved for return',
-        );
-      }
-      await this.prisma.$transaction(async (tx) => {
-        await tx.returnRequest.update({
-          where: { id: row.id },
-          data: { status: next },
-        });
-        await tx.orderItem.update({
-          where: { id: row.orderItemId },
-          data: { status: OrderStatus.RETURNED },
-        });
-        const product = await tx.product.findUnique({
-          where: { id: row.orderItem.productId },
-        });
-        if (product) {
-          const nextStock = product.stock + row.quantity;
-          await tx.product.update({
-            where: { id: product.id },
-            data: { stock: nextStock, stockStatus: stockStatusFor(nextStock) },
-          });
-          await tx.inventoryLedger.create({
+      if (next === ReturnRequestStatus.APPROVED) {
+        if (row.orderItem.status !== OrderStatus.DELIVERED) {
+          throw new BadRequestException(
+            'Only delivered items can be approved for return',
+          );
+        }
+        await this.prisma.$transaction(async (tx) => {
+          await tx.returnRequest.update({
+            where: { id: row.id },
             data: {
-              productId: product.id,
-              supplierId: product.supplierId,
-              delta: row.quantity,
-              reason: 'RETURN_APPROVED',
-              eventId: `return-restore-${row.id}-${Date.now()}`,
-              userId: user.sub,
-              quantityAfter: nextStock,
+              status: next,
+              refundStatus:
+                row.refundStatus === ReturnRefundStatus.NONE
+                  ? ReturnRefundStatus.PENDING
+                  : row.refundStatus,
             },
           });
-        }
-        const items = await tx.orderItem.findMany({
-          where: { orderId: row.orderId },
-          select: { status: true },
+          await tx.orderItem.update({
+            where: { id: row.orderItemId },
+            data: { status: OrderStatus.RETURNED },
+          });
+          const product = await tx.product.findUnique({
+            where: { id: row.orderItem.productId },
+          });
+          if (product) {
+            const nextStock = product.stock + row.quantity;
+            await tx.product.update({
+              where: { id: product.id },
+              data: { stock: nextStock, stockStatus: stockStatusFor(nextStock) },
+            });
+            await tx.inventoryLedger.create({
+              data: {
+                productId: product.id,
+                supplierId: product.supplierId,
+                delta: row.quantity,
+                reason: 'RETURN_APPROVED',
+                eventId: `return-restore-${row.id}-${Date.now()}`,
+                userId: user.sub,
+                quantityAfter: nextStock,
+              },
+            });
+          }
+          const items = await tx.orderItem.findMany({
+            where: { orderId: row.orderId },
+            select: { status: true },
+          });
+          await tx.order.update({
+            where: { id: row.orderId },
+            data: { status: rollupStatus(items.map((item) => item.status)) },
+          });
         });
-        await tx.order.update({
-          where: { id: row.orderId },
-          data: { status: rollupStatus(items.map((item) => item.status)) },
+      } else {
+        await this.prisma.returnRequest.update({
+          where: { id: row.id },
+          data: {
+            status: next,
+            ...(next === ReturnRequestStatus.REJECTED &&
+            row.refundStatus === ReturnRefundStatus.NONE
+              ? { refundStatus: ReturnRefundStatus.NOT_REQUIRED }
+              : {}),
+          },
         });
+      }
+    }
+
+    if (dto.refundStatus != null) {
+      const current = await this.prisma.returnRequest.findUnique({
+        where: { id: row.id },
       });
-    } else {
+      if (!current) throw new NotFoundException('Return request not found');
+      if (
+        current.status !== ReturnRequestStatus.APPROVED &&
+        current.status !== ReturnRequestStatus.CLOSED &&
+        dto.refundStatus !== ReturnRefundStatus.NOT_REQUIRED
+      ) {
+        throw new BadRequestException(
+          'Refund status can only be set after a return is approved',
+        );
+      }
       await this.prisma.returnRequest.update({
         where: { id: row.id },
-        data: { status: next },
+        data: {
+          refundStatus: dto.refundStatus,
+          refundNote:
+            dto.refundNote != null
+              ? dto.refundNote.trim() || null
+              : current.refundNote,
+          refundedAt:
+            dto.refundStatus === ReturnRefundStatus.ISSUED
+              ? current.refundedAt ?? new Date()
+              : null,
+        },
       });
     }
 
@@ -934,6 +1010,9 @@ export class OrdersService {
     notes: string | null;
     quantity: number;
     status: string;
+    refundStatus?: string;
+    refundNote?: string | null;
+    refundedAt?: Date | null;
     createdAt: Date;
     order?: { displayId: string };
     orderItem: { productName: string; supplierName: string };
@@ -948,6 +1027,9 @@ export class OrdersService {
       notes: row.notes,
       quantity: row.quantity,
       status: row.status,
+      refundStatus: row.refundStatus ?? ReturnRefundStatus.NONE,
+      refundNote: row.refundNote ?? null,
+      refundedAt: row.refundedAt?.toISOString() ?? null,
       createdAt: row.createdAt.toISOString(),
     };
   }

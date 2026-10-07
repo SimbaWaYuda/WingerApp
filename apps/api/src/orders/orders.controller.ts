@@ -9,7 +9,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { OrderStatus, UserRole } from '@prisma/client';
+import {
+  OrderStatus,
+  ReturnRefundStatus,
+  ReturnRequestStatus,
+  UserRole,
+} from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -23,7 +28,6 @@ import {
   UpdateReturnRequestDto,
   ValidateCartDto,
 } from './orders.service';
-import { ReturnRequestStatus } from '@prisma/client';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -63,11 +67,20 @@ export class OrdersController {
     @Param('returnId') returnId: string,
     @Body() body: UpdateReturnRequestDto,
   ) {
+    if (body.status == null && body.refundStatus == null) {
+      throw new BadRequestException('status or refundStatus is required');
+    }
     if (
-      body.status == null ||
+      body.status != null &&
       !Object.values(ReturnRequestStatus).includes(body.status)
     ) {
       throw new BadRequestException('Valid status is required');
+    }
+    if (
+      body.refundStatus != null &&
+      !Object.values(ReturnRefundStatus).includes(body.refundStatus)
+    ) {
+      throw new BadRequestException('Valid refundStatus is required');
     }
     return this.ordersService.updateReturnRequest(returnId, body, user);
   }

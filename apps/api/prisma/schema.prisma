@@ -50,6 +50,14 @@ enum ReturnRequestStatus {
   CLOSED
 }
 
+/// Manual refund tracking for Slice 5b (no automatic payment reversal yet).
+enum ReturnRefundStatus {
+  NONE
+  PENDING
+  ISSUED
+  NOT_REQUIRED
+}
+
 /// Recognition lifecycle for line commissions (Slice 5a).
 enum CommissionRecognitionStatus {
   PENDING
@@ -337,24 +345,28 @@ model OrderItemCommission {
 
 /// Customer return / support request after delivery (no auto-refund yet).
 model ReturnRequest {
-  id          String              @id @default(cuid())
-  orderId     String
-  order       Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  orderItemId String
-  orderItem   OrderItem           @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
-  customerId  String
-  customer    User                @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  reason      String
-  notes       String?
-  quantity    Int
-  status      ReturnRequestStatus @default(REQUESTED)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  id           String              @id @default(cuid())
+  orderId      String
+  order        Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId  String
+  orderItem    OrderItem           @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  customerId   String
+  customer     User                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  reason       String
+  notes        String?
+  quantity     Int
+  status       ReturnRequestStatus @default(REQUESTED)
+  refundStatus ReturnRefundStatus  @default(NONE)
+  refundNote   String?
+  refundedAt   DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
 
   @@index([orderId, createdAt])
   @@index([customerId])
   @@index([orderItemId])
   @@index([status])
+  @@index([refundStatus])
 }
 
 /// Append-only ledger of inventory deltas (source of truth for stock math).

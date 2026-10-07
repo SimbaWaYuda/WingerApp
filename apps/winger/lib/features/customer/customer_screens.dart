@@ -3478,7 +3478,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ),
                     isThreeLine: true,
                     trailing: Text(
-                      '${s.t('returnStatus')}: ${request.status}',
+                      '${s.t('returnStatus')}: ${request.status}\n'
+                      '${s.t('refundStatus')}: ${request.refundStatus}',
+                      textAlign: TextAlign.end,
                       style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
                     ),
                   ),

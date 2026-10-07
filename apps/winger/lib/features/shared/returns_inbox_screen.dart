@@ -179,6 +179,19 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
     }
   }
 
+  String _refundLabel(WingerStrings s, String refundStatus) {
+    switch (refundStatus) {
+      case 'PENDING':
+        return s.t('refundPending');
+      case 'ISSUED':
+        return s.t('refundIssued');
+      case 'NOT_REQUIRED':
+        return s.t('refundNotRequired');
+      default:
+        return s.t('refundNone');
+    }
+  }
+
   Future<void> _setStatus(OrderReturnRequest request, String status) async {
     final s = WingerStrings.of(context);
     if (status == 'APPROVED') {
@@ -195,6 +208,37 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(s.t('returnUpdated'))),
+      );
+      await _reload();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _busyId = null);
+    }
+  }
+
+  Future<void> _setRefundStatus(
+    OrderReturnRequest request,
+    String refundStatus,
+  ) async {
+    final s = WingerStrings.of(context);
+    setState(() => _busyId = request.id);
+    try {
+      await context.read<ApiClient>().updateReturnRequest(
+            returnId: request.id,
+            refundStatus: refundStatus,
+            refundNote: refundStatus == 'ISSUED'
+                ? 'Marked issued in supplier returns inbox'
+                : refundStatus == 'NOT_REQUIRED'
+                    ? 'Marked not required in supplier returns inbox'
+                    : null,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s.t('refundUpdated'))),
       );
       await _reload();
     } catch (error) {
@@ -327,6 +371,21 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                                     fontSize: 12,
                                   ),
                                 ),
+                                Text(
+                                  '${s.t('refundStatus')}: ${_refundLabel(s, request.refundStatus)}',
+                                  style: TextStyle(
+                                    color: request.refundStatus == 'PENDING'
+                                        ? WingerColors.attentionInk
+                                        : WingerColors.muted,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (request.refundNote != null &&
+                                    request.refundNote!.isNotEmpty)
+                                  Text(
+                                    request.refundNote!,
+                                    style: TextStyle(color: WingerColors.muted),
+                                  ),
                                 if (request.notes != null &&
                                     request.notes!.isNotEmpty)
                                   Text(
@@ -382,6 +441,26 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                                                 _createReplacement(request),
                                         child: Text(s.t('createReplacement')),
                                       ),
+                                      if (request.canManageRefund) ...[
+                                        OutlinedButton(
+                                          onPressed: _busyId == request.id
+                                              ? null
+                                              : () => _setRefundStatus(
+                                                    request,
+                                                    'ISSUED',
+                                                  ),
+                                          child: Text(s.t('markRefundIssued')),
+                                        ),
+                                        OutlinedButton(
+                                          onPressed: _busyId == request.id
+                                              ? null
+                                              : () => _setRefundStatus(
+                                                    request,
+                                                    'NOT_REQUIRED',
+                                                  ),
+                                          child: Text(s.t('markRefundNotRequired')),
+                                        ),
+                                      ],
                                       TextButton(
                                         onPressed: _busyId == request.id
                                             ? null

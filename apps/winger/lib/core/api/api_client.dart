@@ -596,13 +596,22 @@ class ApiClient {
 
   Future<OrderReturnRequest> updateReturnRequest({
     required String returnId,
-    required String status,
+    String? status,
+    String? refundStatus,
+    String? refundNote,
   }) async {
+    if (status == null && refundStatus == null) {
+      throw Exception('status or refundStatus is required');
+    }
     final response = await http
         .patch(
           _uri('/orders/returns/$returnId'),
           headers: session.authHeaders,
-          body: jsonEncode({'status': status}),
+          body: jsonEncode({
+            if (status != null) 'status': status,
+            if (refundStatus != null) 'refundStatus': refundStatus,
+            if (refundNote != null) 'refundNote': refundNote,
+          }),
         )
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {

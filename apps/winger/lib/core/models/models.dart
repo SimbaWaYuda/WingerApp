@@ -377,6 +377,9 @@ class OrderReturnRequest {
     this.orderId,
     this.notes,
     this.customerName,
+    this.refundStatus = 'NONE',
+    this.refundNote,
+    this.refundedAt,
   });
 
   final String id;
@@ -390,9 +393,16 @@ class OrderReturnRequest {
   final String status;
   final DateTime createdAt;
   final String? customerName;
+  final String refundStatus;
+  final String? refundNote;
+  final DateTime? refundedAt;
 
   bool get canReview =>
       status == 'REQUESTED' || status == 'IN_REVIEW';
+
+  bool get canManageRefund =>
+      (status == 'APPROVED' || status == 'CLOSED') &&
+      (refundStatus == 'PENDING' || refundStatus == 'NONE');
 }
 
 OrderReturnRequest orderReturnRequestFromApi(Map<String, dynamic> json) {
@@ -409,6 +419,9 @@ OrderReturnRequest orderReturnRequestFromApi(Map<String, dynamic> json) {
     createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
         DateTime.now(),
     customerName: json['customerName'] as String?,
+    refundStatus: json['refundStatus'] as String? ?? 'NONE',
+    refundNote: json['refundNote'] as String?,
+    refundedAt: DateTime.tryParse(json['refundedAt'] as String? ?? ''),
   );
 }
 
