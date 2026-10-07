@@ -321,6 +321,14 @@ class CustomerOrder {
 
   bool get canRequestReturn => returnableItems.isNotEmpty;
 
+  bool get isCodPending =>
+      paymentMode == 'cod' &&
+      paymentStatus.toUpperCase() == 'PENDING';
+
+  bool get isPayOnDelivery =>
+      paymentMode == 'cod' ||
+      (paymentMethod?.toLowerCase().contains('pay_on_delivery') ?? false);
+
   /// Display ids of orders this one replaces (usually 0–1).
   List<String> get replacesOrderIds => itemRows
       .map((item) => item.replacesOrderId)

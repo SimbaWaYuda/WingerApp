@@ -2764,7 +2764,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Text(
               '${s.t('deliveryFee')}: \$${session.cartDeliveryFee.toStringAsFixed(2)} · '
               '${s.t('estimatedTax')}: \$${session.cartTax.toStringAsFixed(2)}',
-              style: TextStyle(color: WingerColors.muted),
+              style: const TextStyle(color: WingerColors.muted),
             ),
             Text(
               '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}',
@@ -2799,12 +2799,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Text(
               _payMethod == _CheckoutPayMethod.payOnDelivery
                   ? '${s.t('payOnDeliveryHint')}\n'
-                      '\$${session.cartGrandTotal.toStringAsFixed(2)} · ${session.addressLine}, ${session.city}'
+                      '${s.t('dueOnDelivery')}: \$${session.cartGrandTotal.toStringAsFixed(2)}\n'
+                      '${session.addressLine}, ${session.city}'
                   : session.apiOnline && session.accessToken != null
-                      ? 'Pay \$${session.cartGrandTotal.toStringAsFixed(2)} by card '
-                          '(API · demo payment unless Stripe key set)\n'
+                      ? '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}\n'
                           'Ship to ${session.addressLine}, ${session.city}'
-                      : 'Pay \$${session.cartGrandTotal.toStringAsFixed(2)} offline — '
+                      : '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)} — '
                           'order saved locally until online',
             ),
           ],
@@ -2853,39 +2853,39 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             _payError = null;
                           });
                           try {
-                            final offline =
-                                !session.apiOnline || session.accessToken == null;
                             final method =
                                 _payMethod == _CheckoutPayMethod.payOnDelivery
                                     ? 'pay_on_delivery'
                                     : 'card';
+                            if (method == 'pay_on_delivery' &&
+                                session.deliveryMethod != 'pickup' &&
+                                (session.addressLine.trim().isEmpty ||
+                                    session.city.trim().isEmpty)) {
+                              throw Exception(s.t('codAddressRequired'));
+                            }
+                            if (session.apiOnline && session.accessToken != null) {
+                              await session.refreshCartFromServer();
+                            }
                             final order =
                                 await session.placeOrder(paymentMethod: method);
                             if (!mounted) return;
-                            final messenger = ScaffoldMessenger.of(context);
-                            if (offline) {
-                              messenger.showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    method == 'pay_on_delivery'
-                                        ? 'Order saved locally — pay on delivery when connected.'
-                                        : 'Order saved locally — waiting for connection to charge payment.',
-                                  ),
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  method == 'pay_on_delivery'
+                                      ? '${order.id} · ${s.t('payOnDelivery')} · ${order.paymentStatus}'
+                                      : '${order.id} · ${order.paymentMode} · ${order.paymentStatus}',
                                 ),
-                              );
-                            } else {
-                              messenger.showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    '${order.id} · ${order.paymentMode} · ${order.paymentStatus}',
-                                  ),
-                                ),
-                              );
-                            }
+                              ),
+                            );
                             setState(() => step = 4);
                           } catch (error) {
                             if (!mounted) return;
-                            setState(() => _payError = error.toString());
+                            setState(
+                              () => _payError = error
+                                  .toString()
+                                  .replaceFirst('Exception: ', ''),
+                            );
                           } finally {
                             if (mounted) setState(() => _paying = false);
                           }
@@ -2916,10 +2916,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           Text(s.t('thanksOrder'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
           Text('${s.t('orderConfirmed')} · ${session.lastOrder?.id ?? 'WG-10025'}'),
           Text(
-            session.lastOrder?.paymentMode == 'cod'
-                ? '${s.t('payOnDelivery')}: ${session.lastOrder?.paymentStatus ?? 'PENDING'}'
-                : 'Payment: ${session.lastOrder?.paymentStatus ?? 'PAID'} (${session.lastOrder?.paymentMode ?? 'demo'})',
-            style: const TextStyle(color: WingerColors.muted),
+            session.lastOrder?.isCodPending == true
+                ? s.t('codPendingBanner').replaceAll(
+                      '{amount}',
+                      '\$${(session.lastOrder?.total ?? 0).toStringAsFixed(2)}',
+                    )
+                : session.lastOrder?.paymentMode == 'cod'
+                    ? '${s.t('payOnDelivery')}: ${session.lastOrder?.paymentStatus ?? 'PENDING'}'
+                    : 'Payment: ${session.lastOrder?.paymentStatus ?? 'PAID'} (${session.lastOrder?.paymentMode ?? 'demo'})',
+            style: TextStyle(
+              color: session.lastOrder?.isCodPending == true
+                  ? WingerColors.attentionInk
+                  : WingerColors.muted,
+              fontWeight: session.lastOrder?.isCodPending == true
+                  ? FontWeight.w600
+                  : FontWeight.w400,
+            ),
           ),
           const SizedBox(height: 16),
           FilledButton(
@@ -3011,8 +3023,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${order.paymentStatus} · ${order.paymentMode}',
-                          style: TextStyle(color: WingerColors.muted),
+                          order.isCodPending
+                              ? s
+                                  .t('codPendingBanner')
+                                  .replaceAll(
+                                    '{amount}',
+                                    '\$${order.total.toStringAsFixed(2)}',
+                                  )
+                              : '${order.paymentStatus} · ${order.paymentMode}',
+                          style: TextStyle(
+                            color: order.isCodPending
+                                ? WingerColors.attentionInk
+                                : WingerColors.muted,
+                            fontWeight: order.isCodPending
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
                         ),
                         if (order.isReplacementOrder) ...[
                           const SizedBox(height: 4),
@@ -3337,7 +3363,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(s.t('cancelOrder')),
-        content: Text(s.t('cancelOrderConfirm')),
+        content: Text(
+          order.isCodPending
+              ? s.t('cancelOrderConfirmCod')
+              : s.t('cancelOrderConfirm'),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.t('cancelOrder'))),
@@ -3421,7 +3451,23 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text('${s.t('placedOn')}: ${order.placedAt.toLocal()}'),
-                    Text('${order.paymentStatus} · ${order.paymentMode}${order.paymentMethod != null ? ' · ${order.paymentMethod}' : ''}'),
+                    Text(
+                      order.isCodPending
+                          ? s
+                              .t('codPendingBanner')
+                              .replaceAll(
+                                '{amount}',
+                                '\$${order.total.toStringAsFixed(2)}',
+                              )
+                          : '${order.paymentStatus} · ${order.paymentMode}${order.paymentMethod != null ? ' · ${order.paymentMethod}' : ''}',
+                      style: TextStyle(
+                        color: order.isCodPending
+                            ? WingerColors.attentionInk
+                            : null,
+                        fontWeight:
+                            order.isCodPending ? FontWeight.w600 : null,
+                      ),
+                    ),
                     Text('\$${order.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
                     if (order.isReplacementOrder) ...[
                       const SizedBox(height: 8),

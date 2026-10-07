@@ -296,6 +296,16 @@ export class OrdersService {
     });
     const total = new Prisma.Decimal(fees.total.toFixed(2));
     const payOnDelivery = isPayOnDelivery(dto.paymentMethod);
+    const deliveryMethod = normalizeDeliveryMethod(dto.deliveryMethod);
+    const addressLine = (dto.addressLine ?? '').trim();
+    const city = (dto.city ?? '').trim();
+    if (payOnDelivery && deliveryMethod !== 'pickup') {
+      if (!addressLine || !city) {
+        throw new BadRequestException(
+          'Address and city are required for pay on delivery',
+        );
+      }
+    }
 
     const order = await this.prisma.$transaction(async (tx) => {
       const count = await tx.order.count();
@@ -322,8 +332,8 @@ export class OrdersService {
           taxAmount: new Prisma.Decimal(fees.tax.toFixed(2)),
           deliveryFee: new Prisma.Decimal(fees.deliveryFee.toFixed(2)),
           total,
-          addressLine: dto.addressLine ?? 'Westlands',
-          city: dto.city ?? 'Nairobi',
+          addressLine: addressLine || 'Westlands',
+          city: city || 'Nairobi',
           items: {
             create: lines.map((line) => ({
               productId: line.product.id,
@@ -341,13 +351,24 @@ export class OrdersService {
       });
 
       for (const line of lines) {
-        const next = line.product.stock - line.quantity;
-        await tx.product.update({
-          where: { id: line.product.id },
-          data: {
-            stock: next,
-            stockStatus: stockStatusFor(next),
+        const reserved = await tx.product.updateMany({
+          where: {
+            id: line.product.id,
+            stock: { gte: line.quantity },
           },
+          data: { stock: { decrement: line.quantity } },
+        });
+        if (reserved.count === 0) {
+          throw new BadRequestException(
+            `Insufficient stock for ${line.product.name}`,
+          );
+        }
+        const product = await tx.product.findUniqueOrThrow({
+          where: { id: line.product.id },
+        });
+        await tx.product.update({
+          where: { id: product.id },
+          data: { stockStatus: stockStatusFor(product.stock) },
         });
         await tx.inventoryLedger.create({
           data: {
@@ -357,7 +378,7 @@ export class OrdersService {
             reason: 'ORDER_SALE',
             eventId: `order-${created.id}-${line.product.id}`,
             userId: user.sub,
-            quantityAfter: next,
+            quantityAfter: product.stock,
           },
         });
       }
@@ -1261,6 +1282,10 @@ export class OrdersService {
       );
     }
 
+    const unpaidCod =
+      order.paymentMode === 'cod' &&
+      order.paymentStatus === PaymentStatus.PENDING;
+
     await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.updateMany({
         where: { orderId: order.id },
@@ -1273,18 +1298,35 @@ export class OrdersService {
           paymentStatus:
             order.paymentStatus === PaymentStatus.PAID
               ? PaymentStatus.REFUNDED
-              : order.paymentStatus,
+              : unpaidCod
+                ? PaymentStatus.FAILED
+                : order.paymentStatus,
         },
       });
     });
 
     await this.restoreStock(order.id, user.sub, 'ORDER_CANCELLED');
 
+    // Unpaid COD cancel: remove pending commissions from settleable/pending rollups.
+    if (unpaidCod) {
+      for (const item of order.items) {
+        await this.commissions.clawbackForOrderItem({
+          orderItemId: item.id,
+          actor: user,
+        });
+      }
+    }
+
     const updated = await this.prisma.order.findUnique({
       where: { id: order.id },
       include: orderWithItems,
     });
-    return this.toResponse(updated!, 'Order cancelled and stock restored');
+    return this.toResponse(
+      updated!,
+      unpaidCod
+        ? 'Order cancelled, stock restored, and unpaid COD commission cleared'
+        : 'Order cancelled and stock restored',
+    );
   }
 
   async updateItemStatus(
@@ -1346,12 +1388,11 @@ export class OrdersService {
     const isCodPending =
       item.order.paymentMode === 'cod' &&
       item.order.paymentStatus === PaymentStatus.PENDING;
-    // COD becomes PAID when delivered or when supplier collects payment.
+    // COD: only mark PAID when the whole order is delivered, or explicit collect.
+    // Partial multi-supplier delivery must not flip payment for undelivered lines.
     const markCodPaid =
       isCodPending &&
-      (Boolean(dto.collectPayment) ||
-        nextItemStatus === OrderStatus.DELIVERED ||
-        rollup === OrderStatus.DELIVERED);
+      (Boolean(dto.collectPayment) || rollup === OrderStatus.DELIVERED);
 
     const order = await this.prisma.order.update({
       where: { id: item.orderId },
@@ -1377,8 +1418,18 @@ export class OrdersService {
       await this.onboarding.onSupplierShipped(user.sub);
     }
 
-    // Advance after paymentStatus may have flipped to PAID.
-    await this.commissions.advanceRecognitionForItem(item.id);
+    // Advance recognition for the touched line; if COD just paid, advance all lines.
+    if (markCodPaid) {
+      const allItems = await this.prisma.orderItem.findMany({
+        where: { orderId: item.orderId },
+        select: { id: true },
+      });
+      for (const row of allItems) {
+        await this.commissions.advanceRecognitionForItem(row.id);
+      }
+    } else {
+      await this.commissions.advanceRecognitionForItem(item.id);
+    }
 
     return this.toResponse(order);
   }

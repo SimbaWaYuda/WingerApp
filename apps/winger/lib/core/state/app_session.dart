@@ -417,6 +417,15 @@ class AppSession extends ChangeNotifier {
       throw Exception('Cart is empty');
     }
 
+    final cod = paymentMethod == 'pay_on_delivery' ||
+        paymentMethod == 'cod' ||
+        paymentMethod == 'cash_on_delivery';
+    if (cod && deliveryMethod != 'pickup') {
+      if (addressLine.trim().isEmpty || city.trim().isEmpty) {
+        throw Exception('Address and city are required for pay on delivery');
+      }
+    }
+
     if (apiOnline && accessToken != null && _api != null) {
       final order = await _api!.createOrder(
         items: List.of(_cart),
@@ -433,6 +442,13 @@ class AppSession extends ChangeNotifier {
       notifyListeners();
       await _cartRepository?.clear();
       return order;
+    }
+
+    // Offline cannot place real COD — keep cart so the customer can retry online.
+    if (cod) {
+      throw Exception(
+        'Pay on delivery needs an online connection. Connect and try again.',
+      );
     }
 
     // Offline / unsigned fallback — keep a local demo order.

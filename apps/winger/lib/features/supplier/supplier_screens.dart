@@ -475,7 +475,40 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
     String? pickupCode,
     bool collectPayment = false,
   }) async {
+    final s = WingerStrings.of(context);
     final api = context.read<ApiClient>();
+    if (collectPayment && status == null) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(s.t('collectPayment')),
+          content: Text(
+            s
+                .t('collectPaymentConfirm')
+                .replaceAll(
+                  '{amount}',
+                  '\$${order.total.toStringAsFixed(2)}',
+                )
+                .replaceAll(
+                  '{customer}',
+                  order.customerName.isEmpty ? 'customer' : order.customerName,
+                )
+                .replaceAll('{order}', order.id),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(s.t('back')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(s.t('collectPayment')),
+            ),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
     try {
       await api.updateOrderItemStatus(
         orderId: order.id,
@@ -488,15 +521,15 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
       if (!mounted) return;
       _reload();
       final message = collectPayment && status == null
-          ? 'Payment collected — marked PAID'
+          ? s.t('paymentCollected')
           : status == OrderStatus.delivered
-              ? (order.paymentMode == 'cod'
-                  ? 'Delivered — COD marked PAID'
-                  : 'Marked delivered')
+              ? (order.isCodPending
+                  ? s.t('markedDeliveredCodPending')
+                  : s.t('markedDelivered'))
               : status == OrderStatus.shipped
-                  ? 'Marked shipped'
+                  ? s.t('markedShipped')
                   : status == OrderStatus.readyForPickup
-                      ? 'Ready for pickup'
+                      ? s.t('markReady')
                       : 'Fulfillment updated';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
@@ -747,17 +780,11 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                                 order: order,
                                                 item: item,
                                                 status: OrderStatus.delivered,
-                                                collectPayment: order
-                                                            .paymentMode ==
-                                                        'cod' &&
-                                                    order.paymentStatus ==
-                                                        'PENDING',
                                               )
                                           : null,
                                   child: Text(s.t('markDelivered')),
                                 ),
-                                if (order.paymentMode == 'cod' &&
-                                    order.paymentStatus == 'PENDING')
+                                if (order.isCodPending)
                                   OutlinedButton(
                                     onPressed: () => _updateItem(
                                       order: order,
