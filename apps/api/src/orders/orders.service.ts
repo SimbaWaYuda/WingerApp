@@ -76,6 +76,12 @@ const orderWithItems = {
           order: { select: { displayId: true } },
         },
       },
+      replacedBy: {
+        select: {
+          id: true,
+          order: { select: { displayId: true } },
+        },
+      },
     },
   },
 } as const;
@@ -1220,6 +1226,10 @@ export class OrdersService {
           id: string;
           order: { displayId: string };
         } | null;
+        replacedBy?: {
+          id: string;
+          order: { displayId: string };
+        } | null;
         commission?: {
           ratePercent: Prisma.Decimal;
           commissionBase: Prisma.Decimal;
@@ -1265,6 +1275,7 @@ export class OrdersService {
         pickupCode: item.pickupCode,
         replacesOrderItemId: item.replacesOrderItemId ?? null,
         replacesOrderId: item.replacesOrderItem?.order.displayId ?? null,
+        replacedByOrderId: item.replacedBy?.order.displayId ?? null,
         commission: item.commission
           ? {
               ratePercent: Number(item.commission.ratePercent),

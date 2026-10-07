@@ -193,6 +193,9 @@ class WingerStrings {
           'Create a no-charge replacement order for {product} (from {id})? Stock will be reserved again and you can ship it like a new order.',
       'replacementCreated': 'Replacement order {id} created',
       'replacementForOrder': 'Replacement for {id}',
+      'replacementOrderCreated': 'Replacement order {id}',
+      'replacementOrderHint':
+          'This is a no-charge replacement shipment. Track it like a normal order.',
       'replacementMissingOrder': 'Missing order id for this return',
       'edit': 'Edit',
       'productName': 'Product name',
@@ -561,6 +564,9 @@ class WingerStrings {
           '¿Crear un pedido de reemplazo sin cargo para {product} (de {id})? Se reservará stock otra vez y podrás enviarlo como un pedido nuevo.',
       'replacementCreated': 'Pedido de reemplazo {id} creado',
       'replacementForOrder': 'Reemplazo de {id}',
+      'replacementOrderCreated': 'Pedido de reemplazo {id}',
+      'replacementOrderHint':
+          'Este es un envío de reemplazo sin cargo. Síguelo como un pedido normal.',
       'replacementMissingOrder': 'Falta el id del pedido para esta devolución',
       'edit': 'Editar',
       'productName': 'Nombre del producto',
@@ -929,6 +935,9 @@ class WingerStrings {
           'Unda oda ya badala bila malipo kwa {product} (kutoka {id})? Stock itahifadhiwa tena na unaweza kusafirisha kama oda mpya.',
       'replacementCreated': 'Oda ya badala {id} imeundwa',
       'replacementForOrder': 'Badala ya {id}',
+      'replacementOrderCreated': 'Oda ya badala {id}',
+      'replacementOrderHint':
+          'Hii ni usafirishaji wa badala bila malipo. Ifuatilie kama oda ya kawaida.',
       'replacementMissingOrder': 'Kitambulisho cha oda hakipo kwa marejesho haya',
       'edit': 'Hariri',
       'productName': 'Jina la bidhaa',

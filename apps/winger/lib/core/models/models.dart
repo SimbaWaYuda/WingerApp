@@ -320,6 +320,24 @@ class CustomerOrder {
   }
 
   bool get canRequestReturn => returnableItems.isNotEmpty;
+
+  /// Display ids of orders this one replaces (usually 0–1).
+  List<String> get replacesOrderIds => itemRows
+      .map((item) => item.replacesOrderId)
+      .whereType<String>()
+      .where((id) => id.isNotEmpty)
+      .toSet()
+      .toList();
+
+  /// Display ids of replacement orders created from this order's returned lines.
+  List<String> get replacedByOrderIds => itemRows
+      .map((item) => item.replacedByOrderId)
+      .whereType<String>()
+      .where((id) => id.isNotEmpty)
+      .toSet()
+      .toList();
+
+  bool get isReplacementOrder => replacesOrderIds.isNotEmpty;
 }
 
 class RateableSupplier {
@@ -408,6 +426,7 @@ class OrderItemRow {
     this.pickupCode,
     this.replacesOrderId,
     this.replacesOrderItemId,
+    this.replacedByOrderId,
   });
 
   final String id;
@@ -422,6 +441,7 @@ class OrderItemRow {
   final String? pickupCode;
   final String? replacesOrderId;
   final String? replacesOrderItemId;
+  final String? replacedByOrderId;
 
   bool get isReplacement =>
       (replacesOrderId != null && replacesOrderId!.isNotEmpty) ||
@@ -511,6 +531,7 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           pickupCode: item['pickupCode'] as String?,
           replacesOrderId: item['replacesOrderId'] as String?,
           replacesOrderItemId: item['replacesOrderItemId'] as String?,
+          replacedByOrderId: item['replacedByOrderId'] as String?,
         ),
     ],
     shipments: [

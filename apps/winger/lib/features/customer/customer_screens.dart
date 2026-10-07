@@ -2972,6 +2972,36 @@ class _OrdersScreenState extends State<OrdersScreen> {
                           '${order.paymentStatus} · ${order.paymentMode}',
                           style: TextStyle(color: WingerColors.muted),
                         ),
+                        if (order.isReplacementOrder) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            s
+                                .t('replacementForOrder')
+                                .replaceAll(
+                                  '{id}',
+                                  order.replacesOrderIds.join(', '),
+                                ),
+                            style: const TextStyle(
+                              color: WingerColors.successInk,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                        if (order.replacedByOrderIds.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            s
+                                .t('replacementOrderCreated')
+                                .replaceAll(
+                                  '{id}',
+                                  order.replacedByOrderIds.join(', '),
+                                ),
+                            style: const TextStyle(
+                              color: WingerColors.infoInk,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 4),
                         Text(
                           '${s.t('placedOn')}: ${order.placedAt.toLocal().toString().split('.').first}',
@@ -3351,6 +3381,37 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     Text('${s.t('placedOn')}: ${order.placedAt.toLocal()}'),
                     Text('${order.paymentStatus} · ${order.paymentMode}${order.paymentMethod != null ? ' · ${order.paymentMethod}' : ''}'),
                     Text('\$${order.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                    if (order.isReplacementOrder) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        s.t('replacementOrderHint'),
+                        style: TextStyle(color: WingerColors.muted),
+                      ),
+                      const SizedBox(height: 4),
+                      for (final originalId in order.replacesOrderIds)
+                        TextButton(
+                          onPressed: () =>
+                              context.go('/customer/orders/$originalId'),
+                          child: Text(
+                            s
+                                .t('replacementForOrder')
+                                .replaceAll('{id}', originalId),
+                          ),
+                        ),
+                    ],
+                    if (order.replacedByOrderIds.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      for (final replacementId in order.replacedByOrderIds)
+                        TextButton(
+                          onPressed: () =>
+                              context.go('/customer/orders/$replacementId'),
+                          child: Text(
+                            s
+                                .t('replacementOrderCreated')
+                                .replaceAll('{id}', replacementId),
+                          ),
+                        ),
+                    ],
                     if (order.addressLine != null || order.city != null) ...[
                       const SizedBox(height: 8),
                       Text(s.t('deliveryAddress'), style: const TextStyle(fontWeight: FontWeight.w700)),
