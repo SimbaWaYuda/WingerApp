@@ -343,6 +343,7 @@ export class ProductsService {
     let pendingCommission = 0;
     let settleableCommission = 0;
     for (const row of commissions) {
+      if (row.status === CommissionRecognitionStatus.CLAWED_BACK) continue;
       const amount = Number(row.commissionAmount);
       if (row.status === CommissionRecognitionStatus.SETTLEABLE) {
         settleableCommission += amount;

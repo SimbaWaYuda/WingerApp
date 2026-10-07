@@ -314,5 +314,81 @@ describe('CommissionsService', () => {
       expect(updated?.status).toBe(CommissionRecognitionStatus.RECOGNIZED);
       expect(updated?.status).not.toBe(CommissionRecognitionStatus.SETTLEABLE);
     });
+
+    it('does not revive CLAWED_BACK commissions on delivery', async () => {
+      prisma.orderItem.findUnique.mockResolvedValue({
+        id: 'item-1',
+        status: OrderStatus.DELIVERED,
+        commission: {
+          id: 'c1',
+          status: CommissionRecognitionStatus.CLAWED_BACK,
+          isDemo: false,
+          recognizedAt: new Date(),
+        },
+        order: { paymentStatus: PaymentStatus.PAID, paymentMode: 'demo' },
+      });
+
+      const updated = await service.advanceRecognitionForItem('item-1');
+      expect(updated?.status).toBe(CommissionRecognitionStatus.CLAWED_BACK);
+      expect(prisma.orderItemCommission.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('clawbackForOrderItem', () => {
+    it('marks commission CLAWED_BACK and writes audit', async () => {
+      prisma.orderItem.findUnique.mockResolvedValue({
+        id: 'item-1',
+        commission: {
+          id: 'c1',
+          status: CommissionRecognitionStatus.SETTLEABLE,
+          commissionAmount: 12.5,
+          isDemo: false,
+        },
+      });
+      prisma.orderItemCommission.update.mockResolvedValue({
+        id: 'c1',
+        status: CommissionRecognitionStatus.CLAWED_BACK,
+        commissionAmount: 12.5,
+      });
+
+      const result = await service.clawbackForOrderItem({
+        orderItemId: 'item-1',
+        actor: admin(),
+        returnRequestId: 'ret-1',
+      });
+
+      expect(result.clawedBack).toBe(true);
+      expect(prisma.orderItemCommission.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { status: CommissionRecognitionStatus.CLAWED_BACK },
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entityType: 'OrderItemCommission',
+          action: 'COMMISSION_CLAWED_BACK',
+          entityId: 'c1',
+        }),
+      );
+    });
+
+    it('is idempotent when already clawed back', async () => {
+      prisma.orderItem.findUnique.mockResolvedValue({
+        id: 'item-1',
+        commission: {
+          id: 'c1',
+          status: CommissionRecognitionStatus.CLAWED_BACK,
+          commissionAmount: 12.5,
+        },
+      });
+
+      const result = await service.clawbackForOrderItem({
+        orderItemId: 'item-1',
+        actor: admin(),
+      });
+
+      expect(result.clawedBack).toBe(false);
+      expect(result.reason).toBe('already_clawed_back');
+      expect(prisma.orderItemCommission.update).not.toHaveBeenCalled();
+    });
   });
 });

@@ -58,11 +58,13 @@ enum ReturnRefundStatus {
   NOT_REQUIRED
 }
 
-/// Recognition lifecycle for line commissions (Slice 5a).
+/// Recognition lifecycle for line commissions (Slice 5a / 5b clawbacks).
 enum CommissionRecognitionStatus {
   PENDING
   RECOGNIZED
   SETTLEABLE
+  /// Refund issued — commission removed from settleable/pending totals.
+  CLAWED_BACK
 }
 
 enum CommissionAgreementStatus {

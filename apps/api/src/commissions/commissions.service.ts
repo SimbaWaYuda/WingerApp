@@ -437,6 +437,51 @@ export class CommissionsService {
   }
 
   /**
+   * Slice 5b: when a return refund is marked ISSUED, remove the line commission
+   * from pending/recognized/settleable rollups (accounting only — no payout API).
+   */
+  async clawbackForOrderItem(params: {
+    orderItemId: string;
+    actor: AuthUser;
+    returnRequestId?: string;
+  }) {
+    const item = await this.prisma.orderItem.findUnique({
+      where: { id: params.orderItemId },
+      include: { commission: true },
+    });
+    if (!item?.commission) {
+      return { clawedBack: false, reason: 'no_commission_snapshot' as const };
+    }
+    const snap = item.commission;
+    if (snap.status === CommissionRecognitionStatus.CLAWED_BACK) {
+      return { clawedBack: false, reason: 'already_clawed_back' as const, snapshot: snap };
+    }
+
+    const updated = await this.prisma.orderItemCommission.update({
+      where: { id: snap.id },
+      data: { status: CommissionRecognitionStatus.CLAWED_BACK },
+    });
+    await this.audit.record({
+      entityType: 'OrderItemCommission',
+      entityId: snap.id,
+      action: 'COMMISSION_CLAWED_BACK',
+      actorUserId: params.actor.sub,
+      actorRole: params.actor.role,
+      before: {
+        status: snap.status,
+        commissionAmount: Number(snap.commissionAmount),
+        orderItemId: params.orderItemId,
+      },
+      after: {
+        status: updated.status,
+        commissionAmount: Number(updated.commissionAmount),
+        returnRequestId: params.returnRequestId ?? null,
+      },
+    });
+    return { clawedBack: true, reason: 'ok' as const, snapshot: updated };
+  }
+
+  /**
    * COD: PENDING → RECOGNIZED/SETTLEABLE when item delivered and payment confirmed.
    * Card (non-demo): RECOGNIZED → SETTLEABLE on delivery.
    * Demo: never becomes SETTLEABLE (not a real financial transaction).
@@ -448,6 +493,9 @@ export class CommissionsService {
     });
     if (!item?.commission) return null;
     const snap = item.commission;
+    if (snap.status === CommissionRecognitionStatus.CLAWED_BACK) {
+      return snap;
+    }
     if (snap.isDemo) {
       // Demo snapshots stay non-settleable.
       if (
@@ -553,7 +601,9 @@ export class CommissionsService {
         bucket.demoLineCount += 1;
       } else {
         bucket.lineCount += 1;
-        if (row.status === CommissionRecognitionStatus.SETTLEABLE) {
+        if (row.status === CommissionRecognitionStatus.CLAWED_BACK) {
+          // Excluded from financial rollups after refund clawback.
+        } else if (row.status === CommissionRecognitionStatus.SETTLEABLE) {
           bucket.settleable += amount;
         } else if (row.status === CommissionRecognitionStatus.RECOGNIZED) {
           bucket.recognized += amount;
@@ -644,7 +694,11 @@ export class CommissionsService {
       .filter((r) => r.status === CommissionRecognitionStatus.SETTLEABLE)
       .reduce((sum, r) => sum + Number(r.commissionAmount), 0);
     const pending = rows
-      .filter((r) => r.status !== CommissionRecognitionStatus.SETTLEABLE)
+      .filter(
+        (r) =>
+          r.status !== CommissionRecognitionStatus.SETTLEABLE &&
+          r.status !== CommissionRecognitionStatus.CLAWED_BACK,
+      )
       .reduce((sum, r) => sum + Number(r.commissionAmount), 0);
     const rate = await this.resolveRateForSupplier(user.supplierId);
     return {

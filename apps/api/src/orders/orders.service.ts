@@ -888,6 +888,9 @@ export class OrdersService {
           'Refund status can only be set after a return is approved',
         );
       }
+      const becameIssued =
+        dto.refundStatus === ReturnRefundStatus.ISSUED &&
+        current.refundStatus !== ReturnRefundStatus.ISSUED;
       await this.prisma.returnRequest.update({
         where: { id: row.id },
         data: {
@@ -902,6 +905,13 @@ export class OrdersService {
               : null,
         },
       });
+      if (becameIssued) {
+        await this.commissions.clawbackForOrderItem({
+          orderItemId: current.orderItemId,
+          actor: user,
+          returnRequestId: current.id,
+        });
+      }
     }
 
     const updated = await this.prisma.returnRequest.findUnique({
