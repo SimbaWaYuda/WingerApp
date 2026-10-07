@@ -10,6 +10,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { StorageModule } from './storage/storage.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { SyncModule } from './sync/sync.module';
 
 @Module({
@@ -24,6 +25,7 @@ import { SyncModule } from './sync/sync.module';
     ReviewsModule,
     AnalyticsModule,
     OnboardingModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

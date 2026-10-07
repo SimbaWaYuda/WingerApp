@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { CommissionsService } from '../commissions/commissions.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from './stripe.service';
@@ -96,6 +97,7 @@ export class OrdersService {
     private readonly commissions: CommissionsService,
     private readonly stripe: StripeService,
     private readonly onboarding: OnboardingService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -923,6 +925,22 @@ export class OrdersService {
         },
       },
     });
+
+    const statusChanged =
+      dto.status != null && dto.status !== row.status;
+    const refundChanged =
+      dto.refundStatus != null && dto.refundStatus !== row.refundStatus;
+    if (statusChanged || refundChanged) {
+      await this.notifications.notifyReturnStatusChange({
+        customerId: row.customerId,
+        returnId: row.id,
+        orderDisplayId: updated!.order.displayId,
+        productName: updated!.orderItem.productName,
+        status: statusChanged ? dto.status : undefined,
+        refundStatus: refundChanged ? dto.refundStatus : undefined,
+      });
+    }
+
     return {
       ...this.toReturnResponse(updated!),
       customerName: updated!.order.customerName,

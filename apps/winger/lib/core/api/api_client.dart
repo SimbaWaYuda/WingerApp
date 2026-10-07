@@ -627,6 +627,90 @@ class ApiClient {
     );
   }
 
+  Future<({int unreadCount, List<CustomerNotification> items})>
+      fetchNotifications({int take = 50}) async {
+    _requireAccessToken();
+    final response = await http
+        .get(
+          _uri('/notifications').replace(
+            queryParameters: {'take': '$take'},
+          ),
+          headers: session.authHeaders,
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Notifications HTTP ${response.statusCode}',
+      );
+    }
+    session.setApiOnline(true);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final items = (data['items'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map(
+          (raw) => customerNotificationFromApi(
+            Map<String, dynamic>.from(raw),
+          ),
+        )
+        .where((n) => n.id.isNotEmpty)
+        .toList();
+    return (
+      unreadCount: (data['unreadCount'] as num?)?.toInt() ?? 0,
+      items: items,
+    );
+  }
+
+  Future<int> fetchNotificationUnreadCount() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/notifications/unread-count'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode != 200) return 0;
+    session.setApiOnline(true);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return (data['unreadCount'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<void> markNotificationRead(String id) async {
+    _requireAccessToken();
+    final response = await http
+        .patch(
+          _uri('/notifications/$id/read'),
+          headers: session.authHeaders,
+          body: jsonEncode({}),
+        )
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Mark read failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    _requireAccessToken();
+    final response = await http
+        .patch(
+          _uri('/notifications/read-all'),
+          headers: session.authHeaders,
+          body: jsonEncode({}),
+        )
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Mark all read failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+  }
+
   Future<CustomerOrder> createReplacementOrder({
     required String orderId,
     required String itemId,

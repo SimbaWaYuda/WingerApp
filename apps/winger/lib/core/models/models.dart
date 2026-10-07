@@ -425,6 +425,47 @@ OrderReturnRequest orderReturnRequestFromApi(Map<String, dynamic> json) {
   );
 }
 
+class CustomerNotification {
+  const CustomerNotification({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.createdAt,
+    this.entityType,
+    this.entityId,
+    this.readAt,
+    this.whatsappStatus,
+  });
+
+  final String id;
+  final String type;
+  final String title;
+  final String body;
+  final String? entityType;
+  final String? entityId;
+  final DateTime? readAt;
+  final String? whatsappStatus;
+  final DateTime createdAt;
+
+  bool get isUnread => readAt == null;
+}
+
+CustomerNotification customerNotificationFromApi(Map<String, dynamic> json) {
+  return CustomerNotification(
+    id: json['id'] as String? ?? '',
+    type: json['type'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    body: json['body'] as String? ?? '',
+    entityType: json['entityType'] as String?,
+    entityId: json['entityId'] as String?,
+    readAt: DateTime.tryParse(json['readAt'] as String? ?? ''),
+    whatsappStatus: json['whatsappStatus'] as String?,
+    createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+        DateTime.now(),
+  );
+}
+
 class OrderItemRow {
   const OrderItemRow({
     required this.id,

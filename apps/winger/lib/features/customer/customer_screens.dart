@@ -17,30 +17,72 @@ import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
 
-const customerDestinations = [
-  ShellDestination(labelKey: 'home', icon: Icons.home_outlined, path: '/customer'),
-  ShellDestination(labelKey: 'search', icon: Icons.search, path: '/customer/search'),
-  ShellDestination(labelKey: 'orders', icon: Icons.receipt_long_outlined, path: '/customer/orders'),
-  ShellDestination(labelKey: 'account', icon: Icons.person_outline, path: '/customer/account'),
+List<ShellDestination> customerDestinations({int unreadNotifications = 0}) => [
+  const ShellDestination(labelKey: 'home', icon: Icons.home_outlined, path: '/customer'),
+  const ShellDestination(labelKey: 'search', icon: Icons.search, path: '/customer/search'),
+  const ShellDestination(labelKey: 'orders', icon: Icons.receipt_long_outlined, path: '/customer/orders'),
+  ShellDestination(
+    labelKey: 'account',
+    icon: Icons.person_outline,
+    path: '/customer/account',
+    badgeCount: unreadNotifications,
+  ),
 ];
 
-class CustomerShell extends StatelessWidget {
+class CustomerShell extends StatefulWidget {
   const CustomerShell({super.key, required this.child});
 
   final Widget child;
+
+  @override
+  State<CustomerShell> createState() => _CustomerShellState();
+}
+
+class _CustomerShellState extends State<CustomerShell> {
+  int _unreadNotifications = 0;
+  String? _lastPath;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshUnread());
+  }
+
+  Future<void> _refreshUnread() async {
+    if (!mounted) return;
+    final session = context.read<AppSession>();
+    final api = context.read<ApiClient>();
+    if (session.accessToken == null || !session.apiOnline) {
+      if (_unreadNotifications != 0) setState(() => _unreadNotifications = 0);
+      return;
+    }
+    try {
+      final next = await api.fetchNotificationUnreadCount();
+      if (!mounted) return;
+      if (next != _unreadNotifications) {
+        setState(() => _unreadNotifications = next);
+      }
+    } catch (_) {
+      // Keep last known badge count offline.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
     final location = GoRouterState.of(context).uri.path;
+    if (_lastPath != location) {
+      _lastPath = location;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _refreshUnread());
+    }
     final onCompare = location.startsWith('/customer/compare');
     final showTray = session.compareIds.isNotEmpty && !onCompare;
 
     return RoleShell(
       title: s.t('home'),
       roleLabel: 'Customer',
-      destinations: customerDestinations,
+      destinations: customerDestinations(unreadNotifications: _unreadNotifications),
       bottomBar: showTray
           ? _CompareTray(
               count: session.compareIds.length,
@@ -48,7 +90,7 @@ class CustomerShell extends StatelessWidget {
               onCompare: () => context.go('/customer/compare'),
             )
           : null,
-      child: child,
+      child: widget.child,
     );
   }
 }
@@ -3649,6 +3691,15 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
         ),
         const SizedBox(height: 24),
         ListTile(
+          leading: const Icon(Icons.notifications_outlined),
+          title: Text(s.t('notifications')),
+          subtitle: Text(
+            s.t('notificationsHint'),
+            style: const TextStyle(color: WingerColors.muted),
+          ),
+          onTap: () => context.go('/customer/notifications'),
+        ),
+        ListTile(
           leading: const Icon(Icons.location_on_outlined),
           title: Text(s.t('addresses')),
           subtitle: Text(
@@ -3817,6 +3868,164 @@ class _AddressesScreenState extends State<AddressesScreen> {
               : Text(s.t('saveAddress')),
         ),
       ],
+    );
+  }
+}
+
+class CustomerNotificationsScreen extends StatefulWidget {
+  const CustomerNotificationsScreen({super.key});
+
+  @override
+  State<CustomerNotificationsScreen> createState() =>
+      _CustomerNotificationsScreenState();
+}
+
+class _CustomerNotificationsScreenState
+    extends State<CustomerNotificationsScreen> {
+  bool _loading = true;
+  String? _error;
+  int _unreadCount = 0;
+  List<CustomerNotification> _items = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final api = context.read<ApiClient>();
+    final session = context.read<AppSession>();
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      if (session.accessToken == null) {
+        setState(() {
+          _items = const [];
+          _unreadCount = 0;
+          _loading = false;
+        });
+        return;
+      }
+      final result = await api.fetchNotifications();
+      if (!mounted) return;
+      setState(() {
+        _items = result.items;
+        _unreadCount = result.unreadCount;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _markRead(CustomerNotification item) async {
+    if (!item.isUnread) return;
+    final api = context.read<ApiClient>();
+    try {
+      await api.markNotificationRead(item.id);
+      await _load();
+    } catch (_) {}
+  }
+
+  Future<void> _markAllRead() async {
+    final api = context.read<ApiClient>();
+    try {
+      await api.markAllNotificationsRead();
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  s.t('notifications'),
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+              ),
+              if (_unreadCount > 0)
+                TextButton(
+                  onPressed: _markAllRead,
+                  child: Text(s.t('markAllRead')),
+                ),
+            ],
+          ),
+          Text(
+            s.t('notificationsHint'),
+            style: const TextStyle(color: WingerColors.muted),
+          ),
+          const SizedBox(height: 16),
+          if (_loading)
+            const Center(child: CircularProgressIndicator())
+          else if (_error != null)
+            Text(_error!, style: const TextStyle(color: WingerColors.dangerInk))
+          else if (_items.isEmpty)
+            Text(
+              s.t('noNotifications'),
+              style: const TextStyle(color: WingerColors.muted),
+            )
+          else
+            for (final item in _items) ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  item.isUnread
+                      ? Icons.notifications_active
+                      : Icons.notifications_none,
+                  color: item.isUnread ? WingerColors.brand : WingerColors.muted,
+                ),
+                title: Text(
+                  item.title,
+                  style: TextStyle(
+                    fontWeight:
+                        item.isUnread ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 4),
+                    Text(item.body),
+                    const SizedBox(height: 4),
+                    Text(
+                      item.createdAt.toLocal().toString().split('.').first,
+                      style: const TextStyle(
+                        color: WingerColors.muted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                isThreeLine: true,
+                onTap: () => _markRead(item),
+              ),
+              const Divider(height: 1),
+            ],
+        ],
+      ),
     );
   }
 }

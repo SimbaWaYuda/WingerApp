@@ -73,6 +73,10 @@ GoRouter createRouter(AppSession session) {
                 OrderDetailScreen(orderId: state.pathParameters['id']!),
           ),
           GoRoute(path: '/customer/account', builder: (context, state) => const CustomerAccountScreen()),
+          GoRoute(
+            path: '/customer/notifications',
+            builder: (context, state) => const CustomerNotificationsScreen(),
+          ),
           GoRoute(path: '/customer/addresses', builder: (context, state) => const AddressesScreen()),
         ],
       ),

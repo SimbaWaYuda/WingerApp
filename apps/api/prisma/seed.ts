@@ -283,6 +283,7 @@ async function main() {
       name: 'Amina Mwangi',
       role: UserRole.CUSTOMER,
       supplierId: null as string | null,
+      phone: '+254712345678' as string | null,
     },
     {
       email: 'supplier@kijani.example',
@@ -311,6 +312,7 @@ async function main() {
   ];
 
   for (const user of users) {
+    const phone = 'phone' in user ? user.phone : null;
     await prisma.user.upsert({
       where: { email: user.email },
       update: {
@@ -318,6 +320,7 @@ async function main() {
         role: user.role,
         supplierId: user.supplierId,
         passwordHash,
+        ...(phone ? { phone } : {}),
       },
       create: {
         email: user.email,
@@ -325,6 +328,7 @@ async function main() {
         role: user.role,
         supplierId: user.supplierId,
         passwordHash,
+        ...(phone ? { phone } : {}),
       },
     });
   }

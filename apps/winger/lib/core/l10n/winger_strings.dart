@@ -148,6 +148,10 @@ class WingerStrings {
       'unavailableItem': 'Unavailable or low stock — update quantity',
       'remove': 'Remove',
       'notifications': 'Notifications',
+      'notificationsHint':
+          'Return and refund updates appear here. WhatsApp is sent when Twilio is configured and your phone is saved.',
+      'noNotifications': 'No notifications yet.',
+      'markAllRead': 'Mark all read',
       'support': 'Support',
       'overview': 'Overview',
       'analytics': 'Analytics',
@@ -530,6 +534,10 @@ class WingerStrings {
       'unavailableItem': 'No disponible o stock bajo — actualiza la cantidad',
       'remove': 'Quitar',
       'notifications': 'Notificaciones',
+      'notificationsHint':
+          'Aquí aparecen actualizaciones de devoluciones y reembolsos. WhatsApp se envía si Twilio está configurado y tienes teléfono guardado.',
+      'noNotifications': 'Aún no hay notificaciones.',
+      'markAllRead': 'Marcar todo leído',
       'support': 'Soporte',
       'overview': 'Resumen',
       'analytics': 'Analítica',
@@ -912,6 +920,10 @@ class WingerStrings {
       'unavailableItem': 'Haipatikani au stock ndogo — sasisha idadi',
       'remove': 'Ondoa',
       'notifications': 'Arifa',
+      'notificationsHint':
+          'Sasisho za kurudisha na marejesho huonekana hapa. WhatsApp hutumwa Twilio ikisanidiwa na simu yako ikiwa imehifadhiwa.',
+      'noNotifications': 'Bado hakuna arifa.',
+      'markAllRead': 'Weka zote zimesomwa',
       'support': 'Msaada',
       'overview': 'Muhtasari',
       'analytics': 'Takwimu',
