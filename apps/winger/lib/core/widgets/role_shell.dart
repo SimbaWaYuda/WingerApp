@@ -11,11 +11,13 @@ class ShellDestination {
     required this.labelKey,
     required this.icon,
     required this.path,
+    this.badgeCount = 0,
   });
 
   final String labelKey;
   final IconData icon;
   final String path;
+  final int badgeCount;
 }
 
 class RoleShell extends StatelessWidget {
@@ -102,7 +104,18 @@ class RoleShell extends StatelessWidget {
             destinations: destinations
                 .map(
                   (d) => NavigationDestination(
-                    icon: Icon(d.icon),
+                    icon: d.badgeCount > 0
+                        ? Badge(
+                            label: Text('${d.badgeCount}'),
+                            child: Icon(d.icon),
+                          )
+                        : Icon(d.icon),
+                    selectedIcon: d.badgeCount > 0
+                        ? Badge(
+                            label: Text('${d.badgeCount}'),
+                            child: Icon(d.icon),
+                          )
+                        : Icon(d.icon),
                     label: s.t(d.labelKey),
                   ),
                 )
@@ -295,7 +308,14 @@ class _SideNav extends StatelessWidget {
                       selected: selected,
                       selectedTileColor: Colors.white.withValues(alpha: 0.12),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      leading: Icon(d.icon, color: Colors.white),
+                      leading: d.badgeCount > 0
+                          ? Badge(
+                              backgroundColor: WingerColors.attention,
+                              textColor: WingerColors.attentionInk,
+                              label: Text('${d.badgeCount}'),
+                              child: Icon(d.icon, color: Colors.white),
+                            )
+                          : Icon(d.icon, color: Colors.white),
                       title: Text(
                         s.t(d.labelKey),
                         style: TextStyle(

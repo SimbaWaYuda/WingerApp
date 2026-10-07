@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -20,18 +21,86 @@ import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
 
-const supplierDestinations = [
-  ShellDestination(labelKey: 'overview', icon: Icons.dashboard_outlined, path: '/supplier'),
-  ShellDestination(labelKey: 'orders', icon: Icons.receipt_long_outlined, path: '/supplier/orders'),
-  ShellDestination(labelKey: 'returns', icon: Icons.assignment_return_outlined, path: '/supplier/returns'),
-  ShellDestination(labelKey: 'products', icon: Icons.inventory_2_outlined, path: '/supplier/products'),
-  ShellDestination(labelKey: 'payments', icon: Icons.payments_outlined, path: '/supplier/payments'),
-];
+List<ShellDestination> supplierDestinations({int openReturns = 0}) => [
+      const ShellDestination(
+        labelKey: 'overview',
+        icon: Icons.dashboard_outlined,
+        path: '/supplier',
+      ),
+      const ShellDestination(
+        labelKey: 'orders',
+        icon: Icons.receipt_long_outlined,
+        path: '/supplier/orders',
+      ),
+      ShellDestination(
+        labelKey: 'returns',
+        icon: Icons.assignment_return_outlined,
+        path: '/supplier/returns',
+        badgeCount: openReturns,
+      ),
+      const ShellDestination(
+        labelKey: 'products',
+        icon: Icons.inventory_2_outlined,
+        path: '/supplier/products',
+      ),
+      const ShellDestination(
+        labelKey: 'payments',
+        icon: Icons.payments_outlined,
+        path: '/supplier/payments',
+      ),
+    ];
 
-class SupplierShell extends StatelessWidget {
+class SupplierShell extends StatefulWidget {
   const SupplierShell({super.key, required this.child});
 
   final Widget child;
+
+  @override
+  State<SupplierShell> createState() => _SupplierShellState();
+}
+
+class _SupplierShellState extends State<SupplierShell> {
+  int _openReturns = 0;
+  bool _loadingBadge = false;
+  Timer? _badgeTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshBadge());
+    _badgeTimer = Timer.periodic(
+      const Duration(seconds: 45),
+      (_) {
+        if (mounted) _refreshBadge();
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _badgeTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshBadge() async {
+    if (_loadingBadge || !mounted) return;
+    final session = context.read<AppSession>();
+    if (session.accessToken == null || session.accessToken!.isEmpty) {
+      if (_openReturns != 0) setState(() => _openReturns = 0);
+      return;
+    }
+    _loadingBadge = true;
+    try {
+      final dash = await context.read<ApiClient>().fetchSupplierDashboard();
+      final next = (dash['openReturns'] as num?)?.toInt() ?? 0;
+      if (!mounted) return;
+      if (next != _openReturns) setState(() => _openReturns = next);
+    } catch (_) {
+      // Keep last known badge while offline / unauthorized.
+    } finally {
+      _loadingBadge = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,8 +108,8 @@ class SupplierShell extends StatelessWidget {
     return RoleShell(
       title: s.t('dashboard'),
       roleLabel: 'Supplier',
-      destinations: supplierDestinations,
-      child: child,
+      destinations: supplierDestinations(openReturns: _openReturns),
+      child: widget.child,
     );
   }
 }
@@ -110,10 +179,11 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
           KpiCardData(
             label: s.t('openReturns'),
             value: '${data?['openReturns'] ?? 0}',
-            delta: s.t('returnsOpen'),
+            delta: s.t('returnsNeedsReview'),
             positive: ((data?['openReturns'] as num?)?.toInt() ?? 0) == 0,
           ),
         ];
+        final openReturnsCount = (data?['openReturns'] as num?)?.toInt() ?? 0;
 
         return ListView(
           padding: const EdgeInsets.all(20),
@@ -178,8 +248,50 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
                 childAspectRatio: wide ? 1.35 : 1.25,
-                children: [for (final kpi in kpis) KpiCard(data: kpi)],
+                children: [
+                  for (var i = 0; i < kpis.length; i++)
+                    KpiCard(
+                      data: kpis[i],
+                      onTap: i == kpis.length - 1
+                          ? () => context.go('/supplier/returns')
+                          : null,
+                    ),
+                ],
               ),
+              if (openReturnsCount > 0) ...[
+                const SizedBox(height: 16),
+                Material(
+                  color: WingerColors.attention,
+                  borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => context.go('/supplier/returns'),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.assignment_return_outlined,
+                              color: WingerColors.attentionInk),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              s
+                                  .t('returnsAttentionBanner')
+                                  .replaceAll('{n}', '$openReturnsCount'),
+                              style: const TextStyle(
+                                color: WingerColors.attentionInk,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right,
+                              color: WingerColors.attentionInk),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               Text(s.t('orders'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
               const SizedBox(height: 8),
@@ -202,8 +314,8 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                   FilledButton.tonal(
                     onPressed: () => context.go('/supplier/returns'),
                     child: Text(
-                      ((data?['openReturns'] as num?)?.toInt() ?? 0) > 0
-                          ? '${s.t('returns')} (${data?['openReturns']})'
+                      openReturnsCount > 0
+                          ? '${s.t('returns')} ($openReturnsCount)'
                           : s.t('returns'),
                     ),
                   ),

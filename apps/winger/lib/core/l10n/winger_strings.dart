@@ -194,6 +194,9 @@ class WingerStrings {
       'importCsvSkipped': 'Skipped {n} invalid row(s):',
       'importCsvResult': 'Created {created} · updated {updated} · {fail} failed',
       'openReturns': 'Open returns',
+      'returnsNeedsReview': 'Needs review',
+      'returnsAttentionBanner':
+          '{n} return request(s) need review — tap to open Returns',
       'returnedLineHint':
           'This line was returned. Fulfillment is closed — create a replacement order for an exchange, or manage the return from Returns.',
       'createReplacement': 'Create replacement',
@@ -573,6 +576,9 @@ class WingerStrings {
       'importCsvSkipped': 'Se omitieron {n} fila(s) inválida(s):',
       'importCsvResult': 'Creados {created} · actualizados {updated} · {fail} fallidos',
       'openReturns': 'Devoluciones abiertas',
+      'returnsNeedsReview': 'Requieren revisión',
+      'returnsAttentionBanner':
+          '{n} solicitud(es) de devolución requieren revisión — toca para abrir Devoluciones',
       'returnedLineHint':
           'Esta línea fue devuelta. El fulfillment está cerrado — crea un pedido de reemplazo para un cambio, o gestiona la devolución en Devoluciones.',
       'createReplacement': 'Crear reemplazo',
@@ -952,6 +958,9 @@ class WingerStrings {
       'importCsvSkipped': 'Safu {n} batili zimerukwa:',
       'importCsvResult': 'Zimeundwa {created} · zimesasishwa {updated} · {fail} zimeshindikana',
       'openReturns': 'Marejesho yaliyo wazi',
+      'returnsNeedsReview': 'Yanahitaji ukaguzi',
+      'returnsAttentionBanner':
+          'Maombi {n} ya marejesho yanahitaji ukaguzi — gusa kufungua Marejesho',
       'returnedLineHint':
           'Bidhaa hii imerejeshwa. Utimilifu umefungwa — unda oda ya badala kwa ubadilishaji, au shughulikia marejesho katika Marejesho.',
       'createReplacement': 'Unda badala',

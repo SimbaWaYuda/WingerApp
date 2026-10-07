@@ -4,13 +4,14 @@ import '../models/models.dart';
 import '../theme/winger_colors.dart';
 
 class KpiCard extends StatelessWidget {
-  const KpiCard({super.key, required this.data});
+  const KpiCard({super.key, required this.data, this.onTap});
 
   final KpiCardData data;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final card = Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: WingerColors.white,
@@ -38,6 +39,15 @@ class KpiCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+    if (onTap == null) return card;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: card,
       ),
     );
   }
