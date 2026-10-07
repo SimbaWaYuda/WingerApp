@@ -93,6 +93,22 @@ export class OrdersController {
     return this.ordersService.findOne(id, user);
   }
 
+  @Post(':orderId/items/:itemId/replacement')
+  @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
+  createReplacement(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @Param('itemId') itemId: string,
+    @Body() body: { quantity?: number },
+  ) {
+    return this.ordersService.createReplacementOrder(
+      orderId,
+      itemId,
+      user,
+      body?.quantity,
+    );
+  }
+
   @Patch(':orderId/items/:itemId')
   @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
   updateItem(

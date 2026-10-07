@@ -406,6 +406,8 @@ class OrderItemRow {
     required this.status,
     this.trackingCode,
     this.pickupCode,
+    this.replacesOrderId,
+    this.replacesOrderItemId,
   });
 
   final String id;
@@ -418,6 +420,12 @@ class OrderItemRow {
   final OrderStatus status;
   final String? trackingCode;
   final String? pickupCode;
+  final String? replacesOrderId;
+  final String? replacesOrderItemId;
+
+  bool get isReplacement =>
+      (replacesOrderId != null && replacesOrderId!.isNotEmpty) ||
+      (replacesOrderItemId != null && replacesOrderItemId!.isNotEmpty);
 }
 
 class SupplierOrderRow {
@@ -501,6 +509,8 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           status: orderStatusFromApi(item['status'] as String?),
           trackingCode: item['trackingCode'] as String?,
           pickupCode: item['pickupCode'] as String?,
+          replacesOrderId: item['replacesOrderId'] as String?,
+          replacesOrderItemId: item['replacesOrderItemId'] as String?,
         ),
     ],
     shipments: [

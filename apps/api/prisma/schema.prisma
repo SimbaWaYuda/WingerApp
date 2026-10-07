@@ -300,6 +300,10 @@ model OrderItem {
   status       OrderStatus @default(PROCESSING)
   trackingCode String?
   pickupCode   String?
+  /// When set, this line is a no-charge replacement for a previously returned line.
+  replacesOrderItemId String?    @unique
+  replacesOrderItem   OrderItem? @relation("ItemReplacement", fields: [replacesOrderItemId], references: [id], onDelete: SetNull)
+  replacedBy          OrderItem? @relation("ItemReplacement")
   returnRequests ReturnRequest[]
   commission   OrderItemCommission?
 

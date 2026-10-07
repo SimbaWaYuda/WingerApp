@@ -618,6 +618,34 @@ class ApiClient {
     );
   }
 
+  Future<CustomerOrder> createReplacementOrder({
+    required String orderId,
+    required String itemId,
+    int? quantity,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .post(
+          _uri('/orders/$orderId/items/$itemId/replacement'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            if (quantity != null) 'quantity': quantity,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Replacement order failed (${response.statusCode})',
+      );
+    }
+    session.setApiOnline(true);
+    return customerOrderFromApi(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<CustomerOrder> updateOrderItemStatus({
     required String orderId,
     required String itemId,

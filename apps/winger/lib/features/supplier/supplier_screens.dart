@@ -107,6 +107,12 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
             delta: '${data?['lowStockCount'] ?? 0} ${s.t('lowStock')}',
             positive: ((data?['lowStockCount'] as num?)?.toInt() ?? 0) == 0,
           ),
+          KpiCardData(
+            label: s.t('openReturns'),
+            value: '${data?['openReturns'] ?? 0}',
+            delta: s.t('returnsOpen'),
+            positive: ((data?['openReturns'] as num?)?.toInt() ?? 0) == 0,
+          ),
         ];
 
         return ListView(
@@ -168,10 +174,10 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
               GridView.count(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: wide ? 4 : 2,
+                crossAxisCount: wide ? 5 : 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: wide ? 1.4 : 1.25,
+                childAspectRatio: wide ? 1.35 : 1.25,
                 children: [for (final kpi in kpis) KpiCard(data: kpi)],
               ),
               const SizedBox(height: 20),
@@ -192,6 +198,14 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                   FilledButton.tonal(
                     onPressed: () => context.go('/supplier/products'),
                     child: Text(s.t('products')),
+                  ),
+                  FilledButton.tonal(
+                    onPressed: () => context.go('/supplier/returns'),
+                    child: Text(
+                      ((data?['openReturns'] as num?)?.toInt() ?? 0) > 0
+                          ? '${s.t('returns')} (${data?['openReturns']})'
+                          : s.t('returns'),
+                    ),
                   ),
                   FilledButton.tonal(
                     onPressed: () => context.go('/supplier/payments'),
@@ -282,6 +296,61 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
     if (code == null) return false;
     // Legacy defaults looked like TRK-P-PULSEWATCH (product id only).
     return RegExp(r'^TRK-P-', caseSensitive: false).hasMatch(code);
+  }
+
+  Future<void> _createReplacement(
+    CustomerOrder order,
+    OrderItemRow item,
+  ) async {
+    final s = WingerStrings.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.t('createReplacement')),
+        content: Text(
+          s
+              .t('createReplacementConfirm')
+              .replaceAll('{product}', item.productName)
+              .replaceAll('{id}', order.id),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.t('back')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.t('createReplacement')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final replacement = await context.read<ApiClient>().createReplacementOrder(
+            orderId: order.id,
+            itemId: item.id,
+          );
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            s
+                .t('replacementCreated')
+                .replaceAll('{id}', replacement.id),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    }
   }
 
   Future<void> _updateItem({
@@ -483,65 +552,107 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                             const SizedBox(height: 4),
                             Text('${s.t('pickupCode')}: ${item.pickupCode}', style: TextStyle(color: WingerColors.muted)),
                           ],
+                          if (item.isReplacement &&
+                              item.replacesOrderId != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              s
+                                  .t('replacementForOrder')
+                                  .replaceAll('{id}', item.replacesOrderId!),
+                              style: const TextStyle(
+                                color: WingerColors.successInk,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                          if (item.status == OrderStatus.returned) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              s.t('returnedLineHint'),
+                              style: TextStyle(color: WingerColors.muted),
+                            ),
+                          ],
                           const SizedBox(height: 12),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
                             children: [
-                              OutlinedButton(
-                                onPressed: item.status == OrderStatus.delivered
-                                    ? null
-                                    : () => _openFulfillment(order, item),
-                                child: Text(s.t('fulfillment')),
-                              ),
-                              FilledButton(
-                                onPressed: item.status == OrderStatus.shipped ||
-                                        item.status == OrderStatus.delivered
-                                    ? null
-                                    : () => _updateItem(
-                                          order: order,
-                                          item: item,
-                                          status: OrderStatus.shipped,
-                                          trackingCode: _isProductScopedTracking(
-                                                    item.trackingCode,
-                                                  )
-                                              ? _defaultTrackingCode(order, item)
-                                              : (item.trackingCode ??
-                                                  _defaultTrackingCode(
-                                                    order,
-                                                    item,
-                                                  )),
-                                        ),
-                                child: Text(s.t('markShipped')),
-                              ),
-                              FilledButton.tonal(
-                                onPressed: item.status == OrderStatus.delivered
-                                    ? null
-                                    : item.status == OrderStatus.shipped ||
-                                            item.status ==
-                                                OrderStatus.readyForPickup
-                                        ? () => _updateItem(
-                                              order: order,
-                                              item: item,
-                                              status: OrderStatus.delivered,
-                                              collectPayment:
-                                                  order.paymentMode == 'cod' &&
-                                                      order.paymentStatus ==
-                                                          'PENDING',
-                                            )
-                                        : null,
-                                child: Text(s.t('markDelivered')),
-                              ),
-                              if (order.paymentMode == 'cod' &&
-                                  order.paymentStatus == 'PENDING')
-                                OutlinedButton(
-                                  onPressed: () => _updateItem(
-                                    order: order,
-                                    item: item,
-                                    collectPayment: true,
-                                  ),
-                                  child: Text(s.t('collectPayment')),
+                              if (item.status == OrderStatus.returned) ...[
+                                FilledButton(
+                                  onPressed: () =>
+                                      _createReplacement(order, item),
+                                  child: Text(s.t('createReplacement')),
                                 ),
+                                FilledButton.tonal(
+                                  onPressed: () =>
+                                      context.go('/supplier/returns'),
+                                  child: Text(s.t('returns')),
+                                ),
+                              ] else ...[
+                                OutlinedButton(
+                                  onPressed:
+                                      item.status == OrderStatus.delivered
+                                          ? null
+                                          : () =>
+                                              _openFulfillment(order, item),
+                                  child: Text(s.t('fulfillment')),
+                                ),
+                                FilledButton(
+                                  onPressed: item.status ==
+                                              OrderStatus.shipped ||
+                                          item.status == OrderStatus.delivered
+                                      ? null
+                                      : () => _updateItem(
+                                            order: order,
+                                            item: item,
+                                            status: OrderStatus.shipped,
+                                            trackingCode:
+                                                _isProductScopedTracking(
+                                              item.trackingCode,
+                                            )
+                                                    ? _defaultTrackingCode(
+                                                        order,
+                                                        item,
+                                                      )
+                                                    : (item.trackingCode ??
+                                                        _defaultTrackingCode(
+                                                          order,
+                                                          item,
+                                                        )),
+                                          ),
+                                  child: Text(s.t('markShipped')),
+                                ),
+                                FilledButton.tonal(
+                                  onPressed: item.status ==
+                                          OrderStatus.delivered
+                                      ? null
+                                      : item.status == OrderStatus.shipped ||
+                                              item.status ==
+                                                  OrderStatus.readyForPickup
+                                          ? () => _updateItem(
+                                                order: order,
+                                                item: item,
+                                                status: OrderStatus.delivered,
+                                                collectPayment: order
+                                                            .paymentMode ==
+                                                        'cod' &&
+                                                    order.paymentStatus ==
+                                                        'PENDING',
+                                              )
+                                          : null,
+                                  child: Text(s.t('markDelivered')),
+                                ),
+                                if (order.paymentMode == 'cod' &&
+                                    order.paymentStatus == 'PENDING')
+                                  OutlinedButton(
+                                    onPressed: () => _updateItem(
+                                      order: order,
+                                      item: item,
+                                      collectPayment: true,
+                                    ),
+                                    child: Text(s.t('collectPayment')),
+                                  ),
+                              ],
                             ],
                           ),
                         ],
@@ -641,13 +752,13 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
     final path = file.path;
     if (path == null || path.isEmpty) return;
 
-    late final List<Map<String, dynamic>> products;
+    late final ParsedProductCsv parsed;
     try {
       final bytes = await File(path).readAsBytes();
       if (bytes.isEmpty) {
         throw const FormatException('Could not read CSV file');
       }
-      products = parseProductCsv(decodeCsvBytes(bytes));
+      parsed = parseProductCsv(decodeCsvBytes(bytes));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -662,14 +773,20 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
       return;
     }
 
+    final products = parsed.products;
     final preview = products.take(5).map((p) => '• ${p['name']}').join('\n');
+    final parseNotes = parsed.rowErrors.isEmpty
+        ? ''
+        : '\n\n${s.t('importCsvSkipped').replaceAll('{n}', '${parsed.rowErrors.length}')}\n'
+            '${parsed.rowErrors.take(5).join('\n')}'
+            '${parsed.rowErrors.length > 5 ? '\n…' : ''}';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(s.t('importCsv')),
         content: Text(
           '${s.t('importCsvConfirm').replaceAll('{n}', '${products.length}')}\n\n$preview'
-          '${products.length > 5 ? '\n…' : ''}',
+          '${products.length > 5 ? '\n…' : ''}$parseNotes',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
@@ -684,18 +801,43 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
       final result = await context.read<ApiClient>().bulkImportProducts(products);
       if (!mounted) return;
       final created = result['createdCount'] as int? ?? 0;
+      final updated = result['updatedCount'] as int? ?? 0;
       final failed = result['errorCount'] as int? ?? 0;
+      final errors = (result['errors'] as List<dynamic>? ?? const [])
+          .cast<Map<String, dynamic>>();
       _reload();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            s
-                .t('importCsvResult')
-                .replaceAll('{ok}', '$created')
-                .replaceAll('{fail}', '$failed'),
+      final summary = s
+          .t('importCsvResult')
+          .replaceAll('{created}', '$created')
+          .replaceAll('{updated}', '$updated')
+          .replaceAll('{fail}', '$failed');
+      if (errors.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(summary)),
+        );
+      } else {
+        final errorLines = errors.take(8).map((e) {
+          final row = e['row'];
+          final name = e['name'];
+          final message = e['message'] ?? '';
+          return 'Row $row${name != null ? ' ($name)' : ''}: $message';
+        }).join('\n');
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(s.t('importCsv')),
+            content: Text(
+              '$summary\n\n$errorLines${errors.length > 8 ? '\n…' : ''}',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(s.t('back')),
+              ),
+            ],
           ),
-        ),
-      );
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -67,7 +67,17 @@ const RETURN_REASONS = new Set([
 ]);
 
 const orderWithItems = {
-  items: { include: { commission: true } },
+  items: {
+    include: {
+      commission: true,
+      replacesOrderItem: {
+        select: {
+          id: true,
+          order: { select: { displayId: true } },
+        },
+      },
+    },
+  },
 } as const;
 
 @Injectable()
@@ -589,6 +599,142 @@ export class OrdersService {
   }
 
   /**
+   * Create a no-charge replacement order for a RETURNED line.
+   * Stock is reserved again; customer is not re-charged; no new commission snapshot.
+   */
+  async createReplacementOrder(
+    orderId: string,
+    itemId: string,
+    user: AuthUser,
+    quantity?: number,
+  ) {
+    if (user.role !== UserRole.SUPPLIER && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException(
+        'Only suppliers or admins can create replacements',
+      );
+    }
+
+    const source = await this.prisma.orderItem.findUnique({
+      where: { id: itemId },
+      include: {
+        order: true,
+        product: true,
+        replacedBy: { select: { id: true, order: { select: { displayId: true } } } },
+      },
+    });
+    if (
+      !source ||
+      (source.orderId !== orderId && source.order.displayId !== orderId)
+    ) {
+      throw new NotFoundException('Order item not found');
+    }
+    if (
+      user.role === UserRole.SUPPLIER &&
+      source.supplierId !== user.supplierId
+    ) {
+      throw new ForbiddenException('Cannot replace another supplier item');
+    }
+    if (source.status !== OrderStatus.RETURNED) {
+      throw new BadRequestException(
+        'Only returned order lines can be replaced',
+      );
+    }
+    if (source.replacedBy) {
+      throw new BadRequestException(
+        `A replacement already exists (${source.replacedBy.order.displayId})`,
+      );
+    }
+
+    const qty =
+      quantity != null ? Math.floor(Number(quantity)) : source.quantity;
+    if (!Number.isFinite(qty) || qty < 1) {
+      throw new BadRequestException('quantity must be a positive integer');
+    }
+    if (qty > source.quantity) {
+      throw new BadRequestException(
+        `Replacement quantity cannot exceed original (${source.quantity})`,
+      );
+    }
+    if (source.product.stock < qty) {
+      throw new BadRequestException(
+        `Insufficient stock for ${source.product.name} (have ${source.product.stock}, need ${qty})`,
+      );
+    }
+
+    const unitPrice = source.product.price;
+    const lineTotal = new Prisma.Decimal(unitPrice).mul(qty);
+
+    const replacement = await this.prisma.$transaction(async (tx) => {
+      const count = await tx.order.count();
+      const displayId = `WG-${10025 + count}`;
+      const created = await tx.order.create({
+        data: {
+          displayId,
+          customerId: source.order.customerId,
+          customerName: source.order.customerName,
+          customerEmail: source.order.customerEmail,
+          status: OrderStatus.PROCESSING,
+          paymentStatus: PaymentStatus.PAID,
+          paymentMethod: 'replacement',
+          paymentMode: 'replacement',
+          currency: source.order.currency,
+          subtotal: lineTotal,
+          taxAmount: new Prisma.Decimal(0),
+          deliveryFee: new Prisma.Decimal(0),
+          total: lineTotal,
+          addressLine: source.order.addressLine,
+          city: source.order.city,
+          items: {
+            create: {
+              productId: source.productId,
+              productName: source.product.name,
+              supplierId: source.supplierId,
+              supplierName: source.supplierName,
+              unitPrice,
+              quantity: qty,
+              lineTotal,
+              status: OrderStatus.PROCESSING,
+              replacesOrderItemId: source.id,
+            },
+          },
+        },
+        include: orderWithItems,
+      });
+
+      const nextStock = source.product.stock - qty;
+      await tx.product.update({
+        where: { id: source.productId },
+        data: {
+          stock: nextStock,
+          stockStatus: stockStatusFor(nextStock),
+        },
+      });
+      await tx.inventoryLedger.create({
+        data: {
+          productId: source.productId,
+          supplierId: source.supplierId,
+          delta: -qty,
+          reason: 'REPLACEMENT_ORDER',
+          eventId: `replacement-${created.id}-${source.id}`,
+          userId: user.sub,
+          quantityAfter: nextStock,
+        },
+      });
+
+      return created;
+    });
+
+    return {
+      ...this.toResponse(
+        replacement,
+        `Replacement order ${replacement.displayId} created for ${source.order.displayId}`,
+      ),
+      replacesOrderId: source.order.displayId,
+      replacesOrderItemId: source.id,
+    };
+  }
+
+  /**
    * Supplier/admin review of a return request.
    * APPROVED marks the line RETURNED and restores stock for the returned qty.
    * Payment refund remains manual until commission rules are approved.
@@ -915,7 +1061,25 @@ export class OrdersService {
       throw new ForbiddenException('Cannot update another supplier item');
     }
 
+    if (
+      item.status === OrderStatus.RETURNED ||
+      item.status === OrderStatus.CANCELLED
+    ) {
+      throw new BadRequestException(
+        `Cannot fulfill a ${item.status.toLowerCase()} order line`,
+      );
+    }
+
     const nextItemStatus = dto.status ?? item.status;
+    if (
+      nextItemStatus === OrderStatus.RETURNED ||
+      nextItemStatus === OrderStatus.CANCELLED
+    ) {
+      throw new BadRequestException(
+        'Use the returns workflow to mark items as returned',
+      );
+    }
+
     await this.prisma.orderItem.update({
       where: { id: item.id },
       data: {
@@ -1051,6 +1215,11 @@ export class OrdersService {
         status: OrderStatus;
         trackingCode: string | null;
         pickupCode: string | null;
+        replacesOrderItemId?: string | null;
+        replacesOrderItem?: {
+          id: string;
+          order: { displayId: string };
+        } | null;
         commission?: {
           ratePercent: Prisma.Decimal;
           commissionBase: Prisma.Decimal;
@@ -1094,6 +1263,8 @@ export class OrdersService {
         status: item.status,
         trackingCode: item.trackingCode,
         pickupCode: item.pickupCode,
+        replacesOrderItemId: item.replacesOrderItemId ?? null,
+        replacesOrderId: item.replacesOrderItem?.order.displayId ?? null,
         commission: item.commission
           ? {
               ratePercent: Number(item.commission.ratePercent),

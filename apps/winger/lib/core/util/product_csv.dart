@@ -55,10 +55,17 @@ String decodeCsvBytes(List<int> bytes) {
   }
 }
 
-List<Map<String, dynamic>> parseProductCsv(String raw) {
+class ParsedProductCsv {
+  const ParsedProductCsv({required this.products, required this.rowErrors});
+
+  final List<Map<String, dynamic>> products;
+  final List<String> rowErrors;
+}
+
+ParsedProductCsv parseProductCsv(String raw) {
   final normalized = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
   if (normalized.isEmpty) {
-    throw FormatException('CSV file is empty');
+    throw const FormatException('CSV file is empty');
   }
   final lines = normalized
       .split('\n')
@@ -66,17 +73,18 @@ List<Map<String, dynamic>> parseProductCsv(String raw) {
       .where((line) => line.trim().isNotEmpty)
       .toList();
   if (lines.length < 2) {
-    throw FormatException('CSV needs a header row and at least one product row');
+    throw const FormatException('CSV needs a header row and at least one product row');
   }
 
   final headers = _splitCsvLine(lines.first)
       .map((h) => h.trim().toLowerCase())
       .toList();
   if (!headers.contains('name') || !headers.contains('price')) {
-    throw FormatException('CSV must include name and price columns');
+    throw const FormatException('CSV must include name and price columns');
   }
 
   final products = <Map<String, dynamic>>[];
+  final rowErrors = <String>[];
   for (var i = 1; i < lines.length; i++) {
     final cells = _splitCsvLine(lines[i]);
     String cell(String key) {
@@ -88,13 +96,15 @@ List<Map<String, dynamic>> parseProductCsv(String raw) {
     final name = cell('name');
     final price = double.tryParse(cell('price'));
     if (name.isEmpty || price == null) {
-      throw FormatException('Row ${i + 1}: name and numeric price are required');
+      rowErrors.add('Row ${i + 1}: name and numeric price are required');
+      continue;
     }
 
     final stockRaw = cell('stock');
     final stock = stockRaw.isEmpty ? 0 : int.tryParse(stockRaw);
     if (stock == null || stock < 0) {
-      throw FormatException('Row ${i + 1}: stock must be a non-negative integer');
+      rowErrors.add('Row ${i + 1}: stock must be a non-negative integer');
+      continue;
     }
 
     products.add({
@@ -113,10 +123,16 @@ List<Map<String, dynamic>> parseProductCsv(String raw) {
     });
   }
 
-  if (products.length > 100) {
-    throw FormatException('Import at most 100 products at a time');
+  if (products.isEmpty) {
+    final detail = rowErrors.isEmpty
+        ? 'No valid product rows found'
+        : rowErrors.take(5).join('\n');
+    throw FormatException(detail);
   }
-  return products;
+  if (products.length > 100) {
+    throw const FormatException('Import at most 100 products at a time');
+  }
+  return ParsedProductCsv(products: products, rowErrors: rowErrors);
 }
 
 List<String> _splitCsvLine(String line) {

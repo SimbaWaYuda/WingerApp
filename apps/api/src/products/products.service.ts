@@ -9,6 +9,7 @@ import {
   CommissionRecognitionStatus,
   OrderStatus,
   Prisma,
+  ReturnRequestStatus,
   StockStatus,
   UserRole,
 } from '@prisma/client';
@@ -283,33 +284,42 @@ export class ProductsService {
     });
     if (!supplier) throw new NotFoundException('Supplier not found');
 
-    const [productCount, lowStockCount, items, commissions] = await Promise.all([
-      this.prisma.product.count({ where: { supplierId } }),
-      this.prisma.product.count({
-        where: { supplierId, stock: { lte: 5 } },
-      }),
-      this.prisma.orderItem.findMany({
-        where: {
-          supplierId,
-          status: { not: OrderStatus.CANCELLED },
-        },
-        select: {
-          quantity: true,
-          lineTotal: true,
-          status: true,
-        },
-      }),
-      this.prisma.orderItemCommission.findMany({
-        where: {
-          isDemo: false,
-          orderItem: { supplierId },
-        },
-        select: {
-          commissionAmount: true,
-          status: true,
-        },
-      }),
-    ]);
+    const [productCount, lowStockCount, items, commissions, openReturns] =
+      await Promise.all([
+        this.prisma.product.count({ where: { supplierId } }),
+        this.prisma.product.count({
+          where: { supplierId, stock: { lte: 5 } },
+        }),
+        this.prisma.orderItem.findMany({
+          where: {
+            supplierId,
+            status: { not: OrderStatus.CANCELLED },
+          },
+          select: {
+            quantity: true,
+            lineTotal: true,
+            status: true,
+          },
+        }),
+        this.prisma.orderItemCommission.findMany({
+          where: {
+            isDemo: false,
+            orderItem: { supplierId },
+          },
+          select: {
+            commissionAmount: true,
+            status: true,
+          },
+        }),
+        this.prisma.returnRequest.count({
+          where: {
+            orderItem: { supplierId },
+            status: {
+              in: [ReturnRequestStatus.REQUESTED, ReturnRequestStatus.IN_REVIEW],
+            },
+          },
+        }),
+      ]);
 
     let openLines = 0;
     let shippedLines = 0;
@@ -354,6 +364,7 @@ export class ProductsService {
       grossSales: round(grossSales),
       pendingCommission: round(pendingCommission),
       settleableCommission: round(settleableCommission),
+      openReturns,
       ratingAvg: supplier.ratingAvg,
       ratingCount: supplier.ratingCount,
     };
@@ -386,24 +397,64 @@ export class ProductsService {
     }
 
     const created: { row: number; id: string; name: string }[] = [];
-    const errors: { row: number; message: string }[] = [];
+    const updated: { row: number; id: string; name: string }[] = [];
+    const errors: { row: number; name?: string; message: string }[] = [];
 
     for (let i = 0; i < items.length; i++) {
       const row = i + 1;
+      const dto = items[i] ?? {};
+      const rowName = dto.name?.trim();
       try {
-        const product = await this.createForSupplier(items[i] ?? {}, user);
-        created.push({ row, id: product.id, name: product.name });
+        const existing = await this.findBulkMatch(user.supplierId!, dto);
+        if (existing) {
+          const product = await this.updateForSupplier(existing.id, dto, user);
+          updated.push({ row, id: product.id, name: product.name });
+        } else {
+          const product = await this.createForSupplier(dto, user);
+          created.push({ row, id: product.id, name: product.name });
+        }
       } catch (error) {
-        errors.push({ row, message: nestErrorMessage(error) });
+        errors.push({
+          row,
+          name: rowName || undefined,
+          message: nestErrorMessage(error),
+        });
       }
     }
 
     return {
       createdCount: created.length,
+      updatedCount: updated.length,
       errorCount: errors.length,
       created,
+      updated,
       errors,
     };
+  }
+
+  /** Match CSV row to an existing catalogue item by model, then name. */
+  private async findBulkMatch(
+    supplierId: string,
+    dto: UpsertSupplierProductDto,
+  ) {
+    const model = dto.model?.trim();
+    if (model) {
+      const byModel = await this.prisma.product.findFirst({
+        where: {
+          supplierId,
+          model: { equals: model, mode: 'insensitive' },
+        },
+      });
+      if (byModel) return byModel;
+    }
+    const name = dto.name?.trim();
+    if (!name) return null;
+    return this.prisma.product.findFirst({
+      where: {
+        supplierId,
+        name: { equals: name, mode: 'insensitive' },
+      },
+    });
   }
 
   async createForSupplier(dto: UpsertSupplierProductDto, user: AuthUser) {

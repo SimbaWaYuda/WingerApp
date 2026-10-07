@@ -19,16 +19,15 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
   Future<List<OrderReturnRequest>>? _future;
   String? _busyId;
 
-  static const _openStatuses = 'REQUESTED,IN_REVIEW';
-  static const _closedStatuses = 'APPROVED,REJECTED,CLOSED';
+  static const _openStatuses = {'REQUESTED', 'IN_REVIEW'};
+  static const _closedStatuses = {'APPROVED', 'REJECTED', 'CLOSED'};
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
     _tabs.addListener(() {
-      if (_tabs.indexIsChanging) return;
-      setState(() => _future = _load());
+      if (!_tabs.indexIsChanging) setState(() {});
     });
   }
 
@@ -44,17 +43,19 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
     super.dispose();
   }
 
-  String get _statusFilter =>
-      _tabs.index == 0 ? _openStatuses : _closedStatuses;
-
   Future<List<OrderReturnRequest>> _load() {
-    return context.read<ApiClient>().fetchReturnsInbox(status: _statusFilter);
+    return context.read<ApiClient>().fetchReturnsInbox();
   }
 
   Future<void> _reload() async {
     final next = _load();
     setState(() => _future = next);
     await next;
+  }
+
+  List<OrderReturnRequest> _filterRows(List<OrderReturnRequest> all) {
+    final wanted = _tabs.index == 0 ? _openStatuses : _closedStatuses;
+    return all.where((row) => wanted.contains(row.status)).toList();
   }
 
   String _reasonLabel(WingerStrings s, String reason) {
@@ -119,6 +120,65 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
     return ok == true;
   }
 
+  Future<void> _createReplacement(OrderReturnRequest request) async {
+    final s = WingerStrings.of(context);
+    final orderId = request.orderId;
+    if (orderId == null || orderId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s.t('replacementMissingOrder'))),
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.t('createReplacement')),
+        content: Text(
+          s
+              .t('createReplacementConfirm')
+              .replaceAll('{product}', request.productName)
+              .replaceAll('{id}', orderId),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.t('back')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.t('createReplacement')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _busyId = request.id);
+    try {
+      final replacement = await context.read<ApiClient>().createReplacementOrder(
+            orderId: orderId,
+            itemId: request.orderItemId,
+            quantity: request.quantity,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            s.t('replacementCreated').replaceAll('{id}', replacement.id),
+          ),
+        ),
+      );
+      await _reload();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _busyId = null);
+    }
+  }
+
   Future<void> _setStatus(OrderReturnRequest request, String status) async {
     final s = WingerStrings.of(context);
     if (status == 'APPROVED') {
@@ -155,45 +215,52 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                s.t('returns'),
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                s.t('returnsInboxHint'),
-                style: TextStyle(color: WingerColors.muted),
-              ),
-              const SizedBox(height: 12),
-              TabBar(
-                controller: _tabs,
-                labelColor: WingerColors.brand,
-                unselectedLabelColor: WingerColors.muted,
-                indicatorColor: WingerColors.brand,
-                tabs: [
-                  Tab(text: s.t('returnsOpen')),
-                  Tab(text: s.t('returnsClosed')),
+    return FutureBuilder<List<OrderReturnRequest>>(
+      future: future,
+      builder: (context, snapshot) {
+        final all = snapshot.data ?? const <OrderReturnRequest>[];
+        final openCount =
+            all.where((r) => _openStatuses.contains(r.status)).length;
+        final closedCount =
+            all.where((r) => _closedStatuses.contains(r.status)).length;
+        final rows = _filterRows(all);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    s.t('returns'),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    s.t('returnsInboxHint'),
+                    style: TextStyle(color: WingerColors.muted),
+                  ),
+                  const SizedBox(height: 12),
+                  TabBar(
+                    controller: _tabs,
+                    labelColor: WingerColors.brand,
+                    unselectedLabelColor: WingerColors.muted,
+                    indicatorColor: WingerColors.brand,
+                    onTap: (_) => setState(() {}),
+                    tabs: [
+                      Tab(text: '${s.t('returnsOpen')} ($openCount)'),
+                      Tab(text: '${s.t('returnsClosed')} ($closedCount)'),
+                    ],
+                  ),
                 ],
               ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: FutureBuilder<List<OrderReturnRequest>>(
-            future: future,
-            builder: (context, snapshot) {
-              final rows = snapshot.data ?? const <OrderReturnRequest>[];
-              return RefreshIndicator(
+            ),
+            Expanded(
+              child: RefreshIndicator(
                 onRefresh: _reload,
                 child: ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
@@ -213,7 +280,9 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                       )
                     else if (rows.isEmpty)
                       Text(
-                        s.t('returnsEmpty'),
+                        _tabs.index == 0
+                            ? s.t('returnsOpenEmpty')
+                            : s.t('returnsClosedEmpty'),
                         style: TextStyle(color: WingerColors.muted),
                       )
                     else
@@ -300,8 +369,29 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                                       ),
                                     ],
                                   ),
-                                ] else if (request.status == 'APPROVED' ||
-                                    request.status == 'REJECTED') ...[
+                                ] else if (request.status == 'APPROVED') ...[
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      FilledButton(
+                                        onPressed: _busyId == request.id
+                                            ? null
+                                            : () =>
+                                                _createReplacement(request),
+                                        child: Text(s.t('createReplacement')),
+                                      ),
+                                      TextButton(
+                                        onPressed: _busyId == request.id
+                                            ? null
+                                            : () =>
+                                                _setStatus(request, 'CLOSED'),
+                                        child: Text(s.t('returnClose')),
+                                      ),
+                                    ],
+                                  ),
+                                ] else if (request.status == 'REJECTED') ...[
                                   const SizedBox(height: 10),
                                   TextButton(
                                     onPressed: _busyId == request.id
@@ -317,11 +407,11 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                         ),
                   ],
                 ),
-              );
-            },
-          ),
-        ),
-      ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
