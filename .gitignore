@@ -13,6 +13,8 @@ apps/api/node_modules/
 apps/api/dist/
 apps/api/coverage/
 apps/api/.pgdata/
+apps/api/.uploads/
+apps/api/uploads/
 **/.env
 **/.env.local
 **/.env.*.local

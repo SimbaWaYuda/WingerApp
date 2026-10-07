@@ -546,8 +546,8 @@ export class OrdersService {
     return this.toReturnResponse(created);
   }
 
-  /** Supplier/admin inbox of return requests. */
-  async listReturnsInbox(user: AuthUser) {
+  /** Supplier/admin inbox of return requests. Optional `status` CSV filter. */
+  async listReturnsInbox(user: AuthUser, statusCsv?: string) {
     if (user.role !== UserRole.SUPPLIER && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Only suppliers or admins can list returns');
     }
@@ -555,11 +555,23 @@ export class OrdersService {
       throw new ForbiddenException('Supplier account is not linked');
     }
 
+    const statuses = (statusCsv ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean) as ReturnRequestStatus[];
+    for (const status of statuses) {
+      if (!Object.values(ReturnRequestStatus).includes(status)) {
+        throw new BadRequestException(`Invalid return status: ${status}`);
+      }
+    }
+
     const rows = await this.prisma.returnRequest.findMany({
-      where:
-        user.role === UserRole.SUPPLIER
+      where: {
+        ...(user.role === UserRole.SUPPLIER
           ? { orderItem: { supplierId: user.supplierId! } }
-          : undefined,
+          : {}),
+        ...(statuses.length ? { status: { in: statuses } } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: {

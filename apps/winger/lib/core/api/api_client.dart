@@ -572,9 +572,12 @@ class ApiClient {
     session.setApiOnline(true);
   }
 
-  Future<List<OrderReturnRequest>> fetchReturnsInbox() async {
+  Future<List<OrderReturnRequest>> fetchReturnsInbox({String? status}) async {
+    final uri = status != null && status.trim().isNotEmpty
+        ? _uri('/orders/returns').replace(queryParameters: {'status': status.trim()})
+        : _uri('/orders/returns');
     final response = await http
-        .get(_uri('/orders/returns'), headers: session.authHeaders)
+        .get(uri, headers: session.authHeaders)
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
       final body = _tryJson(response.body);

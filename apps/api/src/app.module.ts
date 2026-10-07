@@ -9,10 +9,12 @@ import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { ReviewsModule } from './reviews/reviews.module';
+import { StorageModule } from './storage/storage.module';
 import { SyncModule } from './sync/sync.module';
 
 @Module({
   imports: [
+    StorageModule,
     PrismaModule,
     AuthModule,
     ProductsModule,

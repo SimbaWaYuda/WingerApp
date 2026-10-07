@@ -3,6 +3,8 @@ dist
 coverage
 .env
 .pgdata
+.uploads/
 *.log
+uploads/
 uploads/products/**
 !uploads/.gitkeep

@@ -22,12 +22,15 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
     "db:pg": "ts-node --transpile-only scripts/start-embedded-pg.ts",
-    "db:setup": "prisma migrate dev --name init --skip-seed && prisma db seed"
+    "db:setup": "prisma migrate dev --name init --skip-seed && prisma db seed",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "dev:api": "concurrently -k -n pg,api -c magenta,cyan \"npm run db:pg\" \"wait-on tcp:5433 && nest start --watch\""
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1147.0",
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/jwt": "^10.2.0",
@@ -53,6 +56,7 @@
     "@types/supertest": "^6.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "concurrently": "^10.0.5",
     "embedded-postgres": "^18.4.0-beta.17",
     "eslint": "^8.0.0",
     "eslint-config-prettier": "^9.0.0",
@@ -66,7 +70,8 @@
     "ts-loader": "^9.4.3",
     "ts-node": "^10.9.1",
     "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.1.3"
+    "typescript": "^5.1.3",
+    "wait-on": "^9.5.1"
   },
   "jest": {
     "moduleFileExtensions": [

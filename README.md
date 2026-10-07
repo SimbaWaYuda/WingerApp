@@ -16,7 +16,7 @@ One connected marketplace with three role-based experiences:
 | API | NestJS (TypeScript) |
 | Database (next) | PostgreSQL |
 | Cache/jobs (next) | Redis |
-| Files (next) | S3-compatible |
+| Files | Local `UPLOAD_DIR` or S3-compatible (`STORAGE_DRIVER`) |
 | Payments (next) | Stripe |
 
 ### Offline model
@@ -26,6 +26,12 @@ One connected marketplace with three role-based experiences:
 - Top bar shows `API: Online/Offline` and `Sync N` pending events
 - Supplier → Products → **Receive +20** writes SQLite immediately and syncs when the API is back
 
+### Product images
+
+- Default: local files under `UPLOAD_DIR` (or `apps/api/uploads`), served at `/uploads/`
+- `scripts/dev.ps1` stores uploads in `%USERPROFILE%\WingerData\uploads` so they survive repo cleans
+- Optional S3-compatible storage: set `STORAGE_DRIVER=s3` plus `S3_BUCKET`, `S3_PUBLIC_BASE_URL`, credentials (see `apps/api/.env.example`)
+
 ## Repo layout
 
 ```
@@ -33,12 +39,31 @@ apps/
   winger/   # Flutter UI
   api/      # NestJS API
 design/     # Figma/export references
+scripts/    # Windows one-command local stack
 docker-compose.yml
 ```
 
 ## Run locally
 
-### 1. Database (PostgreSQL)
+### Quick start (Windows)
+
+From the repo root (first run may take a few minutes):
+
+```powershell
+.\scripts\dev.ps1                 # Postgres + API + Flutter Windows
+.\scripts\dev.ps1 -Device chrome  # Flutter on Chrome
+.\scripts\dev.ps1 -SetupDb        # force migrate + seed
+.\scripts\dev.ps1 -SkipFlutter    # API stack only
+```
+
+Or API-only in one terminal:
+
+```bash
+cd apps/api
+npm run dev:api    # embedded Postgres + Nest watch
+```
+
+### 1. Database (PostgreSQL) — manual
 
 **Option A — embedded Postgres (no Docker):**
 
@@ -46,7 +71,8 @@ docker-compose.yml
 cd apps/api
 npm run db:pg          # keep this terminal open (port 5433)
 # new terminal:
-npm run db:setup       # migrate + seed
+npm run db:setup       # migrate + seed (first time)
+# or: npm run db:migrate:deploy && npm run prisma:seed
 ```
 
 **Option B — Docker:**
@@ -58,7 +84,7 @@ cd apps/api
 npm run db:setup
 ```
 
-### 2. API
+### 2. API — manual
 
 ```bash
 cd apps/api
@@ -72,7 +98,7 @@ Sync: `POST /sync/events` · `GET /sync/events` (inventory deltas applied in Pos
 
 The Flutter app falls back to local SQLite cache if the API is offline.
 
-### 2. Flutter UI
+### 3. Flutter UI — manual
 
 ```bash
 cd apps/winger

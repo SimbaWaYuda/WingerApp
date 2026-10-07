@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { join } from 'path';
 import { AppModule } from './app.module';
+import { getLocalUploadRoot, storageDriver } from './storage/upload-paths';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -10,9 +10,14 @@ async function bootstrap() {
     origin: true,
     credentials: true,
   });
-  app.useStaticAssets(join(process.cwd(), 'uploads'), {
-    prefix: '/uploads/',
-  });
+  if (storageDriver() === 'local') {
+    const uploadRoot = getLocalUploadRoot();
+    app.useStaticAssets(uploadRoot, {
+      prefix: '/uploads/',
+    });
+    // eslint-disable-next-line no-console
+    console.log(`Serving uploads from ${uploadRoot}`);
+  }
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);
   // eslint-disable-next-line no-console

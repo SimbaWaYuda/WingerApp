@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { OrderStatus, UserRole } from '@prisma/client';
@@ -48,8 +49,11 @@ export class OrdersController {
 
   @Get('returns')
   @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
-  listReturns(@CurrentUser() user: AuthUser) {
-    return this.ordersService.listReturnsInbox(user);
+  listReturns(
+    @CurrentUser() user: AuthUser,
+    @Query('status') status?: string,
+  ) {
+    return this.ordersService.listReturnsInbox(user, status);
   }
 
   @Patch('returns/:returnId')

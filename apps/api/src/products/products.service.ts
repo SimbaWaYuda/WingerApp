@@ -13,10 +13,10 @@ import {
   UserRole,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { promises as fs } from 'fs';
-import { join, extname } from 'path';
+import { extname } from 'path';
 import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 
 const MAX_PRODUCT_IMAGES = 8;
 /** Empty cover — clients show a neutral “no photo” tile (never a fake product shot). */
@@ -137,7 +137,10 @@ export type ProductBrowseResult = {
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   /** Backward-compatible list used by existing clients. */
   async findAll(query?: string): Promise<ProductDto[]> {
@@ -562,9 +565,6 @@ export class ProductsService {
       );
     }
 
-    const uploadDir = join(process.cwd(), 'uploads', 'products', productId);
-    await fs.mkdir(uploadDir, { recursive: true });
-
     let sortOrder = existingCount;
     const createdUrls: string[] = [];
     for (const file of files) {
@@ -572,8 +572,12 @@ export class ProductsService {
       const ext = extensionForUpload(file);
       const imageId = randomUUID();
       const filename = `${imageId}${ext}`;
-      await fs.writeFile(join(uploadDir, filename), file.buffer);
-      const url = `/uploads/products/${productId}/${filename}`;
+      const url = await this.storage.putProductImage(
+        productId,
+        filename,
+        file.buffer,
+        file.mimetype || 'application/octet-stream',
+      );
       await this.prisma.productImage.create({
         data: {
           id: imageId,
@@ -610,7 +614,7 @@ export class ProductsService {
     }
 
     await this.prisma.productImage.delete({ where: { id: imageId } });
-    await maybeDeleteLocalUpload(image.url);
+    await this.storage.deleteStoredUrl(image.url);
 
     const remaining = await this.prisma.productImage.findMany({
       where: { productId },
@@ -953,17 +957,6 @@ function extensionForUpload(file: UploadedProductFile): string {
       return '.bmp';
     default:
       return '.jpg';
-  }
-}
-
-async function maybeDeleteLocalUpload(url: string) {
-  if (!url.startsWith('/uploads/')) return;
-  const relative = url.replace(/^\//, '');
-  const fullPath = join(process.cwd(), relative);
-  try {
-    await fs.unlink(fullPath);
-  } catch {
-    // File may already be gone; ignore.
   }
 }
 
