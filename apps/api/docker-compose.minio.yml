@@ -4,7 +4,9 @@
 #   .\scripts\minio-smoke.ps1
 services:
   minio:
-    image: minio/minio:latest
+    # Official minio/minio is often blocked on Docker Hub; this image works for local smoke.
+    image: cleanstart/minio:latest
+    user: "0:0"
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
