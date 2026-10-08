@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
-import '../../core/data/mock_catalog.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
 import '../../core/repositories/catalog_repository.dart';
@@ -314,12 +313,22 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
     return FutureBuilder(
       future: Future.wait([_products, _categories]),
       builder: (context, snapshot) {
-        final products = snapshot.data != null
-            ? snapshot.data![0] as List<Product>
-            : MockCatalog.products;
-        final categories = snapshot.data != null
-            ? snapshot.data![1] as List<CatalogCategory>
-            : <CatalogCategory>[];
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError || snapshot.data == null) {
+          return ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Text(
+                snapshot.error?.toString().replaceFirst('Exception: ', '') ?? s.t('noProducts'),
+                style: const TextStyle(color: WingerColors.dangerInk),
+              ),
+            ],
+          );
+        }
+        final products = snapshot.data![0] as List<Product>;
+        final categories = snapshot.data![1] as List<CatalogCategory>;
         final featured = [...products]..sort((a, b) => b.rating.compareTo(a.rating));
         final deals = products
             .where((p) => p.previousPrice != null && p.previousPrice! > p.price)
@@ -425,6 +434,12 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
                 ],
               ),
             ],
+            if (products.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: Text(s.t('noProducts'), style: TextStyle(color: WingerColors.muted)),
+              )
+            else ...[
             if (deals.isNotEmpty) ...[
               const SizedBox(height: 24),
               Text(
@@ -496,6 +511,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
               ),
               const SizedBox(height: 10),
               _productStrip(products: wishlisted, wide: wide, session: session),
+            ],
             ],
           ],
         );
@@ -1605,7 +1621,7 @@ enum _DeliveryOption { express, standard, pickup }
 
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
   int qty = 1;
-  late Future<Product> _future;
+  late Future<Product?> _future;
   Future<List<Product>>? _relatedFuture;
   Future<SupplierProfile>? _supplierFuture;
   _DeliveryOption? _delivery;
@@ -1625,7 +1641,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     _future = context.read<CatalogRepository>().getProduct(widget.productId);
     unawaited(_recordView());
     _future.then((product) {
-      if (!mounted) return;
+      if (!mounted || product == null) return;
       final catalog = context.read<CatalogRepository>();
       setState(() {
         _supplierFuture = catalog.getSupplierProfile(product.supplierId);
@@ -1728,10 +1744,32 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final session = context.watch<AppSession>();
     final selected = _delivery ?? _DeliveryOption.standard;
 
-    return FutureBuilder(
+    return FutureBuilder<Product?>(
       future: _future,
       builder: (context, snapshot) {
-        final product = snapshot.data ?? MockCatalog.byId(widget.productId);
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final product = snapshot.data;
+        if (snapshot.hasError || product == null) {
+          return ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => context.go('/customer'),
+                  icon: const Icon(Icons.arrow_back),
+                  label: Text(s.t('home')),
+                ),
+              ),
+              Text(
+                s.t('productNotFound'),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ],
+          );
+        }
         return FutureBuilder<List<Product>>(
           future: _relatedFuture,
           builder: (context, relatedSnap) {
@@ -2244,7 +2282,8 @@ class _CompareScreenState extends State<CompareScreen> {
     final catalog = context.read<CatalogRepository>();
     final products = <Product>[];
     for (final id in session.compareIds) {
-      products.add(await catalog.getProduct(id));
+      final product = await catalog.getProduct(id);
+      if (product != null) products.add(product);
     }
     return products;
   }

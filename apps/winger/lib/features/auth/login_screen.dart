@@ -42,7 +42,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _continue() async {
-    final session = context.read<AppSession>();
     final api = context.read<ApiClient>();
     setState(() {
       _busy = true;
@@ -62,25 +61,13 @@ class _LoginScreenState extends State<LoginScreen> {
         UserRole.admin => '/admin',
       });
     } catch (error) {
-      // Only fall back to local shell when the API is unreachable.
-      // Commission/returns need a real JWT — local mode has no Bearer token.
       final apiReachable = await api.healthCheck();
       if (!mounted) return;
-      if (apiReachable) {
-        setState(() {
-          _error = error.toString().replaceFirst('Exception: ', '');
-        });
-        return;
-      }
-      session.signInLocal(_role, mail: _email.text.trim());
+      final s = WingerStrings.of(context);
       setState(() {
-        _error =
-            'API offline — continuing in local demo mode (Payments/Commission need API login).\n$error';
-      });
-      context.go(switch (_role) {
-        UserRole.customer => '/customer',
-        UserRole.supplier => '/supplier',
-        UserRole.admin => '/admin',
+        _error = apiReachable
+            ? error.toString().replaceFirst('Exception: ', '')
+            : s.t('apiOffline');
       });
     } finally {
       if (mounted) setState(() => _busy = false);

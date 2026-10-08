@@ -1,5 +1,4 @@
 import '../api/api_client.dart';
-import '../data/mock_catalog.dart';
 import '../models/models.dart';
 import '../offline/offline_database.dart';
 import '../offline/sync_engine.dart';
@@ -16,15 +15,7 @@ class CatalogRepository {
   final SyncEngine syncEngine;
 
   Future<void> seedIfEmpty() async {
-    if (await db.productCount() > 0) return;
-    await db.upsertProducts(MockCatalog.products);
-    for (final product in MockCatalog.products) {
-      await db.upsertInventory(
-        productId: product.id,
-        supplierId: product.supplierId,
-        quantity: product.stock,
-      );
-    }
+    // Catalogue comes from the API and is cached on the phone after a successful fetch.
   }
 
   Future<List<Product>> getProducts({String query = ''}) async {
@@ -239,7 +230,7 @@ class CatalogRepository {
     return copy;
   }
 
-  Future<Product> getProduct(String id) async {
+  Future<Product?> getProduct(String id) async {
     try {
       final remote = await api.fetchProduct(id);
       await db.upsertProducts([remote]);
@@ -250,7 +241,7 @@ class CatalogRepository {
       );
       return remote;
     } catch (_) {
-      return await db.getProduct(id) ?? MockCatalog.byId(id);
+      return db.getProduct(id);
     }
   }
 

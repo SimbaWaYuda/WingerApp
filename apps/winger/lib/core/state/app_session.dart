@@ -285,28 +285,6 @@ class AppSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Offline/demo fallback when API auth is unavailable.
-  void signInLocal(UserRole selected, {String? name, String? mail}) {
-    role = selected;
-    accessToken = null;
-    if (mail != null && mail.isNotEmpty) email = mail;
-    switch (selected) {
-      case UserRole.customer:
-        displayName = name?.isNotEmpty == true ? name! : 'Amina Mwangi';
-        userId = 'user-amina';
-        supplierId = null;
-      case UserRole.supplier:
-        displayName = name?.isNotEmpty == true ? name! : 'John Doe';
-        userId = 'user-supplier-john';
-        supplierId = 's-kijani';
-      case UserRole.admin:
-        displayName = name?.isNotEmpty == true ? name! : 'Winger Admin';
-        userId = 'user-admin';
-        supplierId = null;
-    }
-    notifyListeners();
-  }
-
   void signOut() {
     role = null;
     accessToken = null;
