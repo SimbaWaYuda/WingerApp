@@ -21,6 +21,7 @@ dependencies:
   sqlite3: ^2.9.4
   sqlite3_flutter_libs: ^0.5.42
   file_picker: ^13.1.0
+  flutter_svg: ^2.2.1
 
 dev_dependencies:
   flutter_test:
@@ -29,3 +30,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/branding/winger-logo.svg
