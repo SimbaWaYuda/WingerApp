@@ -26,6 +26,7 @@ List<ShellDestination> adminDestinations({int returnsAttention = 0}) => [
   ),
   const ShellDestination(labelKey: 'commission', icon: Icons.percent_outlined, path: '/admin/commissions'),
   const ShellDestination(labelKey: 'delivery', icon: Icons.local_shipping_outlined, path: '/admin/delivery'),
+  const ShellDestination(labelKey: 'currencies', icon: Icons.currency_exchange, path: '/admin/currencies'),
 ];
 
 class AdminShell extends StatefulWidget {
@@ -676,6 +677,343 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
           ],
         );
       },
+    );
+  }
+}
+
+class AdminCurrencyScreen extends StatefulWidget {
+  const AdminCurrencyScreen({super.key});
+
+  @override
+  State<AdminCurrencyScreen> createState() => _AdminCurrencyScreenState();
+}
+
+class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
+  final _settlement = TextEditingController();
+  final _maxAgeHours = TextEditingController();
+  final _newDisplay = TextEditingController();
+  final _newQuote = TextEditingController();
+  final _newRate = TextEditingController();
+  final Map<String, TextEditingController> _rateFields = {};
+
+  List<String> _display = [];
+  List<String> _payment = [];
+  List<Map<String, dynamic>> _rates = [];
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _settlement.dispose();
+    _maxAgeHours.dispose();
+    _newDisplay.dispose();
+    _newQuote.dispose();
+    _newRate.dispose();
+    for (final field in _rateFields.values) {
+      field.dispose();
+    }
+    super.dispose();
+  }
+
+  List<String> _codes(dynamic value) {
+    if (value is! List) return [];
+    return value.map((item) => item.toString().toUpperCase()).toList();
+  }
+
+  void _apply(Map<String, dynamic> config, List<Map<String, dynamic>> rates) {
+    final settlement = (config['settlementCurrency'] as String? ?? 'USD').toUpperCase();
+    final seconds = (config['fxMaxAgeSeconds'] as num?)?.toInt() ?? 86400;
+    final hours = seconds / 3600;
+    _settlement.text = settlement;
+    _maxAgeHours.text = hours == hours.roundToDouble()
+        ? hours.toStringAsFixed(0)
+        : hours.toStringAsFixed(1);
+    _display = _codes(config['supportedDisplayCurrencies']);
+    _payment = _codes(config['supportedPaymentCurrencies']);
+    if (!_display.contains(settlement)) _display.insert(0, settlement);
+    if (!_payment.contains(settlement)) _payment.insert(0, settlement);
+    for (final field in _rateFields.values) {
+      field.dispose();
+    }
+    _rateFields.clear();
+    for (final row in rates) {
+      final quote = (row['quoteCurrency'] as String? ?? '').toUpperCase();
+      final rate = row['rate'];
+      _rateFields[quote] = TextEditingController(text: '$rate');
+    }
+    _rates = rates;
+    _loading = false;
+    _error = null;
+  }
+
+  Future<void> _saveSettings() async {
+    final s = WingerStrings.of(context);
+    final settlement = _settlement.text.trim().toUpperCase();
+    final hours = double.tryParse(_maxAgeHours.text.trim());
+    if (!RegExp(r'^[A-Z]{3}$').hasMatch(settlement) || hours == null || hours <= 0) {
+      setState(() => _error = s.t('currencyHint'));
+      return;
+    }
+    final display = [..._display];
+    if (!display.contains(settlement)) display.insert(0, settlement);
+    final payment = _payment.where(display.contains).toList();
+    if (!payment.contains(settlement)) payment.insert(0, settlement);
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final api = context.read<ApiClient>();
+      await api.updateFxSettings(
+        settlementCurrency: settlement,
+        supportedDisplayCurrencies: display,
+        supportedPaymentCurrencies: payment,
+        fxMaxAgeSeconds: (hours * 3600).round(),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('currencySaved'))));
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _saveRate(String quote, String raw) async {
+    final s = WingerStrings.of(context);
+    final rate = double.tryParse(raw.trim());
+    final code = quote.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z]{3}$').hasMatch(code) || rate == null || rate <= 0) {
+      setState(() => _error = s.t('currencyHint'));
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final api = context.read<ApiClient>();
+      await api.upsertFxRate(
+        quoteCurrency: code,
+        rate: rate,
+        baseCurrency: _settlement.text.trim().toUpperCase(),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('rateSaved'))));
+      _newQuote.clear();
+      _newRate.clear();
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final api = context.read<ApiClient>();
+      final config = await api.fetchFxConfig();
+      final rates = await api.fetchFxRates();
+      if (!mounted) return;
+      setState(() => _apply(config, rates));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  void _addDisplay() {
+    final code = _newDisplay.text.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z]{3}$').hasMatch(code)) return;
+    setState(() {
+      if (!_display.contains(code)) _display.add(code);
+      _newDisplay.clear();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(s.t('currencies'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        Text(s.t('currencyHint'), style: const TextStyle(color: WingerColors.muted)),
+        const SizedBox(height: 16),
+        if (_loading)
+          const Center(child: CircularProgressIndicator())
+        else ...[
+          if (_error != null) ...[
+            Text(_error!, style: const TextStyle(color: WingerColors.dangerInk)),
+            const SizedBox(height: 12),
+          ],
+          TextField(
+            controller: _settlement,
+            textCapitalization: TextCapitalization.characters,
+            decoration: InputDecoration(labelText: s.t('settlementCurrency')),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 16),
+          Text(s.t('displayCurrencies'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final code in _display)
+                InputChip(
+                  label: Text(code),
+                  onDeleted: code == _settlement.text.trim().toUpperCase()
+                      ? null
+                      : () => setState(() {
+                            _display.remove(code);
+                            _payment.remove(code);
+                          }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              SizedBox(
+                width: 140,
+                child: TextField(
+                  controller: _newDisplay,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: InputDecoration(labelText: s.t('quoteCurrency')),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(onPressed: _addDisplay, child: Text(s.t('addCurrency'))),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(s.t('paymentCurrencies'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final code in _display)
+                FilterChip(
+                  label: Text(code),
+                  selected: _payment.contains(code),
+                  onSelected: code == _settlement.text.trim().toUpperCase()
+                      ? null
+                      : (selected) => setState(() {
+                            if (selected) {
+                              if (!_payment.contains(code)) _payment.add(code);
+                            } else {
+                              _payment.remove(code);
+                            }
+                          }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _maxAgeHours,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(labelText: s.t('fxMaxAgeHours')),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _saving ? null : _saveSettings,
+            child: Text(s.t('saveCurrencies')),
+          ),
+          const SizedBox(height: 24),
+          Text(s.t('exchangeRates'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+          const SizedBox(height: 8),
+          for (final row in _rates)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Text(
+                      '1 ${row['baseCurrency']} = ',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 140,
+                      child: TextField(
+                        controller: _rateFields[(row['quoteCurrency'] as String).toUpperCase()],
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: InputDecoration(
+                          labelText: (row['quoteCurrency'] as String).toUpperCase(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      row['fresh'] == true ? s.t('rateFresh') : s.t('rateExpired'),
+                      style: TextStyle(
+                        color: row['fresh'] == true ? WingerColors.successInk : WingerColors.attentionInk,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: _saving
+                          ? null
+                          : () {
+                              final quote = (row['quoteCurrency'] as String).toUpperCase();
+                              _saveRate(quote, _rateFields[quote]?.text ?? '');
+                            },
+                      child: Text(s.t('saveRate')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              SizedBox(
+                width: 140,
+                child: TextField(
+                  controller: _newQuote,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: InputDecoration(labelText: s.t('quoteCurrency')),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 140,
+                child: TextField(
+                  controller: _newRate,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(labelText: s.t('saveRate')),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _saving ? null : () => _saveRate(_newQuote.text, _newRate.text),
+                child: Text(s.t('addRate')),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }

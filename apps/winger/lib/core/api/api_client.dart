@@ -1068,6 +1068,87 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> fetchFxConfig() async {
+    final response = await http
+        .get(_uri('/fx/config'))
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw Exception('Currency config HTTP ${response.statusCode}');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchFxRates() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/fx/rates'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ?? 'Exchange rates HTTP ${response.statusCode}',
+      );
+    }
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> updateFxSettings({
+    required String settlementCurrency,
+    required List<String> supportedDisplayCurrencies,
+    required List<String> supportedPaymentCurrencies,
+    required int fxMaxAgeSeconds,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .patch(
+          _uri('/fx/settings'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'settlementCurrency': settlementCurrency,
+            'supportedDisplayCurrencies': supportedDisplayCurrencies,
+            'supportedPaymentCurrencies': supportedPaymentCurrencies,
+            'fxMaxAgeSeconds': fxMaxAgeSeconds,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Update currencies failed (${response.statusCode})',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> upsertFxRate({
+    required String quoteCurrency,
+    required double rate,
+    String? baseCurrency,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .post(
+          _uri('/fx/rates'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'baseCurrency': ?baseCurrency,
+            'quoteCurrency': quoteCurrency,
+            'rate': rate,
+            'source': 'admin',
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 201 && response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ?? 'Save rate failed (${response.statusCode})',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<List<Map<String, dynamic>>> fetchCommissionAgreements({
     String? supplierId,
   }) async {
