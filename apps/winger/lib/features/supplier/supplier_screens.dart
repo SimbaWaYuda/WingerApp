@@ -15,6 +15,7 @@ import '../../core/repositories/inventory_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
 import '../../core/util/product_csv.dart';
+import '../../core/widgets/chip_scroll_row.dart';
 import '../../core/widgets/kpi_card.dart';
 import '../../core/widgets/product_photo.dart';
 import '../../core/widgets/role_shell.dart';
@@ -249,7 +250,7 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                 crossAxisCount: wide ? 5 : 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: wide ? 1.35 : 1.25,
+                childAspectRatio: wide ? 1.35 : 1.15,
                 children: [
                   for (var i = 0; i < kpis.length; i++)
                     KpiCard(
@@ -302,8 +303,8 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                 style: TextStyle(color: WingerColors.muted),
               ),
               const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
+              ChipScrollRow(
+                height: 48,
                 children: [
                   FilledButton.tonal(
                     onPressed: () => context.go('/supplier/orders'),
@@ -485,10 +486,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
           content: Text(
             s
                 .t('collectPaymentConfirm')
-                .replaceAll(
-                  '{amount}',
-                  '\$${order.total.toStringAsFixed(2)}',
-                )
+                .replaceAll('{amount}', order.customerPayLabel())
                 .replaceAll(
                   '{customer}',
                   order.customerName.isEmpty ? 'customer' : order.customerName,
@@ -691,6 +689,16 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                           Text(order.customerName),
                           Text('${item.productName} × ${item.quantity}'),
                           Text('\$${item.lineTotal.toStringAsFixed(2)}'),
+                          if (order.isPayOnDelivery && order.customerPaysOtherCurrency) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              s.t('customerPays').replaceAll('{amount}', order.customerPayLabel()),
+                              style: const TextStyle(
+                                color: WingerColors.attentionInk,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                           if (item.trackingCode != null) ...[
                             const SizedBox(height: 4),
                             Text('${s.t('trackingCode')}: ${item.trackingCode}', style: TextStyle(color: WingerColors.muted)),

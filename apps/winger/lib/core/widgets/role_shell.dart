@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -98,28 +101,10 @@ class RoleShell extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (bottomBar != null) bottomBar!,
-          NavigationBar(
+          _PhoneBottomNav(
+            destinations: destinations,
             selectedIndex: index.clamp(0, destinations.length - 1),
-            onDestinationSelected: (i) => context.go(destinations[i].path),
-            destinations: destinations
-                .map(
-                  (d) => NavigationDestination(
-                    icon: d.badgeCount > 0
-                        ? Badge(
-                            label: Text('${d.badgeCount}'),
-                            child: Icon(d.icon),
-                          )
-                        : Icon(d.icon),
-                    selectedIcon: d.badgeCount > 0
-                        ? Badge(
-                            label: Text('${d.badgeCount}'),
-                            child: Icon(d.icon),
-                          )
-                        : Icon(d.icon),
-                    label: s.t(d.labelKey),
-                  ),
-                )
-                .toList(),
+            onSelect: (i) => context.go(destinations[i].path),
           ),
         ],
       ),
@@ -154,6 +139,218 @@ class RoleShell extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _PhoneBottomNav extends StatefulWidget {
+  const _PhoneBottomNav({
+    required this.destinations,
+    required this.selectedIndex,
+    required this.onSelect,
+  });
+
+  final List<ShellDestination> destinations;
+  final int selectedIndex;
+  final ValueChanged<int> onSelect;
+
+  @override
+  State<_PhoneBottomNav> createState() => _PhoneBottomNavState();
+}
+
+class _PhoneBottomNavState extends State<_PhoneBottomNav> {
+  final _scroll = ScrollController();
+  bool _canLeft = false;
+  bool _canRight = false;
+  List<double> _widths = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_sync);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _sync();
+      _revealSelected();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _PhoneBottomNav oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedIndex != widget.selectedIndex ||
+        oldWidget.destinations.length != widget.destinations.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _revealSelected());
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.removeListener(_sync);
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _sync() {
+    if (!mounted || !_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final left = pos.pixels > 4;
+    final right = pos.maxScrollExtent > 4 && pos.pixels < pos.maxScrollExtent - 4;
+    if (left != _canLeft || right != _canRight) {
+      setState(() {
+        _canLeft = left;
+        _canRight = right;
+      });
+    }
+  }
+
+  void _revealSelected() {
+    if (!_scroll.hasClients || _widths.isEmpty) return;
+    final index = widget.selectedIndex.clamp(0, _widths.length - 1);
+    var start = 0.0;
+    for (var i = 0; i < index; i++) {
+      start += _widths[i];
+    }
+    final item = _widths[index];
+    final view = _scroll.position.viewportDimension;
+    final lead = _scroll.offset;
+    if (start >= lead && start + item <= lead + view) return;
+    final target = (start - (view - item) / 2).clamp(0.0, _scroll.position.maxScrollExtent);
+    _scroll.animateTo(
+      target,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  Future<void> _move(double delta) async {
+    if (!_scroll.hasClients) return;
+    final target = (_scroll.offset + delta).clamp(0.0, _scroll.position.maxScrollExtent);
+    await _scroll.animateTo(
+      target,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+    _sync();
+  }
+
+  List<double> _measure(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final style = Theme.of(context).textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+        );
+    return [
+      for (final destination in widget.destinations)
+        math.max(
+          72,
+          _labelWidth(s.t(destination.labelKey), style, Directionality.of(context)) + 28,
+        ),
+    ];
+  }
+
+  double _labelWidth(String label, TextStyle? style, TextDirection direction) {
+    final painter = TextPainter(
+      text: TextSpan(text: label, style: style),
+      maxLines: 1,
+      textDirection: direction,
+    )..layout();
+    return painter.width;
+  }
+
+  Widget _arrow(IconData icon, bool enabled) {
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+      onPressed: enabled ? () => unawaited(_move(icon == Icons.chevron_left ? -160 : 160)) : null,
+      icon: Icon(
+        icon,
+        size: 22,
+        color: enabled ? WingerColors.brand : WingerColors.muted,
+      ),
+    );
+  }
+
+  Widget _item(BuildContext context, int index) {
+    final s = WingerStrings.of(context);
+    final destination = widget.destinations[index];
+    final selected = index == widget.selectedIndex;
+    final color = selected ? WingerColors.brand : WingerColors.muted;
+    final icon = Icon(destination.icon, color: color);
+    return InkWell(
+      onTap: () => widget.onSelect(index),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            decoration: BoxDecoration(
+              color: selected ? WingerColors.brandMuted : Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: destination.badgeCount > 0
+                ? Badge(label: Text('${destination.badgeCount}'), child: icon)
+                : icon,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            s.t(destination.labelKey),
+            maxLines: 1,
+            softWrap: false,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: WingerColors.white,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 72,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final widths = _measure(context);
+              _widths = widths;
+              final total = widths.fold<double>(0, (sum, width) => sum + width);
+              final scrollable = total > constraints.maxWidth + 0.5;
+              if (!scrollable) {
+                return Row(
+                  children: [
+                    for (var i = 0; i < widget.destinations.length; i++)
+                      Expanded(child: _item(context, i)),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  _arrow(Icons.chevron_left, _canLeft),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: _scroll,
+                      scrollDirection: Axis.horizontal,
+                      itemCount: widget.destinations.length,
+                      itemBuilder: (context, i) => SizedBox(
+                        width: widths[i],
+                        child: _item(context, i),
+                      ),
+                    ),
+                  ),
+                  _arrow(Icons.chevron_right, _canRight),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
     );
   }
 }

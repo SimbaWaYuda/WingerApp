@@ -11,6 +11,7 @@ import '../../core/models/models.dart';
 import '../../core/repositories/catalog_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
+import '../../core/widgets/chip_scroll_row.dart';
 import '../../core/widgets/product_card.dart';
 import '../../core/widgets/product_photo.dart';
 import '../../core/widgets/role_shell.dart';
@@ -408,7 +409,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 10),
-              _ChipScrollRow(
+              ChipScrollRow(
                 height: 40,
                 children: [
                   for (final category in categories)
@@ -639,105 +640,6 @@ class _HomeProductCarouselState extends State<_HomeProductCarousel> {
               ),
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ChipScrollRow extends StatefulWidget {
-  const _ChipScrollRow({required this.height, required this.children});
-
-  final double height;
-  final List<Widget> children;
-
-  @override
-  State<_ChipScrollRow> createState() => _ChipScrollRowState();
-}
-
-class _ChipScrollRowState extends State<_ChipScrollRow> {
-  final _scroll = ScrollController();
-  bool _canLeft = false;
-  bool _canRight = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _scroll.addListener(_sync);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
-  }
-
-  @override
-  void didUpdateWidget(covariant _ChipScrollRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
-  }
-
-  @override
-  void dispose() {
-    _scroll.removeListener(_sync);
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  void _sync() {
-    if (!mounted || !_scroll.hasClients) return;
-    final pos = _scroll.position;
-    final left = pos.pixels > 4;
-    final right = pos.maxScrollExtent > 4 && pos.pixels < pos.maxScrollExtent - 4;
-    if (left != _canLeft || right != _canRight) {
-      setState(() {
-        _canLeft = left;
-        _canRight = right;
-      });
-    }
-  }
-
-  Future<void> _move(double delta) async {
-    if (!_scroll.hasClients) return;
-    final target = (_scroll.offset + delta).clamp(0.0, _scroll.position.maxScrollExtent);
-    await _scroll.animateTo(
-      target,
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeOutCubic,
-    );
-    _sync();
-  }
-
-  Widget _arrow(IconData icon, bool enabled) {
-    return IconButton(
-      visualDensity: VisualDensity.compact,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
-      onPressed: enabled ? () => unawaited(_move(icon == Icons.chevron_left ? -180 : 180)) : null,
-      icon: Icon(
-        icon,
-        size: 22,
-        color: enabled ? WingerColors.brand : WingerColors.muted,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: widget.height,
-      child: Row(
-        children: [
-          _arrow(Icons.chevron_left, _canLeft),
-          Expanded(
-            child: ListView.separated(
-              controller: _scroll,
-              scrollDirection: Axis.horizontal,
-              itemCount: widget.children.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 8),
-              itemBuilder: (context, index) => Align(
-                alignment: Alignment.center,
-                child: widget.children[index],
-              ),
-            ),
-          ),
-          _arrow(Icons.chevron_right, _canRight),
         ],
       ),
     );
@@ -1058,7 +960,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          _ChipScrollRow(
+          ChipScrollRow(
             height: 40,
             children: [
               for (final chip in active)
@@ -1398,7 +1300,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
               onSelected: (value) => _applyFilter(() => _inStockOnly = value),
             ),
         ];
-        return _ChipScrollRow(height: 44, children: pills);
+        return ChipScrollRow(height: 44, children: pills);
       },
     );
   }

@@ -533,6 +533,74 @@ export class OrdersService {
     return this.toResponse(updated, charge.message);
   }
 
+  /** Platform KPIs from live orders. Money fields are settlement USD. */
+  async getAdminDashboard(user: AuthUser) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Admin account required');
+    }
+
+    const openStatuses = [
+      OrderStatus.PROCESSING,
+      OrderStatus.READY_FOR_PICKUP,
+      OrderStatus.PARTIAL,
+    ];
+
+    const [gmv, orderCount, paidCount, openCount, commissions, activeSuppliers, supplierCount] =
+      await Promise.all([
+        this.prisma.order.aggregate({
+          where: { status: { not: OrderStatus.CANCELLED } },
+          _sum: { subtotal: true },
+        }),
+        this.prisma.order.count({
+          where: { status: { not: OrderStatus.CANCELLED } },
+        }),
+        this.prisma.order.count({
+          where: {
+            status: { not: OrderStatus.CANCELLED },
+            paymentStatus: PaymentStatus.PAID,
+          },
+        }),
+        this.prisma.order.count({
+          where: { status: { in: openStatuses } },
+        }),
+        this.prisma.orderItemCommission.findMany({
+          where: {
+            isDemo: false,
+            status: { not: CommissionRecognitionStatus.CLAWED_BACK },
+          },
+          select: { commissionAmount: true, status: true },
+        }),
+        this.prisma.orderItem.groupBy({
+          by: ['supplierId'],
+          where: { status: { not: OrderStatus.CANCELLED } },
+        }),
+        this.prisma.supplier.count(),
+      ]);
+
+    let wingerRevenue = 0;
+    let settleableCommission = 0;
+    for (const row of commissions) {
+      const amount = Number(row.commissionAmount);
+      wingerRevenue += amount;
+      if (row.status === CommissionRecognitionStatus.SETTLEABLE) {
+        settleableCommission += amount;
+      }
+    }
+
+    const round = (n: number) => Math.round(n * 100) / 100;
+    return {
+      currency: 'USD',
+      gmv: round(Number(gmv._sum.subtotal ?? 0)),
+      wingerRevenue: round(wingerRevenue),
+      settleableCommission: round(settleableCommission),
+      orderCount,
+      paidCount,
+      openCount,
+      activeSuppliers: activeSuppliers.length,
+      supplierCount,
+    };
+  }
+
   async list(user: AuthUser) {
     if (user.role === UserRole.CUSTOMER) {
       const orders = await this.prisma.order.findMany({

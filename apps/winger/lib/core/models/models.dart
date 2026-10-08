@@ -350,6 +350,19 @@ class CustomerOrder {
       paymentMode == 'cod' ||
       (paymentMethod?.toLowerCase().contains('pay_on_delivery') ?? false);
 
+  /// Amount the customer hands over. Settlement [total] stays in USD.
+  String customerPayLabel() {
+    final code = (paymentCurrency ?? currency ?? 'USD').toUpperCase();
+    final amount = paymentAmount ?? total;
+    return '$code ${amount.toStringAsFixed(2)}';
+  }
+
+  bool get customerPaysOtherCurrency {
+    final pay = (paymentCurrency ?? currency ?? 'USD').toUpperCase();
+    final settlement = (currency ?? 'USD').toUpperCase();
+    return pay != settlement;
+  }
+
   /// Display ids of orders this one replaces (usually 0–1).
   List<String> get replacesOrderIds => itemRows
       .map((item) => item.replacesOrderId)

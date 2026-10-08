@@ -85,30 +85,136 @@ class _AdminShellState extends State<AdminShell> {
   }
 }
 
-class AdminDashboardScreen extends StatelessWidget {
+class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
+
+  @override
+  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  Future<Map<String, dynamic>>? _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _future ??= _load();
+  }
+
+  Future<Map<String, dynamic>> _load() async {
+    final session = context.read<AppSession>();
+    final token = session.accessToken;
+    if (token == null || token.isEmpty) {
+      throw Exception(
+        'Missing Bearer token — sign out and sign in again with API credentials (not local demo mode).',
+      );
+    }
+    return context.read<ApiClient>().fetchAdminDashboard();
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final wide = MediaQuery.sizeOf(context).width >= 900;
+    final future = _future;
+    if (future == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const OnboardingChecklistCard(journeyRoute: '/admin/onboarding'),
-        Text(s.t('dashboard'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 16),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: wide ? 4 : 2,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: wide ? 1.4 : 1.25,
-          children: [for (final kpi in MockCatalog.adminKpis) KpiCard(data: kpi)],
-        ),
-        const SizedBox(height: 20),
+    return FutureBuilder<Map<String, dynamic>>(
+      future: future,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final kpis = <KpiCardData>[
+          KpiCardData(
+            label: s.t('gmv'),
+            value: '\$${((data?['gmv'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            delta: s.t('settlementUsd'),
+          ),
+          KpiCardData(
+            label: s.t('wingerRevenue'),
+            value: '\$${((data?['wingerRevenue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            delta:
+                '\$${((data?['settleableCommission'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ${s.t('settleable')}',
+          ),
+          KpiCardData(
+            label: s.t('orders'),
+            value: '${data?['orderCount'] ?? 0}',
+            delta: '${data?['paidCount'] ?? 0} ${s.t('paid')} · ${data?['openCount'] ?? 0} ${s.t('open')}',
+          ),
+          KpiCardData(
+            label: s.t('activeSuppliers'),
+            value: '${data?['activeSuppliers'] ?? 0}',
+            delta: '${data?['supplierCount'] ?? 0} ${s.t('suppliers')}',
+          ),
+        ];
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            const OnboardingChecklistCard(journeyRoute: '/admin/onboarding'),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    s.t('dashboard'),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => setState(() => _future = _load()),
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              s.t('adminDashboardHint'),
+              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            if (snapshot.connectionState != ConnectionState.done)
+              const Center(child: CircularProgressIndicator())
+            else if (snapshot.hasError) ...[
+              Card(
+                color: WingerColors.brandMuted,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.t('apiLoginRequired'),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        snapshot.error.toString().replaceFirst('Exception: ', ''),
+                        style: TextStyle(color: WingerColors.muted),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: () {
+                          context.read<AppSession>().signOut();
+                          context.go('/login');
+                        },
+                        child: Text(s.t('signInAgain')),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ] else
+              GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: wide ? 4 : 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: wide ? 1.35 : 0.92,
+                children: [for (final kpi in kpis) KpiCard(data: kpi)],
+              ),
+            const SizedBox(height: 20),
         Text(s.t('operationalQueue'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
         const SizedBox(height: 8),
         for (final item in const [
@@ -136,7 +242,9 @@ class AdminDashboardScreen extends StatelessWidget {
             trailing: Text('HIGH', style: TextStyle(color: WingerColors.dangerInk, fontWeight: FontWeight.w800)),
           ),
         ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
@@ -946,40 +1054,47 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      '1 ${row['baseCurrency']} = ',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 140,
-                      child: TextField(
-                        controller: _rateFields[(row['quoteCurrency'] as String).toUpperCase()],
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: InputDecoration(
-                          labelText: (row['quoteCurrency'] as String).toUpperCase(),
+                    Row(
+                      children: [
+                        Text(
+                          '1 ${row['baseCurrency']} = ',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _rateFields[(row['quoteCurrency'] as String).toUpperCase()],
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: InputDecoration(
+                              labelText: (row['quoteCurrency'] as String).toUpperCase(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          row['fresh'] == true ? s.t('rateFresh') : s.t('rateExpired'),
+                          style: TextStyle(
+                            color: row['fresh'] == true ? WingerColors.successInk : WingerColors.attentionInk,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Text(
-                      row['fresh'] == true ? s.t('rateFresh') : s.t('rateExpired'),
-                      style: TextStyle(
-                        color: row['fresh'] == true ? WingerColors.successInk : WingerColors.attentionInk,
-                        fontWeight: FontWeight.w700,
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton(
+                        onPressed: _saving
+                            ? null
+                            : () {
+                                final quote = (row['quoteCurrency'] as String).toUpperCase();
+                                _saveRate(quote, _rateFields[quote]?.text ?? '');
+                              },
+                        child: Text(s.t('saveRate')),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    FilledButton(
-                      onPressed: _saving
-                          ? null
-                          : () {
-                              final quote = (row['quoteCurrency'] as String).toUpperCase();
-                              _saveRate(quote, _rateFields[quote]?.text ?? '');
-                            },
-                      child: Text(s.t('saveRate')),
                     ),
                   ],
                 ),
@@ -988,8 +1103,7 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
-              SizedBox(
-                width: 140,
+              Expanded(
                 child: TextField(
                   controller: _newQuote,
                   textCapitalization: TextCapitalization.characters,
@@ -997,20 +1111,22 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              SizedBox(
-                width: 140,
+              Expanded(
                 child: TextField(
                   controller: _newRate,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(labelText: s.t('saveRate')),
                 ),
               ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: _saving ? null : () => _saveRate(_newQuote.text, _newRate.text),
-                child: Text(s.t('addRate')),
-              ),
             ],
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              onPressed: _saving ? null : () => _saveRate(_newQuote.text, _newRate.text),
+              child: Text(s.t('addRate')),
+            ),
           ),
         ],
       ],

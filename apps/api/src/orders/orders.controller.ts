@@ -51,6 +51,12 @@ export class OrdersController {
     return this.ordersService.list(user);
   }
 
+  @Get('admin/dashboard')
+  @Roles(UserRole.ADMIN)
+  adminDashboard(@CurrentUser() user: AuthUser) {
+    return this.ordersService.getAdminDashboard(user);
+  }
+
   @Get('returns')
   @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
   listReturns(

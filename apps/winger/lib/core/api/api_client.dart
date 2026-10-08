@@ -897,6 +897,22 @@ class ApiClient {
     return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<Map<String, dynamic>> fetchAdminDashboard() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/orders/admin/dashboard'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Admin dashboard HTTP ${response.statusCode}',
+      );
+    }
+    session.setApiOnline(true);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> fetchSupplierDashboard() async {
     _requireAccessToken();
     final response = await http

@@ -250,10 +250,4 @@ abstract final class MockCatalog {
     KpiCardData(label: 'Conversion', value: '4.8%', delta: '+0.4%'),
   ];
 
-  static const adminKpis = <KpiCardData>[
-    KpiCardData(label: 'GMV', value: '\$1.84M', delta: '+12.8%'),
-    KpiCardData(label: 'Winger revenue', value: '\$216.4k', delta: '+10.2%'),
-    KpiCardData(label: 'Orders', value: '7,842', delta: '+4.1%'),
-    KpiCardData(label: 'Active suppliers', value: '286', delta: '+11.3%'),
-  ];
 }
