@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../api/api_client.dart';
-import '../data/mock_catalog.dart';
 import '../models/models.dart';
 import '../offline/offline_database.dart';
 import '../repositories/cart_repository.dart';
@@ -505,22 +504,12 @@ class AppSession extends ChangeNotifier {
       return order;
     }
 
-    // Offline cannot place real COD — keep cart so the customer can retry online.
-    if (cod) {
-      throw Exception(
-        'Pay on delivery needs an online connection. Connect and try again.',
-      );
-    }
-
-    // Offline / unsigned fallback — keep a local demo order.
-    lastOrder = MockCatalog.sampleOrder;
-    _cart.clear();
-    cartDeliveryFee = 0;
-    cartTax = 0;
-    cartShipments = [];
-    notifyListeners();
-    await _cartRepository?.clear();
-    return lastOrder!;
+    // Offline cannot place a real order — keep the cart so the customer can retry.
+    throw Exception(
+      cod
+          ? 'Pay on delivery needs an online connection. Connect and try again.'
+          : 'Checkout needs an online connection. Connect and try again.',
+    );
   }
 
   @Deprecated('Use placeOrder()')

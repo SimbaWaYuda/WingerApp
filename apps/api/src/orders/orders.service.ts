@@ -545,7 +545,7 @@ export class OrdersService {
       OrderStatus.PARTIAL,
     ];
 
-    const [gmv, orderCount, paidCount, openCount, commissions, activeSuppliers, supplierCount] =
+    const [gmv, orderCount, paidCount, openCount, commissions, activeSuppliers, supplierCount, openReturns, deliveryExceptions, unpaidOrders] =
       await Promise.all([
         this.prisma.order.aggregate({
           where: { status: { not: OrderStatus.CANCELLED } },
@@ -575,6 +575,31 @@ export class OrdersService {
           where: { status: { not: OrderStatus.CANCELLED } },
         }),
         this.prisma.supplier.count(),
+        this.prisma.returnRequest.count({
+          where: {
+            status: {
+              in: [ReturnRequestStatus.REQUESTED, ReturnRequestStatus.IN_REVIEW],
+            },
+          },
+        }),
+        this.prisma.orderItem.count({
+          where: {
+            order: { status: { not: OrderStatus.CANCELLED } },
+            OR: [
+              { status: OrderStatus.RETURNED },
+              {
+                status: OrderStatus.SHIPPED,
+                OR: [{ trackingCode: null }, { trackingCode: '' }],
+              },
+            ],
+          },
+        }),
+        this.prisma.order.count({
+          where: {
+            status: { not: OrderStatus.CANCELLED },
+            paymentStatus: PaymentStatus.PENDING,
+          },
+        }),
       ]);
 
     let wingerRevenue = 0;
@@ -598,6 +623,9 @@ export class OrdersService {
       openCount,
       activeSuppliers: activeSuppliers.length,
       supplierCount,
+      openReturns,
+      deliveryExceptions,
+      unpaidOrders,
     };
   }
 

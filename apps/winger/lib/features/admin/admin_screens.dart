@@ -203,7 +203,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ),
                 ),
               ),
-            ] else
+            ] else ...[
               GridView.count(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -213,37 +213,103 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 childAspectRatio: wide ? 1.35 : 0.92,
                 children: [for (final kpi in kpis) KpiCard(data: kpi)],
               ),
-            const SizedBox(height: 20),
-        Text(s.t('operationalQueue'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-        const SizedBox(height: 8),
-        for (final item in const [
-          ('Supplier reviews', '12'),
-          ('Delivery exceptions', '17'),
-          ('Payment holds', '5'),
-          ('Catalogue approvals', '9'),
-        ])
-          Card(
-            child: ListTile(
-              title: Text(item.$1),
-              trailing: CircleAvatar(
-                radius: 16,
-                backgroundColor: WingerColors.brandMuted,
-                child: Text(item.$2, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 20),
+              Text(s.t('operationalQueue'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 8),
+              _AdminQueueTile(
+                title: s.t('openReturns'),
+                count: (data?['openReturns'] as num?)?.toInt() ?? 0,
+                onTap: () => context.go('/admin/returns'),
               ),
-            ),
-          ),
-        const SizedBox(height: 12),
-        Text(s.t('platformAlerts'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-        const Card(
-          child: ListTile(
-            title: Text('Delivery · Late hub transfer'),
-            subtitle: Text('Owner: Ops · SLA at risk'),
-            trailing: Text('HIGH', style: TextStyle(color: WingerColors.dangerInk, fontWeight: FontWeight.w800)),
-          ),
-        ),
+              _AdminQueueTile(
+                title: s.t('exceptions'),
+                count: (data?['deliveryExceptions'] as num?)?.toInt() ?? 0,
+                onTap: () => context.go('/admin/delivery'),
+              ),
+              _AdminQueueTile(
+                title: s.t('unpaidOrders'),
+                count: (data?['unpaidOrders'] as num?)?.toInt() ?? 0,
+                onTap: () => context.go('/admin/orders'),
+              ),
+              const SizedBox(height: 12),
+              Text(s.t('platformAlerts'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 8),
+              ..._dashboardAlerts(context, data),
+            ],
           ],
         );
       },
+    );
+  }
+}
+
+List<Widget> _dashboardAlerts(BuildContext context, Map<String, dynamic>? data) {
+  final s = WingerStrings.of(context);
+  final exceptions = (data?['deliveryExceptions'] as num?)?.toInt() ?? 0;
+  final openReturns = (data?['openReturns'] as num?)?.toInt() ?? 0;
+  final unpaid = (data?['unpaidOrders'] as num?)?.toInt() ?? 0;
+  final rows = <({String title, String path, int count, bool high})>[
+    if (exceptions > 0)
+      (title: s.t('exceptions'), path: '/admin/delivery', count: exceptions, high: true),
+    if (openReturns > 0)
+      (title: s.t('openReturns'), path: '/admin/returns', count: openReturns, high: false),
+    if (unpaid > 0)
+      (title: s.t('unpaidOrders'), path: '/admin/orders', count: unpaid, high: false),
+  ];
+  if (rows.isEmpty) {
+    return [
+      Text(s.t('noPlatformAlerts'), style: TextStyle(color: WingerColors.muted)),
+    ];
+  }
+  return [
+    for (final row in rows)
+      Card(
+        child: ListTile(
+          onTap: () => context.go(row.path),
+          title: Text(row.title),
+          subtitle: Text('${row.count}'),
+          trailing: row.high
+              ? Text(
+                  s.t('alertHigh'),
+                  style: const TextStyle(color: WingerColors.dangerInk, fontWeight: FontWeight.w800),
+                )
+              : null,
+        ),
+      ),
+  ];
+}
+
+class _AdminQueueTile extends StatelessWidget {
+  const _AdminQueueTile({
+    required this.title,
+    required this.count,
+    required this.onTap,
+  });
+
+  final String title;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final attention = count > 0;
+    return Card(
+      child: ListTile(
+        onTap: onTap,
+        title: Text(title),
+        trailing: CircleAvatar(
+          radius: 16,
+          backgroundColor: attention ? WingerColors.attention : WingerColors.brandMuted,
+          child: Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: attention ? WingerColors.attentionInk : WingerColors.ink,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

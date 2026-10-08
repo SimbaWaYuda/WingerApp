@@ -2991,16 +2991,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           const Icon(Icons.check_circle, color: WingerColors.successInk, size: 64),
           const SizedBox(height: 12),
           Text(s.t('thanksOrder'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-          Text('${s.t('orderConfirmed')} · ${session.lastOrder?.id ?? 'WG-10025'}'),
           Text(
-            session.lastOrder?.isCodPending == true
+            session.lastOrder == null
+                ? s.t('orderConfirmed')
+                : '${s.t('orderConfirmed')} · ${session.lastOrder!.id}',
+          ),
+          if (session.lastOrder != null)
+          Text(
+            session.lastOrder!.isCodPending
                 ? s.t('codPendingBanner').replaceAll(
                       '{amount}',
-                      session.lastOrder?.lockedAmountLabel() ?? session.formatMoney(0),
+                      session.lastOrder!.lockedAmountLabel(),
                     )
-                : session.lastOrder?.paymentMode == 'cod'
-                    ? '${s.t('payOnDelivery')}: ${session.lastOrder?.paymentStatus ?? 'PENDING'}'
-                    : 'Payment: ${session.lastOrder?.paymentStatus ?? 'PAID'} (${session.lastOrder?.paymentMode ?? 'demo'})',
+                : session.lastOrder!.paymentMode == 'cod'
+                    ? '${s.t('payOnDelivery')}: ${session.lastOrder!.paymentStatus}'
+                    : 'Payment: ${session.lastOrder!.paymentStatus} (${session.lastOrder!.paymentMode})',
             style: TextStyle(
               color: session.lastOrder?.isCodPending == true
                   ? WingerColors.attentionInk
@@ -3043,8 +3048,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (session.apiOnline && session.accessToken != null) {
       return api.fetchOrders();
     }
-    if (session.lastOrder != null) return [session.lastOrder!];
-    return [MockCatalog.sampleOrder];
+    final last = session.lastOrder;
+    if (last != null) return [last];
+    return const [];
   }
 
   @override
@@ -3063,13 +3069,26 @@ class _OrdersScreenState extends State<OrdersScreen> {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
         }
+        if (snapshot.hasError) {
+          return ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Text(s.t('orders'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 12),
+              Text(
+                snapshot.error.toString().replaceFirst('Exception: ', ''),
+                style: const TextStyle(color: WingerColors.dangerInk),
+              ),
+            ],
+          );
+        }
         if (orders.isEmpty) {
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
               Text(s.t('orders'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
               const SizedBox(height: 12),
-              Text('No orders yet.', style: TextStyle(color: WingerColors.muted)),
+              Text(s.t('noOrdersYet'), style: TextStyle(color: WingerColors.muted)),
             ],
           );
         }
