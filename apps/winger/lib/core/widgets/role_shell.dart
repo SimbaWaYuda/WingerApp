@@ -41,7 +41,7 @@ class RoleShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
-    final location = GoRouterState.of(context).uri.toString();
+    final location = GoRouterState.of(context).uri.path;
     final wide = MediaQuery.sizeOf(context).width >= 980;
     // Prefer the longest matching path so /supplier/products does not
     // highlight Overview (/supplier).

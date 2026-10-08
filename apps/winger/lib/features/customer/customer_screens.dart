@@ -17,6 +17,20 @@ import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
 
+String _customerTitle(WingerStrings s, String path) {
+  if (path.startsWith('/customer/search')) return s.t('search');
+  if (path.startsWith('/customer/orders')) return s.t('orders');
+  if (path.startsWith('/customer/account') ||
+      path.startsWith('/customer/notifications') ||
+      path.startsWith('/customer/addresses')) {
+    return s.t('account');
+  }
+  if (path.startsWith('/customer/cart') || path.startsWith('/customer/checkout')) {
+    return s.t('cart');
+  }
+  return s.t('home');
+}
+
 List<ShellDestination> customerDestinations({int unreadNotifications = 0}) => [
   const ShellDestination(labelKey: 'home', icon: Icons.home_outlined, path: '/customer'),
   const ShellDestination(labelKey: 'search', icon: Icons.search, path: '/customer/search'),
@@ -80,7 +94,7 @@ class _CustomerShellState extends State<CustomerShell> {
     final showTray = session.compareIds.isNotEmpty && !onCompare;
 
     return RoleShell(
-      title: s.t('home'),
+      title: _customerTitle(s, location),
       roleLabel: 'Customer',
       destinations: customerDestinations(unreadNotifications: _unreadNotifications),
       bottomBar: showTray
@@ -394,14 +408,15 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
+              _ChipScrollRow(
+                height: 40,
                 children: [
                   for (final category in categories)
                     ActionChip(
                       label: Text('${category.name} (${category.productCount})'),
                       backgroundColor: WingerColors.brandMuted,
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       onPressed: () => context.go(
                         '/customer/search?category=${Uri.encodeComponent(category.name)}',
                       ),
@@ -624,6 +639,105 @@ class _HomeProductCarouselState extends State<_HomeProductCarousel> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ChipScrollRow extends StatefulWidget {
+  const _ChipScrollRow({required this.height, required this.children});
+
+  final double height;
+  final List<Widget> children;
+
+  @override
+  State<_ChipScrollRow> createState() => _ChipScrollRowState();
+}
+
+class _ChipScrollRowState extends State<_ChipScrollRow> {
+  final _scroll = ScrollController();
+  bool _canLeft = false;
+  bool _canRight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_sync);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
+  }
+
+  @override
+  void didUpdateWidget(covariant _ChipScrollRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
+  }
+
+  @override
+  void dispose() {
+    _scroll.removeListener(_sync);
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _sync() {
+    if (!mounted || !_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final left = pos.pixels > 4;
+    final right = pos.maxScrollExtent > 4 && pos.pixels < pos.maxScrollExtent - 4;
+    if (left != _canLeft || right != _canRight) {
+      setState(() {
+        _canLeft = left;
+        _canRight = right;
+      });
+    }
+  }
+
+  Future<void> _move(double delta) async {
+    if (!_scroll.hasClients) return;
+    final target = (_scroll.offset + delta).clamp(0.0, _scroll.position.maxScrollExtent);
+    await _scroll.animateTo(
+      target,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+    _sync();
+  }
+
+  Widget _arrow(IconData icon, bool enabled) {
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+      onPressed: enabled ? () => unawaited(_move(icon == Icons.chevron_left ? -180 : 180)) : null,
+      icon: Icon(
+        icon,
+        size: 22,
+        color: enabled ? WingerColors.brand : WingerColors.muted,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: widget.height,
+      child: Row(
+        children: [
+          _arrow(Icons.chevron_left, _canLeft),
+          Expanded(
+            child: ListView.separated(
+              controller: _scroll,
+              scrollDirection: Axis.horizontal,
+              itemCount: widget.children.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => Align(
+                alignment: Alignment.center,
+                child: widget.children[index],
+              ),
+            ),
+          ),
+          _arrow(Icons.chevron_right, _canRight),
         ],
       ),
     );
@@ -944,9 +1058,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          _ChipScrollRow(
+            height: 40,
             children: [
               for (final chip in active)
                 InputChip(
@@ -956,6 +1069,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                   selected: true,
                   selectedColor: WingerColors.brandMuted,
                   checkmarkColor: WingerColors.brand,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
             ],
           ),
@@ -1167,13 +1282,9 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         final sizes = data.length > 3 ? data[3] as List<CatalogCategory> : const <CatalogCategory>[];
         final suppliers = data.length > 4 ? data[4] as List<CatalogSupplier> : const <CatalogSupplier>[];
 
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
+        final pills = <Widget>[
             _dropdownPill(
-              label: _category ?? s.t('categories'),
+              label: _category == null ? s.t('categories') : '${s.t('categories')}: $_category',
               active: _category != null,
               onSelected: (value) => _applyFilter(() {
                 _category = value == '__all__' ? null : value;
@@ -1286,8 +1397,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
               ),
               onSelected: (value) => _applyFilter(() => _inStockOnly = value),
             ),
-          ],
-        );
+        ];
+        return _ChipScrollRow(height: 44, children: pills);
       },
     );
   }
