@@ -897,6 +897,27 @@ class ApiClient {
     return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<List<Map<String, dynamic>>> fetchAdminSuppliers() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/orders/admin/suppliers'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Admin suppliers HTTP ${response.statusCode}',
+      );
+    }
+    session.setApiOnline(true);
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) return const [];
+    return [
+      for (final row in decoded)
+        if (row is Map) Map<String, dynamic>.from(row),
+    ];
+  }
+
   Future<Map<String, dynamic>> fetchAdminDashboard() async {
     _requireAccessToken();
     final response = await http

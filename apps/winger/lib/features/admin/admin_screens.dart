@@ -249,45 +249,156 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 }
 
-class AdminSuppliersScreen extends StatelessWidget {
+class AdminSuppliersScreen extends StatefulWidget {
   const AdminSuppliersScreen({super.key});
+
+  @override
+  State<AdminSuppliersScreen> createState() => _AdminSuppliersScreenState();
+}
+
+class _AdminSuppliersScreenState extends State<AdminSuppliersScreen> {
+  Future<List<Map<String, dynamic>>>? _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _future ??= _load();
+  }
+
+  Future<List<Map<String, dynamic>>> _load() async {
+    final session = context.read<AppSession>();
+    final token = session.accessToken;
+    if (token == null || token.isEmpty) {
+      throw Exception(
+        'Missing Bearer token — sign out and sign in again with API credentials (not local demo mode).',
+      );
+    }
+    return context.read<ApiClient>().fetchAdminSuppliers();
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
-    const suppliers = [
-      ('Kijani Tech', '286 orders', 'LIVE'),
-      ('Atlas Home', '142 orders', 'LIVE'),
-      ('Metals Outdoor', '98 orders', 'REVIEW'),
-    ];
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(s.t('suppliers'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 12),
-        for (final supplier in suppliers)
-          Card(
-            child: ListTile(
-              title: Text(supplier.$1, style: const TextStyle(fontWeight: FontWeight.w700)),
-              subtitle: Text(supplier.$2),
-              trailing: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: supplier.$3 == 'LIVE' ? WingerColors.success : WingerColors.info,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  supplier.$3,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
-                    color: supplier.$3 == 'LIVE' ? WingerColors.successInk : WingerColors.infoInk,
+    final future = _future;
+    if (future == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: future,
+      builder: (context, snapshot) {
+        final suppliers = snapshot.data ?? const <Map<String, dynamic>>[];
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    s.t('suppliers'),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
                   ),
                 ),
-              ),
+                IconButton(
+                  onPressed: () => setState(() => _future = _load()),
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
             ),
-          ),
-      ],
+            Text(
+              s.t('settlementUsd'),
+              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            if (snapshot.connectionState != ConnectionState.done)
+              const Center(child: CircularProgressIndicator())
+            else if (snapshot.hasError)
+              Card(
+                color: WingerColors.brandMuted,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    snapshot.error.toString().replaceFirst('Exception: ', ''),
+                    style: TextStyle(color: WingerColors.muted),
+                  ),
+                ),
+              )
+            else if (suppliers.isEmpty)
+              Text(s.t('noSuppliers'), style: TextStyle(color: WingerColors.muted))
+            else
+              for (final supplier in suppliers)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${supplier['name'] ?? ''}',
+                                style: const TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${supplier['orderCount'] ?? 0} ${s.t('orders').toLowerCase()} · \$${((supplier['grossSales'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _SupplierStatusBadge(
+                          status: '${supplier['verificationStatus'] ?? ''}',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _SupplierStatusBadge extends StatelessWidget {
+  const _SupplierStatusBadge({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final normalized = status.toUpperCase();
+    final live = normalized == 'APPROVED' || normalized == 'VERIFIED';
+    final review = normalized == 'SUBMITTED';
+    final label = live
+        ? s.t('statusLive')
+        : review
+            ? s.t('review')
+            : s.t('statusUnverified');
+    final background = live
+        ? WingerColors.success
+        : review
+            ? WingerColors.info
+            : WingerColors.attention;
+    final ink = live
+        ? WingerColors.successInk
+        : review
+            ? WingerColors.infoInk
+            : WingerColors.attentionInk;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: ink),
+      ),
     );
   }
 }

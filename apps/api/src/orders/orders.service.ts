@@ -601,6 +601,45 @@ export class OrdersService {
     };
   }
 
+  /** Supplier rows for the admin list. Sales are settlement USD. */
+  async getAdminSuppliers(user: AuthUser) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Admin account required');
+    }
+
+    const [suppliers, items] = await Promise.all([
+      this.prisma.supplier.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.orderItem.findMany({
+        where: { status: { not: OrderStatus.CANCELLED } },
+        select: { supplierId: true, orderId: true, lineTotal: true },
+      }),
+    ]);
+
+    const bySupplier = new Map<string, { orders: Set<string>; grossSales: number }>();
+    for (const item of items) {
+      const bucket = bySupplier.get(item.supplierId) ?? {
+        orders: new Set<string>(),
+        grossSales: 0,
+      };
+      bucket.orders.add(item.orderId);
+      bucket.grossSales += Number(item.lineTotal);
+      bySupplier.set(item.supplierId, bucket);
+    }
+
+    const round = (n: number) => Math.round(n * 100) / 100;
+    return suppliers.map((supplier) => {
+      const bucket = bySupplier.get(supplier.id);
+      return {
+        id: supplier.id,
+        name: supplier.name,
+        verificationStatus: supplier.verificationStatus,
+        orderCount: bucket?.orders.size ?? 0,
+        grossSales: round(bucket?.grossSales ?? 0),
+        currency: 'USD',
+      };
+    });
+  }
+
   async list(user: AuthUser) {
     if (user.role === UserRole.CUSTOMER) {
       const orders = await this.prisma.order.findMany({
