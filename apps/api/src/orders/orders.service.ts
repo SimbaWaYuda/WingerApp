@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { CommissionsService } from '../commissions/commissions.service';
+import { FxService } from '../fx/fx.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -98,6 +99,7 @@ export class OrdersService {
     private readonly stripe: StripeService,
     private readonly onboarding: OnboardingService,
     private readonly notifications: NotificationsService,
+    private readonly fx: FxService,
   ) {}
 
   /**
@@ -224,14 +226,56 @@ export class OrdersService {
       city: dto.city,
       supplierNames,
     });
+    const fxConfig = await this.fx.publicConfig();
+    const settlement = fxConfig.settlementCurrency;
+    const profile = await this.prisma.user.findUnique({
+      where: { id: user.sub },
+      select: { displayCurrency: true },
+    });
+    const display = this.fx.normalize(profile?.displayCurrency || settlement);
+    let displayQuote: {
+      currency: string;
+      rate: number;
+      subtotal: number;
+      tax: number;
+      deliveryFee: number;
+      total: number;
+      estimate: boolean;
+      paymentCurrency: string;
+      expiresAt: string;
+    } | null = null;
+    let fxError: string | null = null;
+    try {
+      const quote = await this.fx.quote(settlement, display);
+      const paymentCurrency = await this.fx.resolvePaymentCurrency(
+        display,
+        settlement,
+      );
+      displayQuote = {
+        currency: display,
+        rate: quote.rate,
+        subtotal: roundMoney(fees.subtotal * quote.rate),
+        tax: roundMoney(fees.tax * quote.rate),
+        deliveryFee: roundMoney(fees.deliveryFee * quote.rate),
+        total: roundMoney(fees.total * quote.rate),
+        estimate: display !== paymentCurrency,
+        paymentCurrency,
+        expiresAt: quote.expiresAt,
+      };
+    } catch (error) {
+      fxError = error instanceof Error ? error.message : 'Exchange rate unavailable';
+    }
 
     return {
       ok,
-      currency: 'usd',
+      currency: settlement,
+      settlementCurrency: settlement,
       subtotal: fees.subtotal,
       deliveryFee: fees.deliveryFee,
       tax: fees.tax,
       total: fees.total,
+      display: displayQuote,
+      fxError,
       deliveryMethod: fees.deliveryMethod,
       shipments: fees.shipments,
       lines,
@@ -307,6 +351,30 @@ export class OrdersService {
       }
     }
 
+    const fxConfig = await this.fx.publicConfig();
+    const settlementCurrency = fxConfig.settlementCurrency;
+    const profile = await this.prisma.user.findUnique({
+      where: { id: user.sub },
+      select: { displayCurrency: true },
+    });
+    const displayCurrency = this.fx.normalize(
+      profile?.displayCurrency || settlementCurrency,
+    );
+    // Throws if the display rate is missing or expired. Identity rate when equal.
+    const fxQuote = await this.fx.quote(settlementCurrency, displayCurrency);
+    const paymentCurrency = await this.fx.resolvePaymentCurrency(
+      displayCurrency,
+      settlementCurrency,
+    );
+    const displaySubtotal = roundMoney(fees.subtotal * fxQuote.rate);
+    const displayTax = roundMoney(fees.tax * fxQuote.rate);
+    const displayDelivery = roundMoney(fees.deliveryFee * fxQuote.rate);
+    const displayTotal = roundMoney(
+      displaySubtotal + displayTax + displayDelivery,
+    );
+    const paymentAmount =
+      paymentCurrency === displayCurrency ? displayTotal : fees.total;
+
     const order = await this.prisma.$transaction(async (tx) => {
       const count = await tx.order.count();
       const displayId = `WG-${10025 + count}`;
@@ -327,7 +395,21 @@ export class OrdersService {
             : this.stripe.configured
               ? 'stripe'
               : 'demo',
-          currency: 'usd',
+          currency: settlementCurrency,
+          settlementCurrency,
+          displayCurrency,
+          displaySubtotal: new Prisma.Decimal(displaySubtotal.toFixed(2)),
+          displayTaxAmount: new Prisma.Decimal(displayTax.toFixed(2)),
+          displayDeliveryFee: new Prisma.Decimal(displayDelivery.toFixed(2)),
+          displayTotal: new Prisma.Decimal(displayTotal.toFixed(2)),
+          paymentCurrency,
+          paymentAmount: new Prisma.Decimal(paymentAmount.toFixed(2)),
+          fxRate: new Prisma.Decimal(fxQuote.rate.toFixed(8)),
+          fxBaseCurrency: fxQuote.baseCurrency,
+          fxQuoteCurrency: fxQuote.quoteCurrency,
+          fxFetchedAt: new Date(fxQuote.fetchedAt),
+          fxExpiresAt: new Date(fxQuote.expiresAt),
+          fxSource: fxQuote.source,
           subtotal,
           taxAmount: new Prisma.Decimal(fees.tax.toFixed(2)),
           deliveryFee: new Prisma.Decimal(fees.deliveryFee.toFixed(2)),
@@ -341,6 +423,13 @@ export class OrdersService {
               supplierId: line.product.supplierId,
               supplierName: line.product.supplierName,
               unitPrice: line.unitPrice,
+              priceCurrency: line.product.priceCurrency || settlementCurrency,
+              displayUnitPrice: new Prisma.Decimal(
+                roundMoney(Number(line.unitPrice) * fxQuote.rate).toFixed(2),
+              ),
+              displayLineTotal: new Prisma.Decimal(
+                roundMoney(Number(line.lineTotal) * fxQuote.rate).toFixed(2),
+              ),
               quantity: line.quantity,
               lineTotal: line.lineTotal,
               status: OrderStatus.PROCESSING,
@@ -401,10 +490,10 @@ export class OrdersService {
       );
     }
 
-    const amountCents = Math.round(Number(total) * 100);
+    const amountCents = Math.round(Number(paymentAmount) * 100);
     const charge = await this.stripe.chargeOrder({
       amountCents,
-      currency: 'usd',
+      currency: paymentCurrency.toLowerCase(),
       orderDisplayId: order.displayId,
       customerEmail: user.email,
     });
@@ -844,6 +933,9 @@ export class OrdersService {
           paymentMethod: 'replacement',
           paymentMode: 'replacement',
           currency: source.order.currency,
+          settlementCurrency: source.order.settlementCurrency || source.order.currency,
+          paymentCurrency: source.order.settlementCurrency || source.order.currency,
+          paymentAmount: lineTotal,
           subtotal: lineTotal,
           taxAmount: new Prisma.Decimal(0),
           deliveryFee: new Prisma.Decimal(0),
@@ -1548,6 +1640,36 @@ export class OrdersService {
       paymentMode: order.paymentMode,
       stripePaymentIntentId: order.stripePaymentIntentId,
       currency: order.currency,
+      settlementCurrency:
+        'settlementCurrency' in order
+          ? (order as { settlementCurrency?: string }).settlementCurrency ??
+            order.currency
+          : order.currency,
+      displayCurrency:
+        'displayCurrency' in order
+          ? (order as { displayCurrency?: string | null }).displayCurrency ?? null
+          : null,
+      displayTotal:
+        'displayTotal' in order &&
+        (order as { displayTotal?: { toNumber?: () => number } | null }).displayTotal !=
+          null
+          ? Number(
+              (order as { displayTotal?: { toString(): string } | null }).displayTotal,
+            )
+          : null,
+      paymentCurrency:
+        'paymentCurrency' in order
+          ? (order as { paymentCurrency?: string }).paymentCurrency ?? order.currency
+          : order.currency,
+      paymentAmount:
+        'paymentAmount' in order &&
+        (order as { paymentAmount?: unknown }).paymentAmount != null
+          ? Number((order as { paymentAmount?: { toString(): string } }).paymentAmount)
+          : Number(order.total),
+      fxRate:
+        'fxRate' in order && (order as { fxRate?: unknown }).fxRate != null
+          ? Number((order as { fxRate?: { toString(): string } }).fxRate)
+          : null,
       subtotal: Number(order.subtotal),
       tax: Number(order.taxAmount ?? 0),
       deliveryFee: Number(order.deliveryFee ?? 0),

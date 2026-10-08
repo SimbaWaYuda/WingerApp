@@ -419,6 +419,9 @@ export class CommissionsService {
           commissionAmount: new Prisma.Decimal(
             values.commissionAmount.toFixed(2),
           ),
+          currency: (order.settlementCurrency || order.currency || 'USD')
+            .toString()
+            .toUpperCase(),
           status,
           paymentMode: params.paymentMode,
           isDemo: params.isDemo,

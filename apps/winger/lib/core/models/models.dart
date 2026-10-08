@@ -285,6 +285,11 @@ class CustomerOrder {
     this.addressLine,
     this.city,
     this.paymentMethod,
+    this.currency,
+    this.displayCurrency,
+    this.displayTotal,
+    this.paymentCurrency,
+    this.paymentAmount,
     this.canRateSuppliers = const [],
     this.returnableItems = const [],
     this.returnRequests = const [],
@@ -298,6 +303,11 @@ class CustomerOrder {
   final String paymentStatus;
   final String paymentMode;
   final String? paymentMethod;
+  final String? currency;
+  final String? displayCurrency;
+  final double? displayTotal;
+  final String? paymentCurrency;
+  final double? paymentAmount;
   final String customerName;
   final List<OrderItemRow> itemRows;
   final String? addressLine;
@@ -305,6 +315,17 @@ class CustomerOrder {
   final List<RateableSupplier> canRateSuppliers;
   final List<ReturnableItem> returnableItems;
   final List<OrderReturnRequest> returnRequests;
+
+  String lockedAmountLabel() {
+    final payCode = (paymentCurrency ?? currency ?? 'USD').toUpperCase();
+    final pay = paymentAmount ?? total;
+    if (displayTotal != null &&
+        displayCurrency != null &&
+        displayCurrency!.toUpperCase() != payCode) {
+      return 'Est. ${displayCurrency!.toUpperCase()} ${displayTotal!.toStringAsFixed(2)} · Pay $payCode ${pay.toStringAsFixed(2)}';
+    }
+    return '$payCode ${pay.toStringAsFixed(2)}';
+  }
 
   bool get canCancel {
     if (status == OrderStatus.cancelled) return false;
@@ -573,6 +594,11 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
     paymentStatus: json['paymentStatus'] as String? ?? 'PENDING',
     paymentMode: json['paymentMode'] as String? ?? 'demo',
     paymentMethod: json['paymentMethod'] as String?,
+    currency: json['settlementCurrency'] as String? ?? json['currency'] as String?,
+    displayCurrency: json['displayCurrency'] as String?,
+    displayTotal: (json['displayTotal'] as num?)?.toDouble(),
+    paymentCurrency: json['paymentCurrency'] as String?,
+    paymentAmount: (json['paymentAmount'] as num?)?.toDouble(),
     customerName: json['customerName'] as String? ?? '',
     addressLine: json['addressLine'] as String?,
     city: json['city'] as String?,

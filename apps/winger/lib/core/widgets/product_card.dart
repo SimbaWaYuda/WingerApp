@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'package:provider/provider.dart';
+
 import '../models/models.dart';
+import '../state/app_session.dart';
 import '../theme/winger_colors.dart';
 import 'product_photo.dart';
 
@@ -185,7 +188,7 @@ class ProductCard extends StatelessWidget {
                             TextSpan(
                               children: [
                                 TextSpan(
-                                  text: '\$${product.price.toStringAsFixed(2)}',
+                                  text: context.watch<AppSession>().formatMoney(product.price),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w800,
                                     fontSize: 14,
@@ -194,7 +197,8 @@ class ProductCard extends StatelessWidget {
                                 ),
                                 if (hasPromo)
                                   TextSpan(
-                                    text: ' \$${product.previousPrice!.toStringAsFixed(2)}',
+                                    text:
+                                        ' ${context.read<AppSession>().formatMoney(product.previousPrice!)}',
                                     style: const TextStyle(
                                       decoration: TextDecoration.lineThrough,
                                       color: WingerColors.muted,

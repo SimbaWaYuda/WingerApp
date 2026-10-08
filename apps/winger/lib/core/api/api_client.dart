@@ -139,11 +139,101 @@ class ApiClient {
         cityName: user['city'] as String? ?? 'Nairobi',
         address: user['addressLine'] as String? ?? 'Westlands',
       );
+      final preferred = user['displayCurrency'] as String?;
+      if (preferred != null && preferred.isNotEmpty) {
+        session.displayCurrency = preferred.toUpperCase();
+      }
+      await refreshCurrencyQuote();
       final locale = user['preferredLocale'] as String?;
       if (locale != null) {
         await session.setLocale(LocaleCode.fromCode(locale));
       }
     } catch (_) {}
+  }
+
+  Future<void> refreshCurrencyQuote() async {
+    try {
+      final configResponse = await http
+          .get(_uri('/fx/config'))
+          .timeout(const Duration(seconds: 5));
+      if (configResponse.statusCode != 200) return;
+      final config = jsonDecode(configResponse.body) as Map<String, dynamic>;
+      final settlement =
+          (config['settlementCurrency'] as String? ?? 'USD').toUpperCase();
+      final displayOptions =
+          (config['supportedDisplayCurrencies'] as List<dynamic>? ?? const [])
+              .map((e) => e.toString().toUpperCase())
+              .toList();
+      final paymentOptions =
+          (config['supportedPaymentCurrencies'] as List<dynamic>? ?? const [])
+              .map((e) => e.toString().toUpperCase())
+              .toList();
+      final display = displayOptions.contains(session.displayCurrency)
+          ? session.displayCurrency
+          : settlement;
+      if (display == settlement) {
+        session.applyCurrencyQuote(
+          settlement: settlement,
+          display: display,
+          rate: 1,
+          fresh: true,
+          displayOptions: displayOptions,
+          paymentOptions: paymentOptions,
+        );
+        return;
+      }
+      final quoteResponse = await http.get(
+        _uri('/fx/quote').replace(queryParameters: {
+          'from': settlement,
+          'to': display,
+        }),
+      ).timeout(const Duration(seconds: 5));
+      if (quoteResponse.statusCode != 200) {
+        final body = _tryJson(quoteResponse.body);
+        session.applyCurrencyQuote(
+          settlement: settlement,
+          display: settlement,
+          rate: 1,
+          fresh: false,
+          error: body?['message']?.toString() ?? 'Exchange rate unavailable',
+          displayOptions: displayOptions,
+          paymentOptions: paymentOptions,
+        );
+        return;
+      }
+      final quote = jsonDecode(quoteResponse.body) as Map<String, dynamic>;
+      session.applyCurrencyQuote(
+        settlement: settlement,
+        display: display,
+        rate: (quote['rate'] as num?)?.toDouble() ?? 1,
+        fresh: quote['fresh'] == true,
+        displayOptions: displayOptions,
+        paymentOptions: paymentOptions,
+      );
+    } catch (error) {
+      session.fxError = error.toString();
+    }
+  }
+
+  Future<void> setDisplayCurrency(String code) async {
+    final normalized = code.trim().toUpperCase();
+    if (session.accessToken != null) {
+      final response = await http
+          .patch(
+            _uri('/fx/display-currency'),
+            headers: session.authHeaders,
+            body: jsonEncode({'displayCurrency': normalized}),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        final body = _tryJson(response.body);
+        throw Exception(
+          body?['message']?.toString() ?? 'Could not save currency',
+        );
+      }
+    }
+    session.displayCurrency = normalized;
+    await refreshCurrencyQuote();
   }
 
   Future<void> updateProfile({

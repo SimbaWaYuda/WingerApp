@@ -171,6 +171,7 @@ export class AuthService {
       city: user.city,
       addressLine: user.addressLine,
       preferredLocale: user.preferredLocale,
+      displayCurrency: user.displayCurrency,
       profileComplete: user.profileComplete,
     };
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../api/api_client.dart';
 import '../data/mock_catalog.dart';
@@ -24,6 +25,13 @@ class AppSession extends ChangeNotifier {
   String addressLine = 'Westlands';
   /// express | standard | pickup
   String deliveryMethod = 'standard';
+  String settlementCurrency = 'USD';
+  String displayCurrency = 'USD';
+  double fxRate = 1;
+  bool fxFresh = true;
+  String? fxError;
+  List<String> supportedDisplayCurrencies = const ['USD', 'TZS', 'KES', 'EUR'];
+  List<String> supportedPaymentCurrencies = const ['USD', 'TZS'];
   double cartDeliveryFee = 0;
   double cartTax = 0;
   List<CartShipmentQuote> cartShipments = [];
@@ -43,6 +51,50 @@ class AppSession extends ChangeNotifier {
   double get cartTotal => _cart.fold(0, (sum, item) => sum + item.lineTotal);
   double get cartGrandTotal =>
       _roundMoney(cartTotal + cartDeliveryFee + cartTax);
+
+  String get paymentCurrency => supportedPaymentCurrencies.contains(displayCurrency)
+      ? displayCurrency
+      : settlementCurrency;
+
+  bool get showPaymentEstimate =>
+      fxFresh && displayCurrency != paymentCurrency;
+
+  String formatMoney(double settlementAmount, {bool settlement = false}) {
+    if (settlement || !fxFresh) {
+      return '$settlementCurrency ${settlementAmount.toStringAsFixed(2)}';
+    }
+    final converted = _roundMoney(settlementAmount * fxRate);
+    return '$displayCurrency ${converted.toStringAsFixed(2)}';
+  }
+
+  void applyCurrencyQuote({
+    required String settlement,
+    required String display,
+    required double rate,
+    required bool fresh,
+    String? error,
+    List<String>? displayOptions,
+    List<String>? paymentOptions,
+  }) {
+    settlementCurrency = settlement;
+    displayCurrency = display;
+    fxRate = rate <= 0 ? 1 : rate;
+    fxFresh = fresh;
+    fxError = error;
+    if (displayOptions != null && displayOptions.isNotEmpty) {
+      supportedDisplayCurrencies = displayOptions;
+    }
+    if (paymentOptions != null && paymentOptions.isNotEmpty) {
+      supportedPaymentCurrencies = paymentOptions;
+    }
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => notifyListeners());
+      return;
+    }
+    notifyListeners();
+  }
   bool get isSignedIn => role != null;
   bool isWishlisted(String productId) => wishlistIds.contains(productId);
 

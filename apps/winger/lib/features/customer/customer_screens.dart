@@ -181,6 +181,65 @@ class _CompareTray extends StatelessWidget {
   }
 }
 
+class _CurrencyFilter extends StatelessWidget {
+  const _CurrencyFilter();
+
+  @override
+  Widget build(BuildContext context) {
+    final session = context.watch<AppSession>();
+    final api = context.read<ApiClient>();
+    final options = session.supportedDisplayCurrencies;
+    final selected = options.contains(session.displayCurrency)
+        ? session.displayCurrency
+        : session.settlementCurrency;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          const Icon(Icons.payments_outlined, size: 18),
+          const SizedBox(width: 8),
+          const Text('Currency', style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(width: 12),
+          DropdownButton<String>(
+            value: selected,
+            items: [
+              for (final code in options)
+                DropdownMenuItem(value: code, child: Text(code)),
+            ],
+            onChanged: (value) async {
+              if (value == null) return;
+              try {
+                await api.setDisplayCurrency(value);
+              } catch (error) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+                );
+              }
+            },
+          ),
+          if (session.fxError != null)
+            Expanded(
+              child: Text(
+                session.fxError!,
+                style: const TextStyle(color: WingerColors.dangerInk, fontSize: 12),
+              ),
+            )
+          else
+            Expanded(
+              child: Text(
+                session.showPaymentEstimate
+                    ? 'Prices shown in ${session.displayCurrency}. You will pay in ${session.paymentCurrency}.'
+                    : 'You will pay in ${session.paymentCurrency}.',
+                style: const TextStyle(color: WingerColors.muted, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class CustomerHomeScreen extends StatefulWidget {
   const CustomerHomeScreen({super.key});
 
@@ -206,6 +265,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
     final api = context.read<ApiClient>();
     if (session.accessToken == null) return;
     try {
+      await api.refreshCurrencyQuote();
       await api.stampOnboardingActivity('browsed_catalog');
     } catch (_) {}
   }
@@ -256,6 +316,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
           padding: const EdgeInsets.all(20),
           children: [
             const OnboardingChecklistCard(journeyRoute: '/customer/onboarding'),
+            const _CurrencyFilter(),
             Container(
               padding: EdgeInsets.all(wide ? 32 : 20),
               decoration: BoxDecoration(
@@ -1809,12 +1870,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 Text(product.brand, style: const TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600)),
                 Text(product.name, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 8),
-                Text('\$${product.price.toStringAsFixed(2)}',
+                Text(session.formatMoney(product.price),
                     style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: WingerColors.brand)),
                 if (product.previousPrice != null && product.previousPrice! > product.price) ...[
                   const SizedBox(height: 4),
                   Text(
-                    '\$${product.previousPrice!.toStringAsFixed(2)}',
+                    session.formatMoney(product.previousPrice!),
                     style: const TextStyle(
                       decoration: TextDecoration.lineThrough,
                       color: WingerColors.muted,
@@ -2070,7 +2131,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   style: const TextStyle(fontWeight: FontWeight.w800),
                                 ),
                                 subtitle: Text(
-                                  '\$${offer.price.toStringAsFixed(2)} · ★ ${offer.rating.toStringAsFixed(1)} · ${offer.stock} in stock',
+                                  '${session.formatMoney(offer.price)} · ★ ${offer.rating.toStringAsFixed(1)} · ${offer.stock} in stock',
                                 ),
                                 trailing: const Icon(Icons.chevron_right),
                                 onTap: () => context.go('/customer/product/${offer.id}'),
@@ -2216,7 +2277,7 @@ class _CompareScreenState extends State<CompareScreen> {
                   for (final product in products)
                     InputChip(
                       label: Text(
-                        '${product.supplierName} · \$${product.price.toStringAsFixed(0)}',
+                        '${product.supplierName} · ${session.formatMoney(product.price)}',
                         overflow: TextOverflow.ellipsis,
                       ),
                       onDeleted: () => session.removeFromCompare(product.id),
@@ -2250,7 +2311,7 @@ class _CompareScreenState extends State<CompareScreen> {
                   rows: [
                     DataRow(cells: [
                       const DataCell(Text('Price')),
-                      ...products.map((p) => DataCell(Text('\$${p.price.toStringAsFixed(2)}'))),
+                      ...products.map((p) => DataCell(Text(session.formatMoney(p.price)))),
                     ]),
                     DataRow(cells: [
                       const DataCell(Text('Supplier')),
@@ -2428,8 +2489,8 @@ class _CartScreenState extends State<CartScreen> {
                     title: Text(item.product.name, style: const TextStyle(fontWeight: FontWeight.w700)),
                     subtitle: Text(
                       item.quantity > item.product.stock || item.product.stock <= 0
-                          ? '${s.t('unavailableItem')}\n\$${item.product.price.toStringAsFixed(2)} × ${item.quantity}'
-                          : '\$${item.product.price.toStringAsFixed(2)} × ${item.quantity} = \$${item.lineTotal.toStringAsFixed(2)}',
+                          ? '${s.t('unavailableItem')}\n${session.formatMoney(item.product.price)} × ${item.quantity}'
+                          : '${session.formatMoney(item.product.price)} × ${item.quantity} = ${session.formatMoney(item.lineTotal)}',
                       style: TextStyle(
                         color: item.quantity > item.product.stock || item.product.stock <= 0
                             ? WingerColors.dangerInk
@@ -2471,21 +2532,21 @@ class _CartScreenState extends State<CartScreen> {
             const SizedBox(height: 12),
           ],
           Text(
-            '${s.t('subtotal')}: \$${session.cartTotal.toStringAsFixed(2)}',
-            style: TextStyle(color: WingerColors.muted),
+            '${s.t('subtotal')}: ${session.formatMoney(session.cartTotal)}',
+            style: const TextStyle(color: WingerColors.muted),
           ),
           Text(
-            '${s.t('deliveryFee')}: \$${session.cartDeliveryFee.toStringAsFixed(2)}'
+            '${s.t('deliveryFee')}: ${session.formatMoney(session.cartDeliveryFee)}'
             '${session.cartBySupplier.length > 1 ? ' · ${session.cartBySupplier.length} ${s.t('suppliers').toLowerCase()}' : ''}',
-            style: TextStyle(color: WingerColors.muted),
+            style: const TextStyle(color: WingerColors.muted),
           ),
           Text(
-            '${s.t('estimatedTax')}: \$${session.cartTax.toStringAsFixed(2)}',
-            style: TextStyle(color: WingerColors.muted),
+            '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
+            style: const TextStyle(color: WingerColors.muted),
           ),
           const SizedBox(height: 4),
           Text(
-            '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}',
+            '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)}',
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
           ),
           const SizedBox(height: 12),
@@ -2657,10 +2718,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                       subtitle: Text(
-                        '\$${item.product.price.toStringAsFixed(2)} × ${item.quantity}',
+                        '${session.formatMoney(item.product.price)} × ${item.quantity}',
                       ),
                       trailing: Text(
-                        '\$${item.lineTotal.toStringAsFixed(2)}',
+                        session.formatMoney(item.lineTotal),
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
@@ -2673,20 +2734,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '${s.t('subtotal')}: \$${session.cartTotal.toStringAsFixed(2)}',
-                      style: TextStyle(color: WingerColors.muted),
+                      '${s.t('subtotal')}: ${session.formatMoney(session.cartTotal)}',
+                      style: const TextStyle(color: WingerColors.muted),
                     ),
                     Text(
-                      '${s.t('deliveryFee')}: \$${session.cartDeliveryFee.toStringAsFixed(2)}',
-                      style: TextStyle(color: WingerColors.muted),
+                      '${s.t('deliveryFee')}: ${session.formatMoney(session.cartDeliveryFee)}',
+                      style: const TextStyle(color: WingerColors.muted),
                     ),
                     Text(
-                      '${s.t('estimatedTax')}: \$${session.cartTax.toStringAsFixed(2)}',
-                      style: TextStyle(color: WingerColors.muted),
+                      '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
+                      style: const TextStyle(color: WingerColors.muted),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}',
+                      '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)}',
                       style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
                     ),
                   ],
@@ -2754,7 +2815,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   title: Text(shipment.supplierName, style: const TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Text(
                     '${shipment.estimate}\n'
-                    '${s.t('deliveryFee')}: \$${shipment.fee.toStringAsFixed(2)}'
+                    '${s.t('deliveryFee')}: ${session.formatMoney(shipment.fee)}'
                     '${session.deliveryMethod == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
                   ),
                   isThreeLine: true,
@@ -2762,12 +2823,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ),
             const SizedBox(height: 8),
             Text(
-              '${s.t('deliveryFee')}: \$${session.cartDeliveryFee.toStringAsFixed(2)} · '
-              '${s.t('estimatedTax')}: \$${session.cartTax.toStringAsFixed(2)}',
+              '${s.t('deliveryFee')}: ${session.formatMoney(session.cartDeliveryFee)} · '
+              '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
               style: const TextStyle(color: WingerColors.muted),
             ),
             Text(
-              '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}',
+              '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)}',
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ]
@@ -2799,12 +2860,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Text(
               _payMethod == _CheckoutPayMethod.payOnDelivery
                   ? '${s.t('payOnDeliveryHint')}\n'
-                      '${s.t('dueOnDelivery')}: \$${session.cartGrandTotal.toStringAsFixed(2)}\n'
+                      '${session.showPaymentEstimate ? 'Estimated ${session.formatMoney(session.cartGrandTotal)}\n' : ''}'
+                      'You will pay ${session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal)}'
+                      ' when the order arrives.\n'
                       '${session.addressLine}, ${session.city}'
                   : session.apiOnline && session.accessToken != null
-                      ? '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)}\n'
+                      ? '${session.showPaymentEstimate ? 'Estimated ${session.formatMoney(session.cartGrandTotal)}\n' : ''}'
+                          'You will pay ${session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal)}\n'
                           'Ship to ${session.addressLine}, ${session.city}'
-                      : '${s.t('dueToday')}: \$${session.cartGrandTotal.toStringAsFixed(2)} — '
+                      : '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)} — '
                           'order saved locally until online',
             ),
           ],
@@ -2919,7 +2983,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             session.lastOrder?.isCodPending == true
                 ? s.t('codPendingBanner').replaceAll(
                       '{amount}',
-                      '\$${(session.lastOrder?.total ?? 0).toStringAsFixed(2)}',
+                      session.lastOrder?.lockedAmountLabel() ?? session.formatMoney(0),
                     )
                 : session.lastOrder?.paymentMode == 'cod'
                     ? '${s.t('payOnDelivery')}: ${session.lastOrder?.paymentStatus ?? 'PENDING'}'
@@ -3018,7 +3082,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             const SizedBox(width: 12),
                             StatusBadge(status: order.status),
                             const Spacer(),
-                            Text('\$${order.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                            Text(order.lockedAmountLabel(), style: const TextStyle(fontWeight: FontWeight.w800)),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -3028,7 +3092,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                   .t('codPendingBanner')
                                   .replaceAll(
                                     '{amount}',
-                                    '\$${order.total.toStringAsFixed(2)}',
+                                    order.lockedAmountLabel(),
                                   )
                               : '${order.paymentStatus} · ${order.paymentMode}',
                           style: TextStyle(
@@ -3457,7 +3521,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                               .t('codPendingBanner')
                               .replaceAll(
                                 '{amount}',
-                                '\$${order.total.toStringAsFixed(2)}',
+                                order.lockedAmountLabel(),
                               )
                           : '${order.paymentStatus} · ${order.paymentMode}${order.paymentMethod != null ? ' · ${order.paymentMethod}' : ''}',
                       style: TextStyle(
@@ -3468,7 +3532,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             order.isCodPending ? FontWeight.w600 : null,
                       ),
                     ),
-                    Text('\$${order.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                    Text(order.lockedAmountLabel(), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
                     if (order.isReplacementOrder) ...[
                       const SizedBox(height: 8),
                       Text(

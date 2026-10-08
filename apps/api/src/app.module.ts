@@ -11,6 +11,7 @@ import { ProductsModule } from './products/products.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { FxModule } from './fx/fx.module';
 import { SyncModule } from './sync/sync.module';
 
 @Module({
@@ -26,6 +27,7 @@ import { SyncModule } from './sync/sync.module';
     AnalyticsModule,
     OnboardingModule,
     NotificationsModule,
+    FxModule,
   ],
   controllers: [AppController],
   providers: [AppService],
