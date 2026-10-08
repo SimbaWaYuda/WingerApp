@@ -3081,9 +3081,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             Text(order.id, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
                             const SizedBox(width: 12),
                             StatusBadge(status: order.status),
-                            const Spacer(),
-                            Text(order.lockedAmountLabel(), style: const TextStyle(fontWeight: FontWeight.w800)),
                           ],
+                        ),
+                        const SizedBox(height: 4),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            order.lockedAmountLabel(),
+                            textAlign: TextAlign.end,
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(

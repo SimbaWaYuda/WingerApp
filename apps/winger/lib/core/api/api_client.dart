@@ -82,7 +82,7 @@ class ApiClient {
       supplier: user['supplierId'] as String?,
     );
     session.setApiOnline(true);
-    await refreshProfile();
+    await refreshProfile(applyLocale: true);
   }
 
   Future<void> login({
@@ -122,10 +122,28 @@ class ApiClient {
       supplier: user['supplierId'] as String?,
     );
     session.setApiOnline(true);
-    await refreshProfile();
+    await refreshProfile(applyLocale: true);
   }
 
-  Future<void> refreshProfile() async {
+  Future<void> updatePreferredLocale(String code) async {
+    if (session.accessToken == null) return;
+    final response = await http
+        .patch(
+          _uri('/auth/locale'),
+          headers: session.authHeaders,
+          body: jsonEncode({'preferredLocale': code}),
+        )
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Save language failed (${response.statusCode})',
+      );
+    }
+  }
+
+  Future<void> refreshProfile({bool applyLocale = false}) async {
     if (session.accessToken == null) return;
     try {
       final response = await http
@@ -145,8 +163,8 @@ class ApiClient {
       }
       await refreshCurrencyQuote();
       final locale = user['preferredLocale'] as String?;
-      if (locale != null) {
-        await session.setLocale(LocaleCode.fromCode(locale));
+      if (applyLocale && locale != null) {
+        await session.setLocale(LocaleCode.fromCode(locale), persist: false);
       }
     } catch (_) {}
   }

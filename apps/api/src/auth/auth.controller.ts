@@ -55,6 +55,18 @@ export class AuthController {
     return this.authService.me(user.sub);
   }
 
+  @Patch('locale')
+  @UseGuards(JwtAuthGuard)
+  updateLocale(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { preferredLocale?: string },
+  ) {
+    return this.authService.updatePreferredLocale(
+      user.sub,
+      String(body.preferredLocale ?? ''),
+    );
+  }
+
   @Patch('profile')
   @UseGuards(JwtAuthGuard)
   updateProfile(

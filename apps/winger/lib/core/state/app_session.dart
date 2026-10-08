@@ -43,7 +43,10 @@ class AppSession extends ChangeNotifier {
   CustomerOrder? lastOrder;
   bool apiOnline = false;
   int pendingSyncCount = 0;
-  String apiBaseUrl = 'http://localhost:3000';
+  /// Android emulator reaches the host machine through 10.0.2.2, not localhost.
+  String apiBaseUrl = !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+      ? 'http://10.0.2.2:3000'
+      : 'http://localhost:3000';
 
   List<CartItem> get cart => List.unmodifiable(_cart);
   int get cartCount => _cart.fold(0, (sum, item) => sum + item.quantity);
@@ -164,9 +167,15 @@ class AppSession extends ChangeNotifier {
     await _db?.touchRecentlyViewed(productId);
   }
 
-  Future<void> setLocale(LocaleCode code) async {
+  Future<void> setLocale(LocaleCode code, {bool persist = true}) async {
     localeCode = code;
     notifyListeners();
+    if (!persist || accessToken == null) return;
+    try {
+      await _api?.updatePreferredLocale(code.code);
+    } catch (_) {
+      // Keep the language on screen even if the save fails.
+    }
   }
 
   void setDeliveryMethod(String method) {

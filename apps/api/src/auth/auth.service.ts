@@ -209,6 +209,18 @@ export class AuthService {
     return this.me(user.id);
   }
 
+  async updatePreferredLocale(userId: string, locale: string) {
+    const code = locale.trim().toLowerCase();
+    if (code !== 'en' && code !== 'es' && code !== 'sw') {
+      throw new BadRequestException('preferredLocale must be en, es, or sw');
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { preferredLocale: code },
+    });
+    return { preferredLocale: code };
+  }
+
   private tokenResponse(user: {
     id: string;
     email: string;
