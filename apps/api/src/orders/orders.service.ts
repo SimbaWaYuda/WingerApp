@@ -640,6 +640,98 @@ export class OrdersService {
     });
   }
 
+  /** Shipment counts for the admin delivery tab. Line values are settlement USD. */
+  async getAdminDelivery(user: AuthUser) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Admin account required');
+    }
+
+    const items = await this.prisma.orderItem.findMany({
+      where: {
+        status: { not: OrderStatus.CANCELLED },
+        order: { status: { not: OrderStatus.CANCELLED } },
+      },
+      select: {
+        id: true,
+        productName: true,
+        supplierName: true,
+        status: true,
+        lineTotal: true,
+        quantity: true,
+        trackingCode: true,
+        order: { select: { id: true, displayId: true, createdAt: true } },
+      },
+    });
+
+    let inTransit = 0;
+    let inTransitValue = 0;
+    let pickupReady = 0;
+    let pickupReadyValue = 0;
+    let exceptions = 0;
+    let exceptionValue = 0;
+    const shipments: Array<{
+      id: string;
+      orderId: string;
+      displayId: string;
+      supplierName: string;
+      productName: string;
+      quantity: number;
+      status: OrderStatus;
+      lineTotal: number;
+      trackingCode: string | null;
+      createdAt: Date;
+    }> = [];
+
+    for (const item of items) {
+      const amount = Number(item.lineTotal);
+      const missingTracking =
+        item.status === OrderStatus.SHIPPED && !item.trackingCode?.trim();
+      const isException = item.status === OrderStatus.RETURNED || missingTracking;
+      if (item.status === OrderStatus.SHIPPED) {
+        inTransit += 1;
+        inTransitValue += amount;
+      } else if (item.status === OrderStatus.READY_FOR_PICKUP) {
+        pickupReady += 1;
+        pickupReadyValue += amount;
+      }
+      if (isException) {
+        exceptions += 1;
+        exceptionValue += amount;
+      }
+      if (
+        item.status === OrderStatus.SHIPPED ||
+        item.status === OrderStatus.READY_FOR_PICKUP ||
+        item.status === OrderStatus.RETURNED
+      ) {
+        shipments.push({
+          id: item.id,
+          orderId: item.order.id,
+          displayId: item.order.displayId,
+          supplierName: item.supplierName,
+          productName: item.productName,
+          quantity: item.quantity,
+          status: item.status,
+          lineTotal: Math.round(amount * 100) / 100,
+          trackingCode: item.trackingCode,
+          createdAt: item.order.createdAt,
+        });
+      }
+    }
+
+    shipments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const round = (n: number) => Math.round(n * 100) / 100;
+    return {
+      currency: 'USD',
+      inTransit,
+      inTransitValue: round(inTransitValue),
+      pickupReady,
+      pickupReadyValue: round(pickupReadyValue),
+      exceptions,
+      exceptionValue: round(exceptionValue),
+      shipments: shipments.slice(0, 40).map(({ createdAt: _createdAt, ...row }) => row),
+    };
+  }
+
   async list(user: AuthUser) {
     if (user.role === UserRole.CUSTOMER) {
       const orders = await this.prisma.order.findMany({

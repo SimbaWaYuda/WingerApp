@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
-import '../../core/data/mock_catalog.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
 import '../../core/repositories/catalog_repository.dart';
@@ -467,42 +466,167 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   }
 }
 
-class AdminDeliveryScreen extends StatelessWidget {
+class AdminDeliveryScreen extends StatefulWidget {
   const AdminDeliveryScreen({super.key});
+
+  @override
+  State<AdminDeliveryScreen> createState() => _AdminDeliveryScreenState();
+}
+
+class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
+  Future<Map<String, dynamic>>? _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _future ??= _load();
+  }
+
+  Future<Map<String, dynamic>> _load() async {
+    final session = context.read<AppSession>();
+    final token = session.accessToken;
+    if (token == null || token.isEmpty) {
+      throw Exception(
+        'Missing Bearer token — sign out and sign in again with API credentials (not local demo mode).',
+      );
+    }
+    return context.read<ApiClient>().fetchAdminDelivery();
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
-    final order = MockCatalog.sampleOrder;
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(s.t('delivery'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: const [
-            SizedBox(width: 160, child: KpiCard(data: KpiCardData(label: 'In transit', value: '1,284', delta: '+2.1%'))),
-            SizedBox(width: 160, child: KpiCard(data: KpiCardData(label: 'Pickup ready', value: '218', delta: '+1.0%'))),
-            SizedBox(
-              width: 160,
-              child: KpiCard(data: KpiCardData(label: 'Exceptions', value: '17', delta: 'attention', positive: false)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Text('Split shipment: ${order.id}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-        const SizedBox(height: 8),
-        for (final leg in order.shipments)
-          Card(
-            child: ListTile(
-              title: Text(leg.supplierName, style: const TextStyle(fontWeight: FontWeight.w700)),
-              subtitle: Text(leg.productName),
-              trailing: StatusBadge(status: leg.status),
-            ),
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final future = _future;
+    if (future == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return FutureBuilder<Map<String, dynamic>>(
+      future: future,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final exceptionCount = (data?['exceptions'] as num?)?.toInt() ?? 0;
+        final kpis = <KpiCardData>[
+          KpiCardData(
+            label: s.t('inTransit'),
+            value: '${data?['inTransit'] ?? 0}',
+            delta: '\$${((data?['inTransitValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
           ),
-      ],
+          KpiCardData(
+            label: s.t('pickupReady'),
+            value: '${data?['pickupReady'] ?? 0}',
+            delta: '\$${((data?['pickupReadyValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+          ),
+          KpiCardData(
+            label: s.t('exceptions'),
+            value: '$exceptionCount',
+            delta: '\$${((data?['exceptionValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            positive: exceptionCount == 0,
+          ),
+        ];
+        final shipments = (data?['shipments'] as List<dynamic>? ?? const [])
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList();
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    s.t('delivery'),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => setState(() => _future = _load()),
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            Text(
+              s.t('settlementUsd'),
+              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            if (snapshot.connectionState != ConnectionState.done)
+              const Center(child: CircularProgressIndicator())
+            else if (snapshot.hasError)
+              Card(
+                color: WingerColors.brandMuted,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    snapshot.error.toString().replaceFirst('Exception: ', ''),
+                    style: TextStyle(color: WingerColors.muted),
+                  ),
+                ),
+              )
+            else ...[
+              GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: wide ? 3 : 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: wide ? 1.35 : 0.92,
+                children: [for (final kpi in kpis) KpiCard(data: kpi)],
+              ),
+              const SizedBox(height: 20),
+              Text(
+                s.t('activeShipments'),
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+              ),
+              const SizedBox(height: 8),
+              if (shipments.isEmpty)
+                Text(s.t('noActiveShipments'), style: TextStyle(color: WingerColors.muted))
+              else
+                for (final row in shipments)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${row['displayId'] ?? ''}',
+                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(height: 4),
+                                Text('${row['supplierName'] ?? ''}'),
+                                Text('${row['productName'] ?? ''} × ${row['quantity'] ?? 1}'),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '\$${((row['lineTotal'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+                                  style: const TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                if ((row['trackingCode'] as String?)?.isNotEmpty == true) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${s.t('trackingCode')}: ${row['trackingCode']}',
+                                    style: TextStyle(color: WingerColors.muted),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          StatusBadge(status: orderStatusFromApi(row['status'] as String?)),
+                        ],
+                      ),
+                    ),
+                  ),
+            ],
+          ],
+        );
+      },
     );
   }
 }

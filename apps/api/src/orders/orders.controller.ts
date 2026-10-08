@@ -63,6 +63,12 @@ export class OrdersController {
     return this.ordersService.getAdminSuppliers(user);
   }
 
+  @Get('admin/delivery')
+  @Roles(UserRole.ADMIN)
+  adminDelivery(@CurrentUser() user: AuthUser) {
+    return this.ordersService.getAdminDelivery(user);
+  }
+
   @Get('returns')
   @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
   listReturns(
