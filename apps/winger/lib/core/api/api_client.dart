@@ -186,6 +186,12 @@ class ApiClient {
           (config['supportedPaymentCurrencies'] as List<dynamic>? ?? const [])
               .map((e) => e.toString().toUpperCase())
               .toList();
+      final mode = config['stripeCheckoutMode'] as String? ?? 'demo';
+      session.stripeCheckoutMode =
+          mode == 'test' || mode == 'live' ? mode : 'demo';
+      final publishable = config['stripePublishableKey'] as String?;
+      session.stripePublishableKey =
+          publishable != null && publishable.isNotEmpty ? publishable : null;
       final display = displayOptions.contains(session.displayCurrency)
           ? session.displayCurrency
           : settlement;

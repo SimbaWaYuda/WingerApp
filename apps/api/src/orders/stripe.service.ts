@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 
 export type ChargeResult = {
-  mode: 'demo' | 'stripe';
+  mode: 'demo' | 'test' | 'live';
   status: 'paid' | 'failed';
   paymentIntentId?: string;
   message: string;
@@ -12,21 +12,24 @@ export type ChargeResult = {
 export class StripeService {
   private readonly logger = new Logger(StripeService.name);
   private readonly stripe: Stripe | null;
+  readonly checkoutMode: 'demo' | 'test' | 'live';
 
   constructor() {
-    const key = process.env.STRIPE_SECRET_KEY?.trim();
-    this.stripe = key
-      ? new Stripe(key, {
-          apiVersion: '2025-02-24.acacia',
-        })
-      : null;
-    if (!this.stripe) {
+    const key = process.env.STRIPE_SECRET_KEY?.trim() ?? '';
+    if (key.startsWith('sk_test_') || key.startsWith('sk_live_')) {
+      this.stripe = new Stripe(key, {
+        apiVersion: '2025-02-24.acacia',
+      });
+      this.checkoutMode = key.startsWith('sk_live_') ? 'live' : 'test';
+    } else {
+      this.stripe = null;
+      this.checkoutMode = 'demo';
       this.logger.log('STRIPE_SECRET_KEY not set — checkout uses demo payment');
     }
   }
 
   get configured(): boolean {
-    return this.stripe != null;
+    return this.checkoutMode !== 'demo';
   }
 
   async chargeOrder(params: {
@@ -62,7 +65,7 @@ export class StripeService {
 
       if (intent.status === 'succeeded') {
         return {
-          mode: 'stripe',
+          mode: this.checkoutMode,
           status: 'paid',
           paymentIntentId: intent.id,
           message: 'Stripe payment succeeded',
@@ -70,7 +73,7 @@ export class StripeService {
       }
 
       return {
-        mode: 'stripe',
+        mode: this.checkoutMode,
         status: 'failed',
         paymentIntentId: intent.id,
         message: `Stripe payment status: ${intent.status}`,
@@ -80,7 +83,7 @@ export class StripeService {
         error instanceof Error ? error.message : 'Stripe charge failed';
       this.logger.warn(`Stripe charge failed: ${message}`);
       return {
-        mode: 'stripe',
+        mode: this.checkoutMode,
         status: 'failed',
         message,
       };

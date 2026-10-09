@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
+  OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -9,13 +11,17 @@ import { AuthUser } from '../auth/auth.types';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Dev seed: 1 USD = rate quote units. Refreshed only by admin or first boot. */
+/** Used only when the rate table is empty. A live feed replaces these. */
 const DEV_QUOTES: Record<string, number> = {
   USD: 1,
   TZS: 2650,
   KES: 129,
   EUR: 0.92,
 };
+
+const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const FX_FEED_URL = 'https://open.er-api.com/v6/latest';
+const AUTO_SOURCE = 'exchangerate-api';
 
 export type FxQuote = {
   baseCurrency: string;
@@ -28,12 +34,28 @@ export type FxQuote = {
 };
 
 @Injectable()
-export class FxService implements OnModuleInit {
+export class FxService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(FxService.name);
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private refreshInFlight: Promise<number> | null = null;
+  /** Live 1-base-unit quotes. Tests replace this. */
+  fetchLiveRates = fetchOpenExchangeRates;
+
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
     await this.ensureSettings();
     await this.seedDevRatesIfEmpty();
+    await this.refreshStaleRates();
+    this.refreshTimer = setInterval(() => {
+      void this.refreshStaleRates();
+    }, REFRESH_INTERVAL_MS);
+    this.refreshTimer.unref?.();
+  }
+
+  onModuleDestroy() {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
   }
 
   normalize(code?: string | null): string {
@@ -62,8 +84,24 @@ export class FxService implements OnModuleInit {
         ['USD', 'TZS'],
       ),
       fxMaxAgeSeconds: settings.fxMaxAgeSeconds,
-      stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY?.trim()),
+      stripeConfigured: this.stripeCheckoutMode() !== 'demo',
+      stripeCheckoutMode: this.stripeCheckoutMode(),
+      stripePublishableKey: this.stripePublishableKey(),
     };
+  }
+
+  /** demo until a Stripe secret key is set. Publishable keys are not enough to charge. */
+  stripeCheckoutMode(): 'demo' | 'test' | 'live' {
+    const secret = process.env.STRIPE_SECRET_KEY?.trim() ?? '';
+    if (secret.startsWith('sk_live_')) return 'live';
+    if (secret.startsWith('sk_test_')) return 'test';
+    return 'demo';
+  }
+
+  stripePublishableKey(): string | null {
+    const key = process.env.STRIPE_PUBLISHABLE_KEY?.trim() ?? '';
+    if (key.startsWith('pk_test_') || key.startsWith('pk_live_')) return key;
+    return null;
   }
 
   async quote(base: string, quote: string): Promise<FxQuote> {
@@ -85,11 +123,19 @@ export class FxService implements OnModuleInit {
       };
     }
 
-    const row = await this.prisma.exchangeRate.findUnique({
+    let row = await this.prisma.exchangeRate.findUnique({
       where: {
         baseCurrency_quoteCurrency: { baseCurrency, quoteCurrency },
       },
     });
+    if (this.rateNeedsRefresh(row)) {
+      await this.refreshStaleRates();
+      row = await this.prisma.exchangeRate.findUnique({
+        where: {
+          baseCurrency_quoteCurrency: { baseCurrency, quoteCurrency },
+        },
+      });
+    }
     if (!row) {
       throw new BadRequestException(
         `No exchange rate for ${baseCurrency} to ${quoteCurrency}`,
@@ -255,7 +301,20 @@ export class FxService implements OnModuleInit {
     };
   }
 
+  /**
+   * Replace rates that expired, or that are still the first-boot seed.
+   * A rate saved by an admin stays until its lifetime ends.
+   */
+  async refreshStaleRates(): Promise<number> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    this.refreshInFlight = this.refreshStaleRatesOnce().finally(() => {
+      this.refreshInFlight = null;
+    });
+    return this.refreshInFlight;
+  }
+
   async listRates() {
+    await this.refreshStaleRates();
     const rows = await this.prisma.exchangeRate.findMany({
       orderBy: [{ baseCurrency: 'asc' }, { quoteCurrency: 'asc' }],
     });
@@ -293,6 +352,77 @@ export class FxService implements OnModuleInit {
     }
   }
 
+  private rateNeedsRefresh(
+    row: { source: string; expiresAt: Date } | null | undefined,
+  ): boolean {
+    if (!row) return true;
+    if (row.expiresAt.getTime() <= Date.now()) return true;
+    return row.source === 'dev-seed';
+  }
+
+  private async refreshStaleRatesOnce(): Promise<number> {
+    const settings = await this.ensureSettings();
+    const base = this.normalize(settings.currency) || 'USD';
+    const wanted = this.readCodes(settings.supportedDisplayCurrencies, [
+      'USD',
+      'TZS',
+      'KES',
+      'EUR',
+    ]).filter((code) => code !== base);
+    if (!wanted.length) return 0;
+
+    const rows = await this.prisma.exchangeRate.findMany({
+      where: { baseCurrency: base, quoteCurrency: { in: wanted } },
+    });
+    const byQuote = new Map(rows.map((row) => [row.quoteCurrency, row]));
+    const stale = wanted.filter((code) => this.rateNeedsRefresh(byQuote.get(code)));
+    if (!stale.length) return 0;
+
+    let live: Record<string, number>;
+    try {
+      live = await this.fetchLiveRates(base, stale);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown error';
+      this.logger.warn(`Exchange rate refresh failed: ${message}`);
+      return 0;
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + settings.fxMaxAgeSeconds * 1000);
+    let updated = 0;
+    for (const quoteCurrency of stale) {
+      const rate = live[quoteCurrency];
+      if (!Number.isFinite(rate) || rate <= 0) {
+        this.logger.warn(`No live rate for ${base}/${quoteCurrency}`);
+        continue;
+      }
+      await this.prisma.exchangeRate.upsert({
+        where: {
+          baseCurrency_quoteCurrency: { baseCurrency: base, quoteCurrency },
+        },
+        create: {
+          baseCurrency: base,
+          quoteCurrency,
+          rate: new Prisma.Decimal(rate.toFixed(8)),
+          source: AUTO_SOURCE,
+          fetchedAt: now,
+          expiresAt,
+        },
+        update: {
+          rate: new Prisma.Decimal(rate.toFixed(8)),
+          source: AUTO_SOURCE,
+          fetchedAt: now,
+          expiresAt,
+        },
+      });
+      updated += 1;
+    }
+    if (updated > 0) {
+      this.logger.log(`Refreshed ${updated} exchange rate(s) for ${base}`);
+    }
+    return updated;
+  }
+
   private readCodes(value: unknown, fallback: string[]): string[] {
     if (Array.isArray(value)) {
       const codes = value
@@ -306,4 +436,32 @@ export class FxService implements OnModuleInit {
 
 export function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+/** 1 base unit in each requested quote currency. No API key. */
+export async function fetchOpenExchangeRates(
+  base: string,
+  quotes: string[],
+): Promise<Record<string, number>> {
+  const root = (process.env.FX_FEED_URL?.trim() || FX_FEED_URL).replace(/\/$/, '');
+  const response = await fetch(`${root}/${encodeURIComponent(base)}`, {
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new Error(`FX feed HTTP ${response.status}`);
+  }
+  const body = (await response.json()) as {
+    result?: string;
+    rates?: Record<string, number>;
+  };
+  if (body.result && body.result !== 'success') {
+    throw new Error('FX feed rejected the request');
+  }
+  const rates = body.rates ?? {};
+  const out: Record<string, number> = {};
+  for (const quote of quotes) {
+    const rate = Number(rates[quote]);
+    if (Number.isFinite(rate) && rate > 0) out[quote] = rate;
+  }
+  return out;
 }

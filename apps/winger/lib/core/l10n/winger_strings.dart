@@ -204,6 +204,8 @@ class WingerStrings {
       'exchangeRates': 'Exchange rates',
       'rateFresh': 'Fresh',
       'rateExpired': 'Expired',
+      'rateAuto': 'Updates automatically when it expires',
+      'rateManual': 'Saved by an admin until it expires',
       'saveRate': 'Save rate',
       'addRate': 'Add rate',
       'addCurrency': 'Add currency',
@@ -304,6 +306,12 @@ class WingerStrings {
       'payment': 'Payment',
       'paymentMethod': 'Payment method',
       'payByCard': 'Card',
+      'cardStripeTest': 'Card payment uses Stripe test mode.',
+      'cardStripeLive': 'Card payment uses Stripe live mode.',
+      'cardStripeNeedsSecret':
+          'A Stripe test publishable key is saved. Card checkout stays a demo charge until the API has a test secret key.',
+      'cardDemoCharge':
+          'Card checkout is a demo charge. Commission from this payment is not real money.',
       'payOnDelivery': 'Pay on delivery',
       'payOnDeliveryHint':
           'No charge now — pay cash or mobile money when your order arrives.',
@@ -654,6 +662,8 @@ class WingerStrings {
       'exchangeRates': 'Tipos de cambio',
       'rateFresh': 'Vigente',
       'rateExpired': 'Vencido',
+      'rateAuto': 'Se actualiza solo cuando vence',
+      'rateManual': 'Guardado por un administrador hasta que venza',
       'saveRate': 'Guardar tipo',
       'addRate': 'Agregar tipo',
       'addCurrency': 'Agregar moneda',
@@ -754,6 +764,12 @@ class WingerStrings {
       'payment': 'Pago',
       'paymentMethod': 'Método de pago',
       'payByCard': 'Tarjeta',
+      'cardStripeTest': 'El pago con tarjeta usa el modo de prueba de Stripe.',
+      'cardStripeLive': 'El pago con tarjeta usa el modo real de Stripe.',
+      'cardStripeNeedsSecret':
+          'Hay una clave pública de prueba de Stripe. El cobro con tarjeta sigue siendo demo hasta que la API tenga la clave secreta de prueba.',
+      'cardDemoCharge':
+          'El pago con tarjeta es un cobro demo. La comisión de este pago no es dinero real.',
       'payOnDelivery': 'Pagar al entregar',
       'payOnDeliveryHint':
           'Sin cargo ahora — paga en efectivo o móvil al recibir el pedido.',
@@ -1104,6 +1120,8 @@ class WingerStrings {
       'exchangeRates': 'Viwango vya kubadilisha',
       'rateFresh': 'Hai',
       'rateExpired': 'Imeisha',
+      'rateAuto': 'Husasishwa lenyewe kinapoisha',
+      'rateManual': 'Kimehifadhiwa na msimamizi hadi kiishe',
       'saveRate': 'Hifadhi kiwango',
       'addRate': 'Ongeza kiwango',
       'addCurrency': 'Ongeza sarafu',
@@ -1204,6 +1222,12 @@ class WingerStrings {
       'payment': 'Malipo',
       'paymentMethod': 'Njia ya malipo',
       'payByCard': 'Kadi',
+      'cardStripeTest': 'Malipo ya kadi yanatumia hali ya majaribio ya Stripe.',
+      'cardStripeLive': 'Malipo ya kadi yanatumia hali halisi ya Stripe.',
+      'cardStripeNeedsSecret':
+          'Ufunguo wa majaribio wa Stripe umehifadhiwa. Malipo ya kadi yanaendelea kuwa demo hadi API iwe na ufunguo wa siri wa majaribio.',
+      'cardDemoCharge':
+          'Malipo ya kadi ni malipo ya demo. Kamisheni ya malipo haya si pesa halisi.',
       'payOnDelivery': 'Lipa unapopokea',
       'payOnDeliveryHint':
           'Hakuna malipo sasa — lipa pesa taslimu au mobile money unapopokea.',

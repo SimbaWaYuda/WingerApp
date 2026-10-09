@@ -1385,6 +1385,13 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
                       ],
                     ),
                     const SizedBox(height: 8),
+                    Text(
+                      row['source'] == 'manual' || row['source'] == 'admin'
+                          ? s.t('rateManual')
+                          : s.t('rateAuto'),
+                      style: const TextStyle(color: WingerColors.muted, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
                     Align(
                       alignment: Alignment.centerRight,
                       child: FilledButton(

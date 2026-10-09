@@ -31,6 +31,9 @@ class AppSession extends ChangeNotifier {
   String? fxError;
   List<String> supportedDisplayCurrencies = const ['USD', 'TZS', 'KES', 'EUR'];
   List<String> supportedPaymentCurrencies = const ['USD', 'TZS'];
+  /// demo until STRIPE_SECRET_KEY is sk_test_ or sk_live_.
+  String stripeCheckoutMode = 'demo';
+  String? stripePublishableKey;
   double cartDeliveryFee = 0;
   double cartTax = 0;
   List<CartShipmentQuote> cartShipments = [];

@@ -390,11 +390,7 @@ export class OrdersService {
           paymentMethod: payOnDelivery
             ? 'pay_on_delivery'
             : (dto.paymentMethod ?? 'card'),
-          paymentMode: payOnDelivery
-            ? 'cod'
-            : this.stripe.configured
-              ? 'stripe'
-              : 'demo',
+          paymentMode: payOnDelivery ? 'cod' : this.stripe.checkoutMode,
           currency: settlementCurrency,
           settlementCurrency,
           displayCurrency,
@@ -520,8 +516,9 @@ export class OrdersService {
       throw new BadRequestException(charge.message);
     }
 
-    // Card/demo: snapshot at payment confirmation. Demo is flagged and never settleable.
-    const isDemo = charge.mode === 'demo';
+    // Test and demo card charges are flagged and never become settleable.
+    // A live card charge can become settleable after delivery.
+    const isDemo = charge.mode !== 'live';
     await this.commissions.createSnapshotsForOrder({
       orderId: updated.id,
       paymentMode: charge.mode,

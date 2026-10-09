@@ -2641,6 +2641,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   late final TextEditingController _city;
   late final TextEditingController _address;
 
+  String _cardCheckoutNote(WingerStrings s, AppSession session) {
+    final payAmount = session.showPaymentEstimate
+        ? session.formatMoney(session.cartGrandTotal, settlement: true)
+        : session.formatMoney(session.cartGrandTotal);
+    final estimate = session.showPaymentEstimate
+        ? 'Estimated ${session.formatMoney(session.cartGrandTotal)}\n'
+        : '';
+    final modeLine = switch (session.stripeCheckoutMode) {
+      'test' => s.t('cardStripeTest'),
+      'live' => s.t('cardStripeLive'),
+      _ => session.stripePublishableKey != null
+          ? s.t('cardStripeNeedsSecret')
+          : s.t('cardDemoCharge'),
+    };
+    return '$estimate$modeLine\n'
+        'You will pay $payAmount\n'
+        'Ship to ${session.addressLine}, ${session.city}';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2649,6 +2668,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _address = TextEditingController(text: session.addressLine);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      unawaited(context.read<ApiClient>().refreshCurrencyQuote());
       unawaited(context.read<AppSession>().refreshCartFromServer());
     });
   }
@@ -2917,9 +2937,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       ' when the order arrives.\n'
                       '${session.addressLine}, ${session.city}'
                   : session.apiOnline && session.accessToken != null
-                      ? '${session.showPaymentEstimate ? 'Estimated ${session.formatMoney(session.cartGrandTotal)}\n' : ''}'
-                          'You will pay ${session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal)}\n'
-                          'Ship to ${session.addressLine}, ${session.city}'
+                      ? _cardCheckoutNote(s, session)
                       : '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)} — '
                           'order saved locally until online',
             ),
