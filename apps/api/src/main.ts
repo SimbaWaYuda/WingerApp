@@ -5,7 +5,9 @@ import { AppModule } from './app.module';
 import { getLocalUploadRoot, storageDriver } from './storage/upload-paths';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
   app.enableCors({
     origin: true,
     credentials: true,

@@ -15,7 +15,14 @@ import {
 import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from './audit.service';
-import { assertValidRatePercent, buildSnapshotValues, roundMoney } from './commission.math';
+import {
+  assertValidRatePercent,
+  buildSnapshotValues,
+  commissionReportRow,
+  isReportableSettleable,
+  roundMoney,
+  sumCommissionBuckets,
+} from './commission.math';
 
 export type UpdateDefaultCommissionDto = {
   defaultCommissionPercent: number;
@@ -517,7 +524,7 @@ export class CommissionsService {
     }
 
     const delivered = item.status === OrderStatus.DELIVERED;
-    const paid = item.order.paymentStatus === PaymentStatus.PAID;
+    const paid = await this.paymentConfirmedForItem(item);
     const now = new Date();
 
     if (snap.status === CommissionRecognitionStatus.SETTLEABLE) {
@@ -553,6 +560,35 @@ export class CommissionsService {
   }
 
   /**
+   * Card orders are confirmed when the order is paid.
+   * COD is confirmed for the supplier who collected, or for a legacy paid order
+   * that has no per-supplier collection rows yet.
+   */
+  private async paymentConfirmedForItem(item: {
+    supplierId: string;
+    order: { id: string; paymentStatus: PaymentStatus; paymentMode: string };
+  }): Promise<boolean> {
+    if (item.order.paymentMode !== 'cod') {
+      return item.order.paymentStatus === PaymentStatus.PAID;
+    }
+    const orderId = item.order.id;
+    if (!orderId) {
+      return item.order.paymentStatus === PaymentStatus.PAID;
+    }
+    const collection = await this.prisma.cashCollection.findUnique({
+      where: {
+        orderId_supplierId: { orderId, supplierId: item.supplierId },
+      },
+    });
+    if (collection) return true;
+    if (item.order.paymentStatus !== PaymentStatus.PAID) return false;
+    const collections = await this.prisma.cashCollection.count({
+      where: { orderId },
+    });
+    return collections === 0;
+  }
+
+  /**
    * Admin rollup: pending / settleable / total commission per supplier.
    * Real totals exclude demo. Demo totals are returned separately (non-financial).
    */
@@ -570,7 +606,19 @@ export class CommissionsService {
         commissionAmount: true,
         status: true,
         isDemo: true,
-        orderItem: { select: { supplierId: true } },
+        orderItem: {
+          select: {
+            supplierId: true,
+            status: true,
+            order: {
+              select: {
+                paymentStatus: true,
+                paymentMode: true,
+                cashCollections: { select: { supplierId: true } },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -605,9 +653,11 @@ export class CommissionsService {
       } else {
         bucket.lineCount += 1;
         if (row.status === CommissionRecognitionStatus.CLAWED_BACK) {
-          // Excluded from financial rollups after refund clawback.
+          // Reversed commission stays out of pending, recognised, and settleable.
         } else if (row.status === CommissionRecognitionStatus.SETTLEABLE) {
-          bucket.settleable += amount;
+          if (isReportableSettleable(commissionReportRow(row))) {
+            bucket.settleable += amount;
+          }
         } else if (row.status === CommissionRecognitionStatus.RECOGNIZED) {
           bucket.recognized += amount;
         } else {
@@ -686,30 +736,31 @@ export class CommissionsService {
         orderItem: {
           select: {
             productName: true,
-            order: { select: { displayId: true } },
+            status: true,
+            supplierId: true,
+            order: {
+              select: {
+                displayId: true,
+                paymentStatus: true,
+                paymentMode: true,
+                cashCollections: { select: { supplierId: true } },
+              },
+            },
           },
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: 50,
     });
-    const settleable = rows
-      .filter((r) => r.status === CommissionRecognitionStatus.SETTLEABLE)
-      .reduce((sum, r) => sum + Number(r.commissionAmount), 0);
-    const pending = rows
-      .filter(
-        (r) =>
-          r.status !== CommissionRecognitionStatus.SETTLEABLE &&
-          r.status !== CommissionRecognitionStatus.CLAWED_BACK,
-      )
-      .reduce((sum, r) => sum + Number(r.commissionAmount), 0);
+    const buckets = sumCommissionBuckets(rows.map((row) => commissionReportRow(row)));
     const rate = await this.resolveRateForSupplier(user.supplierId);
     return {
       activeRatePercent: rate.ratePercent,
       agreementId: rate.agreementId,
-      settleableCommission: roundMoney(settleable),
-      pendingCommission: roundMoney(pending),
-      lines: rows.map((r) => ({
+      pendingCommission: buckets.pendingCommission,
+      recognizedCommission: buckets.recognizedCommission,
+      settleableCommission: buckets.settleableCommission,
+      reversedCommission: buckets.reversedCommission,
+      lines: rows.slice(0, 50).map((r) => ({
         id: r.id,
         orderId: r.orderItem.order.displayId,
         productName: r.orderItem.productName,

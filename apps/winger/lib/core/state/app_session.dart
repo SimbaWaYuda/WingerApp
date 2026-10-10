@@ -453,6 +453,8 @@ class AppSession extends ChangeNotifier {
 
   Future<CustomerOrder> placeOrder({
     String paymentMethod = 'card',
+    String? stripePaymentMethodId,
+    String? checkoutIdempotencyKey,
   }) async {
     if (_cart.isEmpty) {
       throw Exception('Cart is empty');
@@ -474,6 +476,8 @@ class AppSession extends ChangeNotifier {
         addressLine: addressLine,
         city: city,
         deliveryMethod: deliveryMethod,
+        stripePaymentMethodId: stripePaymentMethodId,
+        checkoutIdempotencyKey: checkoutIdempotencyKey,
       );
       lastOrder = order;
       _cart.clear();

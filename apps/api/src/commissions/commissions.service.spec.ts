@@ -59,6 +59,10 @@ describe('CommissionsService', () => {
         update: jest.fn(),
         findMany: jest.fn(),
       },
+      cashCollection: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(0),
+      },
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
     };
     audit = {
@@ -223,7 +227,15 @@ describe('CommissionsService', () => {
           commissionAmount: 5,
           status: CommissionRecognitionStatus.SETTLEABLE,
           isDemo: false,
-          orderItem: { supplierId: 'sup-1' },
+          orderItem: {
+            supplierId: 'sup-1',
+            status: OrderStatus.DELIVERED,
+            order: {
+              paymentStatus: PaymentStatus.PAID,
+              paymentMode: 'card',
+              cashCollections: [],
+            },
+          },
         },
         {
           commissionAmount: 3,
@@ -269,9 +281,97 @@ describe('CommissionsService', () => {
         ForbiddenException,
       );
     });
+
+    it('sums every commission row, not only the latest 50', async () => {
+      const rows = Array.from({ length: 51 }, (_, index) => ({
+        id: `c-${index}`,
+        commissionAmount: 1,
+        ratePercent: 10,
+        commissionBase: 10,
+        status:
+          index === 0
+            ? CommissionRecognitionStatus.SETTLEABLE
+            : CommissionRecognitionStatus.PENDING,
+        isDemo: false,
+        createdAt: new Date(Date.UTC(2026, 0, index + 1)),
+        orderItem: {
+          productName: `Product ${index}`,
+          status: index === 0 ? OrderStatus.DELIVERED : OrderStatus.PROCESSING,
+          supplierId: 'sup-1',
+          order: {
+            displayId: `WG-${index}`,
+            paymentStatus: PaymentStatus.PAID,
+            paymentMode: 'card',
+            cashCollections: [],
+          },
+        },
+      }));
+      prisma.orderItemCommission.findMany.mockResolvedValue(rows);
+      prisma.supplierCommissionAgreement.findFirst.mockResolvedValue(null);
+      prisma.platformSettings.upsert.mockResolvedValue({
+        defaultCommissionPercent: 10,
+      });
+
+      const result = await service.listSupplierCommissionSummary(supplier());
+      expect(result.lines).toHaveLength(50);
+      expect(result.pendingCommission).toBe(50);
+      expect(result.settleableCommission).toBe(1);
+      expect(result.recognizedCommission).toBe(0);
+      expect(result.reversedCommission).toBe(0);
+    });
   });
 
   describe('COD status transitions', () => {
+    it('does not settle COD that was delivered without a collection', async () => {
+      prisma.orderItem.findUnique.mockResolvedValue({
+        id: 'item-1',
+        supplierId: 'sup-1',
+        status: OrderStatus.DELIVERED,
+        commission: {
+          id: 'c1',
+          status: CommissionRecognitionStatus.PENDING,
+          isDemo: false,
+          recognizedAt: null,
+        },
+        order: {
+          id: 'ord-1',
+          paymentStatus: PaymentStatus.PENDING,
+          paymentMode: 'cod',
+        },
+      });
+
+      const updated = await service.advanceRecognitionForItem('item-1');
+      expect(updated?.status).toBe(CommissionRecognitionStatus.PENDING);
+      expect(prisma.orderItemCommission.update).not.toHaveBeenCalled();
+    });
+
+    it('settles COD when that supplier collected and the line is delivered', async () => {
+      prisma.cashCollection.findUnique.mockResolvedValue({ id: 'col-1', supplierId: 'sup-1' });
+      prisma.orderItem.findUnique.mockResolvedValue({
+        id: 'item-1',
+        supplierId: 'sup-1',
+        status: OrderStatus.DELIVERED,
+        commission: {
+          id: 'c1',
+          status: CommissionRecognitionStatus.PENDING,
+          isDemo: false,
+          recognizedAt: null,
+        },
+        order: {
+          id: 'ord-1',
+          paymentStatus: PaymentStatus.PENDING,
+          paymentMode: 'cod',
+        },
+      });
+      prisma.orderItemCommission.update.mockImplementation(async ({ data }: any) => ({
+        id: 'c1',
+        ...data,
+      }));
+
+      const updated = await service.advanceRecognitionForItem('item-1');
+      expect(updated?.status).toBe(CommissionRecognitionStatus.SETTLEABLE);
+    });
+
     it('moves PENDING to SETTLEABLE when delivered and paid', async () => {
       prisma.orderItem.findUnique.mockResolvedValue({
         id: 'item-1',

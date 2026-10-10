@@ -6,7 +6,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  CommissionRecognitionStatus,
   OrderStatus,
   Prisma,
   ReturnRequestStatus,
@@ -16,6 +15,10 @@ import {
 import { randomUUID } from 'crypto';
 import { extname } from 'path';
 import { AuthUser } from '../auth/auth.types';
+import {
+  commissionReportRow,
+  sumCommissionBuckets,
+} from '../commissions/commission.math';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 
@@ -309,6 +312,20 @@ export class ProductsService {
           select: {
             commissionAmount: true,
             status: true,
+            isDemo: true,
+            orderItem: {
+              select: {
+                status: true,
+                supplierId: true,
+                order: {
+                  select: {
+                    paymentStatus: true,
+                    paymentMode: true,
+                    cashCollections: { select: { supplierId: true } },
+                  },
+                },
+              },
+            },
           },
         }),
         this.prisma.returnRequest.count({
@@ -340,17 +357,9 @@ export class ProductsService {
       }
     }
 
-    let pendingCommission = 0;
-    let settleableCommission = 0;
-    for (const row of commissions) {
-      if (row.status === CommissionRecognitionStatus.CLAWED_BACK) continue;
-      const amount = Number(row.commissionAmount);
-      if (row.status === CommissionRecognitionStatus.SETTLEABLE) {
-        settleableCommission += amount;
-      } else {
-        pendingCommission += amount;
-      }
-    }
+    const buckets = sumCommissionBuckets(
+      commissions.map((row) => commissionReportRow(row)),
+    );
 
     const round = (n: number) => Math.round(n * 100) / 100;
     return {
@@ -363,8 +372,10 @@ export class ProductsService {
       deliveredLines,
       orderLineCount: items.length,
       grossSales: round(grossSales),
-      pendingCommission: round(pendingCommission),
-      settleableCommission: round(settleableCommission),
+      pendingCommission: buckets.pendingCommission,
+      recognizedCommission: buckets.recognizedCommission,
+      settleableCommission: buckets.settleableCommission,
+      reversedCommission: buckets.reversedCommission,
       openReturns,
       ratingAvg: supplier.ratingAvg,
       ratingCount: supplier.ratingCount,

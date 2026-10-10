@@ -312,6 +312,12 @@ class WingerStrings {
           'A Stripe test publishable key is saved. Card checkout stays a demo charge until the API has a test secret key.',
       'cardDemoCharge':
           'Card checkout is a demo charge. Commission from this payment is not real money.',
+      'cardNumber': 'Card number',
+      'cardExpiry': 'Expiry',
+      'cardCvc': 'CVC',
+      'cardTestHint':
+          'Test card 4242 4242 4242 4242, any future expiry, any CVC. 4000 0000 0000 0002 is declined.',
+      'cardInvalid': 'Enter a valid card number, a future expiry, and a CVC.',
       'payOnDelivery': 'Pay on delivery',
       'payOnDeliveryHint':
           'No charge now — pay cash or mobile money when your order arrives.',
@@ -770,6 +776,12 @@ class WingerStrings {
           'Hay una clave pública de prueba de Stripe. El cobro con tarjeta sigue siendo demo hasta que la API tenga la clave secreta de prueba.',
       'cardDemoCharge':
           'El pago con tarjeta es un cobro demo. La comisión de este pago no es dinero real.',
+      'cardNumber': 'Número de tarjeta',
+      'cardExpiry': 'Vencimiento',
+      'cardCvc': 'CVC',
+      'cardTestHint':
+          'Tarjeta de prueba 4242 4242 4242 4242, cualquier vencimiento futuro y cualquier CVC. 4000 0000 0000 0002 es rechazada.',
+      'cardInvalid': 'Escribe un número válido, un vencimiento futuro y un CVC.',
       'payOnDelivery': 'Pagar al entregar',
       'payOnDeliveryHint':
           'Sin cargo ahora — paga en efectivo o móvil al recibir el pedido.',
@@ -1228,6 +1240,12 @@ class WingerStrings {
           'Ufunguo wa majaribio wa Stripe umehifadhiwa. Malipo ya kadi yanaendelea kuwa demo hadi API iwe na ufunguo wa siri wa majaribio.',
       'cardDemoCharge':
           'Malipo ya kadi ni malipo ya demo. Kamisheni ya malipo haya si pesa halisi.',
+      'cardNumber': 'Nambari ya kadi',
+      'cardExpiry': 'Muda wa kuisha',
+      'cardCvc': 'CVC',
+      'cardTestHint':
+          'Kadi ya majaribio 4242 4242 4242 4242, muda wowote ujao, na CVC yoyote. 4000 0000 0000 0002 inakataliwa.',
+      'cardInvalid': 'Weka nambari sahihi, muda ujao, na CVC.',
       'payOnDelivery': 'Lipa unapopokea',
       'payOnDeliveryHint':
           'Hakuna malipo sasa — lipa pesa taslimu au mobile money unapopokea.',

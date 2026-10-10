@@ -3,7 +3,11 @@ import {
   buildSnapshotValues,
   commissionBaseFromLine,
   computeCommissionAmount,
+  countsAsEarnedRevenue,
+  isReportableSettleable,
   roundMoney,
+  sumCommissionBuckets,
+  type CommissionMoneyRow,
 } from './commission.math';
 
 describe('commission.math', () => {
@@ -45,4 +49,55 @@ describe('commission.math', () => {
     expect(computeCommissionAmount(productLine, 10)).toBe(10);
     expect(computeCommissionAmount(productLine + tax + delivery, 10)).not.toBe(10);
   });
+
+  it('keeps pending, recognised, settleable and reversed commission distinct', () => {
+    const rows: CommissionMoneyRow[] = [
+      line({ status: 'PENDING', amount: 10 }),
+      line({ status: 'RECOGNIZED', amount: 4, itemStatus: 'SHIPPED' }),
+      line({ status: 'SETTLEABLE', amount: 6 }),
+      line({ status: 'CLAWED_BACK', amount: 2 }),
+      line({ status: 'SETTLEABLE', amount: 99, isDemo: true }),
+      line({
+        status: 'SETTLEABLE',
+        amount: 7,
+        itemStatus: 'SHIPPED',
+      }),
+    ];
+    expect(sumCommissionBuckets(rows)).toEqual({
+      pendingCommission: 10,
+      recognizedCommission: 4,
+      settleableCommission: 6,
+      reversedCommission: 2,
+      earnedRevenue: 10,
+    });
+    expect(countsAsEarnedRevenue(rows[0])).toBe(false);
+    expect(isReportableSettleable(rows[4])).toBe(false);
+    expect(isReportableSettleable(rows[5])).toBe(false);
+  });
+
+  it('does not count uncollected COD as earned revenue', () => {
+    const uncollected = line({
+      status: 'PENDING',
+      amount: 5,
+      paymentMode: 'cod',
+      paymentStatus: 'PENDING',
+      itemStatus: 'DELIVERED',
+    });
+    expect(countsAsEarnedRevenue(uncollected)).toBe(false);
+    expect(isReportableSettleable(uncollected)).toBe(false);
+  });
 });
+
+function line(overrides: Partial<CommissionMoneyRow>): CommissionMoneyRow {
+  return {
+    status: 'PENDING',
+    isDemo: false,
+    amount: 1,
+    itemStatus: 'DELIVERED',
+    paymentStatus: 'PAID',
+    paymentMode: 'card',
+    supplierId: 'sup-1',
+    collectedSupplierIds: [],
+    ...overrides,
+  };
+}

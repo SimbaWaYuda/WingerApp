@@ -581,6 +581,8 @@ class ApiClient {
     String addressLine = 'Westlands',
     String city = 'Nairobi',
     String? deliveryMethod,
+    String? stripePaymentMethodId,
+    String? checkoutIdempotencyKey,
   }) async {
     final response = await http
         .post(
@@ -591,6 +593,10 @@ class ApiClient {
             'addressLine': addressLine,
             'city': city,
             'deliveryMethod': deliveryMethod ?? session.deliveryMethod,
+            if (stripePaymentMethodId != null && stripePaymentMethodId.isNotEmpty)
+              'stripePaymentMethodId': stripePaymentMethodId,
+            if (checkoutIdempotencyKey != null && checkoutIdempotencyKey.isNotEmpty)
+              'checkoutIdempotencyKey': checkoutIdempotencyKey,
             'items': [
               for (final item in items)
                 {

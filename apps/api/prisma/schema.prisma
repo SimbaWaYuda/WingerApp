@@ -99,6 +99,7 @@ model User {
   returnRequests   ReturnRequest[]
   notifications    Notification[]
   auditLogs        AuditLog[]
+  cashCollections  CashCollection[]
   commissionAgreementsProposed SupplierCommissionAgreement[] @relation("AgreementProposedBy")
   commissionAgreementsApproved SupplierCommissionAgreement[] @relation("AgreementApprovedBy")
   commissionAgreementsAccepted SupplierCommissionAgreement[] @relation("AgreementAcceptedBy")
@@ -124,6 +125,7 @@ model Supplier {
   orderItems           OrderItem[]
   reviews              SupplierReview[]
   commissionAgreements SupplierCommissionAgreement[]
+  cashCollections      CashCollection[]
 }
 
 /// Customer rating of a supplier after a delivered shipment.
@@ -299,7 +301,9 @@ model Order {
   paymentStatus         PaymentStatus @default(PENDING)
   paymentMethod         String        @default("card")
   paymentMode           String        @default("demo")
-  stripePaymentIntentId String?
+  stripePaymentIntentId String?       @unique
+  /// Same customer retry of one checkout. Null on orders placed before this existed.
+  checkoutIdempotencyKey String?      @unique
   /// Legacy mirror of settlementCurrency (kept for existing clients).
   currency              String        @default("USD")
   settlementCurrency    String        @default("USD")
@@ -330,11 +334,31 @@ model Order {
   items                 OrderItem[]
   supplierReviews       SupplierReview[]
   returnRequests        ReturnRequest[]
+  cashCollections       CashCollection[]
 
   @@index([customerId])
   @@index([status])
   @@index([paymentStatus])
   @@index([createdAt])
+}
+
+/// Cash a supplier confirmed they collected on a pay-on-delivery order.
+/// One row per supplier per order. Settleable commission still waits for delivery.
+model CashCollection {
+  id                String   @id @default(cuid())
+  orderId           String
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplierId        String
+  supplier          Supplier @relation(fields: [supplierId], references: [id])
+  collectedByUserId String
+  collectedBy       User     @relation(fields: [collectedByUserId], references: [id])
+  amount            Decimal  @db.Decimal(12, 2)
+  currency          String
+  lineIds           Json
+  createdAt         DateTime @default(now())
+
+  @@unique([orderId, supplierId])
+  @@index([supplierId])
 }
 
 model OrderItem {

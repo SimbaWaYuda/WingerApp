@@ -7,6 +7,7 @@ import { OnboardingModule } from '../onboarding/onboarding.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { StripeService } from './stripe.service';
+import { StripeWebhookController } from './stripe-webhook.controller';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { StripeService } from './stripe.service';
     NotificationsModule,
     FxModule,
   ],
-  controllers: [OrdersController],
+  controllers: [OrdersController, StripeWebhookController],
   providers: [OrdersService, StripeService],
   exports: [OrdersService],
 })

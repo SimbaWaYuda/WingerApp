@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
+import '../../core/payments/card_entry.dart';
 import '../../core/repositories/catalog_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
@@ -2633,13 +2635,26 @@ class CheckoutScreen extends StatefulWidget {
 
 enum _CheckoutPayMethod { card, payOnDelivery }
 
+bool _keepCheckoutAttempt(Object error) {
+  final text = error.toString().toLowerCase();
+  return text.contains('socketexception') ||
+      text.contains('timeoutexception') ||
+      text.contains('timed out') ||
+      text.contains('clientexception') ||
+      text.contains('connection');
+}
+
 class _CheckoutScreenState extends State<CheckoutScreen> {
   int step = 0;
   bool _paying = false;
   String? _payError;
+  String? _checkoutAttemptKey;
   _CheckoutPayMethod _payMethod = _CheckoutPayMethod.card;
   late final TextEditingController _city;
   late final TextEditingController _address;
+  final TextEditingController _cardNumber = TextEditingController();
+  final TextEditingController _cardExpiry = TextEditingController();
+  final TextEditingController _cardCvc = TextEditingController();
 
   String _cardCheckoutNote(WingerStrings s, AppSession session) {
     final payAmount = session.showPaymentEstimate
@@ -2677,6 +2692,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   void dispose() {
     _city.dispose();
     _address.dispose();
+    _cardNumber.dispose();
+    _cardExpiry.dispose();
+    _cardCvc.dispose();
     super.dispose();
   }
 
@@ -2941,6 +2959,46 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       : '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)} — '
                           'order saved locally until online',
             ),
+            if (_payMethod == _CheckoutPayMethod.card &&
+                (session.stripeCheckoutMode == 'test' || session.stripeCheckoutMode == 'live')) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _cardNumber,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: s.t('cardNumber')),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _cardExpiry,
+                      keyboardType: TextInputType.datetime,
+                      decoration: InputDecoration(
+                        labelText: s.t('cardExpiry'),
+                        hintText: 'MM/YY',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _cardCvc,
+                      keyboardType: TextInputType.number,
+                      obscureText: true,
+                      decoration: InputDecoration(labelText: s.t('cardCvc')),
+                    ),
+                  ),
+                ],
+              ),
+              if (session.stripeCheckoutMode == 'test') ...[
+                const SizedBox(height: 8),
+                Text(
+                  s.t('cardTestHint'),
+                  style: const TextStyle(color: WingerColors.muted, fontSize: 12),
+                ),
+              ],
+            ],
           ],
           if (_payError != null) ...[
             const SizedBox(height: 12),
@@ -3000,8 +3058,39 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             if (session.apiOnline && session.accessToken != null) {
                               await session.refreshCartFromServer();
                             }
-                            final order =
-                                await session.placeOrder(paymentMethod: method);
+                            String? stripePaymentMethodId;
+                            final needsCard = method == 'card' &&
+                                (session.stripeCheckoutMode == 'test' ||
+                                    session.stripeCheckoutMode == 'live');
+                            if (needsCard) {
+                              final key = session.stripePublishableKey;
+                              if (key == null || key.isEmpty) {
+                                throw Exception(s.t('cardInvalid'));
+                              }
+                              final ParsedCard card;
+                              try {
+                                card = parseCardEntry(
+                                  number: _cardNumber.text,
+                                  expiry: _cardExpiry.text,
+                                  cvc: _cardCvc.text,
+                                );
+                              } on FormatException {
+                                throw Exception(s.t('cardInvalid'));
+                              }
+                              stripePaymentMethodId = await createStripePaymentMethod(
+                                card: card,
+                                publishableKey: key,
+                              );
+                              _cardNumber.clear();
+                              _cardCvc.clear();
+                            }
+                            final order = await session.placeOrder(
+                              paymentMethod: method,
+                              stripePaymentMethodId: stripePaymentMethodId,
+                              checkoutIdempotencyKey: _checkoutAttemptKey ??=
+                                  const Uuid().v4(),
+                            );
+                            _checkoutAttemptKey = null;
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
@@ -3015,6 +3104,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             setState(() => step = 4);
                           } catch (error) {
                             if (!mounted) return;
+                            if (!_keepCheckoutAttempt(error)) {
+                              _checkoutAttemptKey = null;
+                            }
                             setState(
                               () => _payError = error
                                   .toString()

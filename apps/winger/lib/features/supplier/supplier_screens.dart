@@ -1688,6 +1688,7 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
         final data = snapshot.data;
         final activeRate = (data?.summary['activeRatePercent'] as num?)?.toDouble() ?? data?.defaultRate ?? 10;
         final settleable = (data?.summary['settleableCommission'] as num?)?.toDouble() ?? 0;
+        final recognized = (data?.summary['recognizedCommission'] as num?)?.toDouble() ?? 0;
         final pending = (data?.summary['pendingCommission'] as num?)?.toDouble() ?? 0;
         final lines = (data?.summary['lines'] as List<dynamic>? ?? const [])
             .cast<Map<String, dynamic>>();
@@ -1734,10 +1735,11 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                 crossAxisCount: MediaQuery.sizeOf(context).width >= 900 ? 3 : 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: 1.3,
+                childAspectRatio: MediaQuery.sizeOf(context).width >= 900 ? 1.45 : 0.95,
                 children: [
                   KpiCard(data: KpiCardData(label: s.t('activeRate'), value: '${activeRate.toStringAsFixed(1)}%', delta: s.t('commission'))),
                   KpiCard(data: KpiCardData(label: s.t('settleableCommission'), value: '\$${settleable.toStringAsFixed(2)}', delta: s.t('settleable'))),
+                  KpiCard(data: KpiCardData(label: s.t('recognizedCommission'), value: '\$${recognized.toStringAsFixed(2)}', delta: s.t('recognized'))),
                   KpiCard(data: KpiCardData(label: s.t('pendingCommission'), value: '\$${pending.toStringAsFixed(2)}', delta: s.t('pending'))),
                 ],
               ),

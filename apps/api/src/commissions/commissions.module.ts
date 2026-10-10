@@ -6,6 +6,6 @@ import { CommissionsService } from './commissions.service';
 @Module({
   controllers: [CommissionsController],
   providers: [CommissionsService, AuditService],
-  exports: [CommissionsService],
+  exports: [CommissionsService, AuditService],
 })
 export class CommissionsModule {}

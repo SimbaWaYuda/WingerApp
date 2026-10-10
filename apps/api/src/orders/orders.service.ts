@@ -15,12 +15,14 @@ import {
   UserRole,
 } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
+import { AuditService } from '../commissions/audit.service';
 import { CommissionsService } from '../commissions/commissions.service';
+import { commissionReportRow, sumCommissionBuckets } from '../commissions/commission.math';
 import { FxService } from '../fx/fx.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { StripeService } from './stripe.service';
+import { ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
 
 export type CreateOrderItemDto = {
   productId: string;
@@ -34,6 +36,10 @@ export type CreateOrderDto = {
   city?: string;
   /** express | standard | pickup */
   deliveryMethod?: string;
+  /** Stripe PaymentMethod id from the customer’s card. Never a card number. */
+  stripePaymentMethodId?: string;
+  /** Stable id for one pay tap. A retry with the same id does not create another order. */
+  checkoutIdempotencyKey?: string;
 };
 
 export type ValidateCartDto = {
@@ -100,6 +106,7 @@ export class OrdersService {
     private readonly onboarding: OnboardingService,
     private readonly notifications: NotificationsService,
     private readonly fx: FxService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -286,6 +293,9 @@ export class OrdersService {
     if (user.role !== UserRole.CUSTOMER) {
       throw new ForbiddenException('Only customers can place orders');
     }
+    const checkoutKey = this.checkoutKey(dto);
+    const resumed = await this.resumeCheckout(checkoutKey, dto, user);
+    if (resumed) return resumed;
     if (!dto.items?.length) {
       throw new BadRequestException('Cart is empty');
     }
@@ -340,6 +350,7 @@ export class OrdersService {
     });
     const total = new Prisma.Decimal(fees.total.toFixed(2));
     const payOnDelivery = isPayOnDelivery(dto.paymentMethod);
+    const stripePaymentMethodId = this.requireCardPaymentMethod(dto, payOnDelivery);
     const deliveryMethod = normalizeDeliveryMethod(dto.deliveryMethod);
     const addressLine = (dto.addressLine ?? '').trim();
     const city = (dto.city ?? '').trim();
@@ -375,7 +386,9 @@ export class OrdersService {
     const paymentAmount =
       paymentCurrency === displayCurrency ? displayTotal : fees.total;
 
-    const order = await this.prisma.$transaction(async (tx) => {
+    let order;
+    try {
+      order = await this.prisma.$transaction(async (tx) => {
       const count = await tx.order.count();
       const displayId = `WG-${10025 + count}`;
 
@@ -412,6 +425,7 @@ export class OrdersService {
           total,
           addressLine: addressLine || 'Westlands',
           city: city || 'Nairobi',
+          checkoutIdempotencyKey: checkoutKey,
           items: {
             create: lines.map((line) => ({
               productId: line.product.id,
@@ -470,6 +484,13 @@ export class OrdersService {
 
       return created;
     });
+    } catch (error) {
+      if (checkoutKey && isUniqueConflict(error)) {
+        const raced = await this.resumeCheckout(checkoutKey, dto, user);
+        if (raced) return raced;
+      }
+      throw error;
+    }
 
     if (payOnDelivery) {
       // COD: snapshot at confirmation as PENDING; settle later on delivery + payment.
@@ -486,48 +507,7 @@ export class OrdersService {
       );
     }
 
-    const amountCents = Math.round(Number(paymentAmount) * 100);
-    const charge = await this.stripe.chargeOrder({
-      amountCents,
-      currency: paymentCurrency.toLowerCase(),
-      orderDisplayId: order.displayId,
-      customerEmail: user.email,
-    });
-
-    const paymentStatus =
-      charge.status === 'paid' ? PaymentStatus.PAID : PaymentStatus.FAILED;
-
-    const updated = await this.prisma.order.update({
-      where: { id: order.id },
-      data: {
-        paymentStatus,
-        paymentMode: charge.mode,
-        stripePaymentIntentId: charge.paymentIntentId,
-        status:
-          paymentStatus === PaymentStatus.FAILED
-            ? OrderStatus.CANCELLED
-            : OrderStatus.PROCESSING,
-      },
-      include: orderWithItems,
-    });
-
-    if (paymentStatus === PaymentStatus.FAILED) {
-      await this.restoreStock(updated.id, user.sub);
-      throw new BadRequestException(charge.message);
-    }
-
-    // Test and demo card charges are flagged and never become settleable.
-    // A live card charge can become settleable after delivery.
-    const isDemo = charge.mode !== 'live';
-    await this.commissions.createSnapshotsForOrder({
-      orderId: updated.id,
-      paymentMode: charge.mode,
-      isDemo,
-      initialStatus: CommissionRecognitionStatus.RECOGNIZED,
-    });
-
-    await this.onboarding.onOrderPlaced(user.sub, user.role);
-    return this.toResponse(updated, charge.message);
+    return this.chargeAndRecord(order, stripePaymentMethodId, user);
   }
 
   /** Platform KPIs from live orders. Money fields are settlement USD. */
@@ -563,9 +543,25 @@ export class OrdersService {
         this.prisma.orderItemCommission.findMany({
           where: {
             isDemo: false,
-            status: { not: CommissionRecognitionStatus.CLAWED_BACK },
           },
-          select: { commissionAmount: true, status: true },
+          select: {
+            commissionAmount: true,
+            status: true,
+            isDemo: true,
+            orderItem: {
+              select: {
+                status: true,
+                supplierId: true,
+                order: {
+                  select: {
+                    paymentStatus: true,
+                    paymentMode: true,
+                    cashCollections: { select: { supplierId: true } },
+                  },
+                },
+              },
+            },
+          },
         }),
         this.prisma.orderItem.groupBy({
           by: ['supplierId'],
@@ -599,22 +595,19 @@ export class OrdersService {
         }),
       ]);
 
-    let wingerRevenue = 0;
-    let settleableCommission = 0;
-    for (const row of commissions) {
-      const amount = Number(row.commissionAmount);
-      wingerRevenue += amount;
-      if (row.status === CommissionRecognitionStatus.SETTLEABLE) {
-        settleableCommission += amount;
-      }
-    }
+    const buckets = sumCommissionBuckets(
+      commissions.map((row) => commissionReportRow(row)),
+    );
 
     const round = (n: number) => Math.round(n * 100) / 100;
     return {
       currency: 'USD',
       gmv: round(Number(gmv._sum.subtotal ?? 0)),
-      wingerRevenue: round(wingerRevenue),
-      settleableCommission: round(settleableCommission),
+      wingerRevenue: buckets.earnedRevenue,
+      pendingCommission: buckets.pendingCommission,
+      recognizedCommission: buckets.recognizedCommission,
+      settleableCommission: buckets.settleableCommission,
+      reversedCommission: buckets.reversedCommission,
       orderCount,
       paidCount,
       openCount,
@@ -1701,29 +1694,9 @@ export class OrdersService {
       where: { orderId: item.orderId },
     });
     const rollup = rollupStatus(items.map((row) => row.status));
-    const isCodPending =
-      item.order.paymentMode === 'cod' &&
-      item.order.paymentStatus === PaymentStatus.PENDING;
-    // COD: only mark PAID when the whole order is delivered, or explicit collect.
-    // Partial multi-supplier delivery must not flip payment for undelivered lines.
-    const markCodPaid =
-      isCodPending &&
-      (Boolean(dto.collectPayment) || rollup === OrderStatus.DELIVERED);
-
-    const order = await this.prisma.order.update({
+    await this.prisma.order.update({
       where: { id: item.orderId },
-      data: {
-        status: rollup,
-        ...(markCodPaid ? { paymentStatus: PaymentStatus.PAID } : {}),
-      },
-      include: {
-        items: {
-          ...(user.role === UserRole.SUPPLIER && user.supplierId
-            ? { where: { supplierId: user.supplierId } }
-            : {}),
-          include: { commission: true },
-        },
-      },
+      data: { status: rollup },
     });
 
     if (
@@ -1734,20 +1707,431 @@ export class OrdersService {
       await this.onboarding.onSupplierShipped(user.sub);
     }
 
-    // Advance recognition for the touched line; if COD just paid, advance all lines.
-    if (markCodPaid) {
-      const allItems = await this.prisma.orderItem.findMany({
-        where: { orderId: item.orderId },
-        select: { id: true },
-      });
-      for (const row of allItems) {
-        await this.commissions.advanceRecognitionForItem(row.id);
-      }
+    if (dto.collectPayment) {
+      await this.collectSupplierCash(item.orderId, item.supplierId, user);
     } else {
       await this.commissions.advanceRecognitionForItem(item.id);
     }
 
+    const order = await this.prisma.order.findUniqueOrThrow({
+      where: { id: item.orderId },
+      include: {
+        items: {
+          ...(user.role === UserRole.SUPPLIER && user.supplierId
+            ? { where: { supplierId: user.supplierId } }
+            : {}),
+          include: { commission: true },
+        },
+      },
+    });
+
     return this.toResponse(order);
+  }
+
+  /**
+   * Records cash for this supplier's lines only. The order stays unpaid until
+   * every supplier on it has a collection. Commission becomes settleable only
+   * after those lines are delivered as well.
+   */
+  private async collectSupplierCash(
+    orderId: string,
+    supplierId: string,
+    user: AuthUser,
+  ) {
+    if (user.role === UserRole.SUPPLIER && user.supplierId !== supplierId) {
+      throw new ForbiddenException('Cannot collect payment for another supplier');
+    }
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.paymentMode !== 'cod') {
+      throw new BadRequestException('Cash collection is only for pay on delivery');
+    }
+    if (
+      order.paymentStatus === PaymentStatus.FAILED ||
+      order.status === OrderStatus.CANCELLED
+    ) {
+      throw new BadRequestException('This order cannot accept a cash collection');
+    }
+
+    const supplierItems = order.items.filter((row) => row.supplierId === supplierId);
+    if (supplierItems.length === 0) {
+      throw new BadRequestException('This supplier has no lines on the order');
+    }
+
+    const existingCollections = await this.prisma.cashCollection.findMany({
+      where: { orderId },
+    });
+    if (order.paymentStatus === PaymentStatus.PAID && existingCollections.length === 0) {
+      for (const row of supplierItems) {
+        await this.commissions.advanceRecognitionForItem(row.id);
+      }
+      return;
+    }
+
+    const already = existingCollections.find((row) => row.supplierId === supplierId);
+    if (!already) {
+      const orderBase = order.items.reduce(
+        (sum, row) => sum + Number(row.lineTotal),
+        0,
+      );
+      const supplierBase = supplierItems.reduce(
+        (sum, row) => sum + Number(row.lineTotal),
+        0,
+      );
+      const payment = Number(order.paymentAmount ?? order.total);
+      const share = orderBase === 0 ? 0 : supplierBase / orderBase;
+      const amount = roundMoney(payment * share);
+      const currency = order.paymentCurrency || order.currency || 'USD';
+      const lineIds = supplierItems.map((row) => row.id);
+      try {
+        await this.prisma.cashCollection.create({
+          data: {
+            orderId,
+            supplierId,
+            collectedByUserId: user.sub,
+            amount: new Prisma.Decimal(amount.toFixed(2)),
+            currency,
+            lineIds,
+          },
+        });
+        await this.audit.record({
+          entityType: 'CashCollection',
+          entityId: orderId,
+          action: 'COD_CASH_COLLECTED',
+          actorUserId: user.sub,
+          actorRole: user.role,
+          after: {
+            orderId,
+            supplierId,
+            amount,
+            currency,
+            lineIds,
+            collectedAt: new Date().toISOString(),
+          },
+        });
+      } catch (error) {
+        if (!isUniqueConflict(error)) throw error;
+      }
+    }
+
+    const collections = await this.prisma.cashCollection.findMany({
+      where: { orderId },
+    });
+    const supplierIds = new Set(order.items.map((row) => row.supplierId));
+    const collectedIds = new Set(collections.map((row) => row.supplierId));
+    const allCollected = [...supplierIds].every((id) => collectedIds.has(id));
+    if (allCollected) {
+      await this.prisma.order.updateMany({
+        where: { id: orderId, paymentStatus: PaymentStatus.PENDING },
+        data: { paymentStatus: PaymentStatus.PAID },
+      });
+    }
+
+    for (const row of supplierItems) {
+      await this.commissions.advanceRecognitionForItem(row.id);
+    }
+  }
+
+  /** Saves a card result once. A second success for the same PaymentIntent is a no-op. */
+  async recordCardCharge(orderId: string, charge: ChargeResult, user: AuthUser) {
+    const current = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: orderWithItems,
+    });
+    if (!current) throw new NotFoundException('Order not found');
+
+    if (charge.status !== 'paid') {
+      if (current.paymentStatus === PaymentStatus.PAID) {
+        return this.toResponse(current, charge.message);
+      }
+      if (current.paymentStatus === PaymentStatus.FAILED) {
+        throw new BadRequestException(charge.message);
+      }
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          paymentStatus: PaymentStatus.FAILED,
+          paymentMode: charge.mode,
+          stripePaymentIntentId: charge.paymentIntentId,
+          status: OrderStatus.CANCELLED,
+        },
+      });
+      await this.restoreStock(orderId, user.sub);
+      throw new BadRequestException(charge.message);
+    }
+
+    if (
+      current.paymentStatus === PaymentStatus.PAID &&
+      current.stripePaymentIntentId &&
+      charge.paymentIntentId &&
+      current.stripePaymentIntentId !== charge.paymentIntentId
+    ) {
+      return this.toResponse(current, charge.message);
+    }
+
+    if (
+      current.paymentStatus === PaymentStatus.PAID &&
+      (!charge.paymentIntentId ||
+        !current.stripePaymentIntentId ||
+        current.stripePaymentIntentId === charge.paymentIntentId)
+    ) {
+      await this.commissions.createSnapshotsForOrder({
+        orderId,
+        paymentMode: charge.mode,
+        isDemo: charge.mode !== 'live',
+        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+      });
+      return this.toResponse(current, charge.message);
+    }
+
+    const claimed = await this.claimPaidOrder(orderId, charge, current.status);
+    await this.commissions.createSnapshotsForOrder({
+      orderId,
+      paymentMode: charge.mode,
+      isDemo: charge.mode !== 'live',
+      initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+    });
+    if (claimed.count > 0) {
+      await this.onboarding.onOrderPlaced(user.sub, user.role);
+    }
+    const saved = await this.prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      include: orderWithItems,
+    });
+    return this.toResponse(saved, charge.message);
+  }
+
+  private async claimPaidOrder(
+    orderId: string,
+    charge: ChargeResult,
+    currentStatus: OrderStatus,
+  ) {
+    const data = {
+      paymentStatus: PaymentStatus.PAID,
+      paymentMode: charge.mode,
+      stripePaymentIntentId: charge.paymentIntentId,
+      ...(currentStatus === OrderStatus.CANCELLED ||
+      currentStatus === OrderStatus.PROCESSING
+        ? { status: OrderStatus.PROCESSING }
+        : {}),
+    };
+    const write = () =>
+      this.prisma.order.updateMany({
+        where: {
+          id: orderId,
+          paymentStatus: { not: PaymentStatus.PAID },
+        },
+        data,
+      });
+    try {
+      return await write();
+    } catch (firstError) {
+      if (!charge.paymentIntentId) throw firstError;
+      try {
+        return await write();
+      } catch {
+        throw firstError;
+      }
+    }
+  }
+
+  private checkoutKey(dto: CreateOrderDto): string | null {
+    const key = dto.checkoutIdempotencyKey?.trim() ?? '';
+    if (!key) return null;
+    if (!/^[A-Za-z0-9_-]{8,80}$/.test(key)) {
+      throw new BadRequestException('Invalid checkout id');
+    }
+    return key;
+  }
+
+  private async resumeCheckout(
+    checkoutKey: string | null,
+    dto: CreateOrderDto,
+    user: AuthUser,
+  ) {
+    if (!checkoutKey) return null;
+    const existing = await this.prisma.order.findUnique({
+      where: { checkoutIdempotencyKey: checkoutKey },
+      include: orderWithItems,
+    });
+    if (!existing) return null;
+    if (existing.customerId !== user.sub) {
+      throw new ForbiddenException('Checkout does not belong to this customer');
+    }
+    if (
+      existing.paymentStatus === PaymentStatus.PAID ||
+      existing.paymentMode === 'cod'
+    ) {
+      return this.toResponse(existing);
+    }
+    if (existing.paymentStatus === PaymentStatus.PENDING) {
+      const method = this.requireCardPaymentMethod(dto, false);
+      return this.chargeAndRecord(existing, method, user);
+    }
+    throw new BadRequestException(
+      'This checkout already failed. Start a new payment.',
+    );
+  }
+
+  private async chargeAndRecord(
+    order: {
+      id: string;
+      displayId: string;
+      customerEmail: string;
+      paymentAmount?: { toString(): string } | null;
+      total: { toString(): string };
+      paymentCurrency?: string | null;
+      currency: string;
+    },
+    paymentMethodId: string | undefined,
+    user: AuthUser,
+  ) {
+    const paymentAmount = Number(order.paymentAmount ?? order.total);
+    const paymentCurrency = order.paymentCurrency || order.currency || 'USD';
+    const charge = await this.stripe.chargeOrder({
+      amountCents: Math.round(paymentAmount * 100),
+      currency: paymentCurrency.toLowerCase(),
+      orderId: order.id,
+      orderDisplayId: order.displayId,
+      customerEmail: order.customerEmail || user.email,
+      paymentMethodId,
+      idempotencyKey: `winger-charge-${order.id}`,
+    });
+    return this.recordCardCharge(order.id, charge, user);
+  }
+
+  private async findOrderForIntent(intent: {
+    id: string;
+    metadata?: Record<string, string> | null;
+  }) {
+    const orderId = intent.metadata?.orderId;
+    if (orderId) {
+      const byId = await this.prisma.order.findUnique({ where: { id: orderId } });
+      if (byId) return byId;
+    }
+    if (!intent.id) return null;
+    return this.prisma.order.findUnique({
+      where: { stripePaymentIntentId: intent.id },
+    });
+  }
+
+  private async reReserveStock(orderId: string, userId: string) {
+    const items = await this.prisma.orderItem.findMany({ where: { orderId } });
+    await this.prisma.$transaction(async (tx) => {
+      for (const item of items) {
+        const eventId = `order-rereserve-${orderId}-${item.productId}`;
+        const already = await tx.inventoryLedger.findUnique({ where: { eventId } });
+        if (already) continue;
+        const product = await tx.product.findUnique({
+          where: { id: item.productId },
+        });
+        if (!product) continue;
+        const next = product.stock - item.quantity;
+        await tx.product.update({
+          where: { id: product.id },
+          data: { stock: next, stockStatus: stockStatusFor(next) },
+        });
+        await tx.inventoryLedger.create({
+          data: {
+            productId: product.id,
+            supplierId: product.supplierId,
+            delta: -item.quantity,
+            reason: 'ORDER_PAYMENT_RERESERVE',
+            eventId,
+            userId,
+            quantityAfter: next,
+          },
+        });
+      }
+    });
+  }
+
+  async handleStripeEvent(event: PaymentIntentEvent) {
+    if (
+      event.type !== 'payment_intent.succeeded' &&
+      event.type !== 'payment_intent.payment_failed'
+    ) {
+      return { received: true };
+    }
+    const intent = event.data.object;
+    const order = await this.findOrderForIntent(intent);
+    if (!order) return { received: true, matched: false };
+
+    const mode: 'test' | 'live' = event.livemode ? 'live' : 'test';
+    const actor = {
+      sub: order.customerId,
+      email: order.customerEmail,
+      name: order.customerName,
+      role: UserRole.CUSTOMER,
+    };
+
+    if (event.type === 'payment_intent.payment_failed') {
+      if (order.paymentStatus === PaymentStatus.PAID) {
+        return { received: true, ignored: true };
+      }
+      if (order.paymentStatus === PaymentStatus.FAILED) {
+        return { received: true, duplicate: true };
+      }
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          paymentStatus: PaymentStatus.FAILED,
+          paymentMode: mode,
+          stripePaymentIntentId: intent.id,
+          status: OrderStatus.CANCELLED,
+        },
+      });
+      await this.restoreStock(order.id, order.customerId);
+      return { received: true };
+    }
+
+    if (
+      order.paymentStatus === PaymentStatus.PAID &&
+      order.stripePaymentIntentId === intent.id
+    ) {
+      await this.commissions.createSnapshotsForOrder({
+        orderId: order.id,
+        paymentMode: mode,
+        isDemo: !event.livemode,
+        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+      });
+      return { received: true, duplicate: true };
+    }
+
+    if (
+      order.paymentStatus === PaymentStatus.FAILED ||
+      order.status === OrderStatus.CANCELLED
+    ) {
+      await this.reReserveStock(order.id, order.customerId);
+    }
+
+    await this.recordCardCharge(
+      order.id,
+      {
+        mode,
+        status: 'paid',
+        paymentIntentId: intent.id,
+        message: 'Stripe payment succeeded',
+      },
+      actor,
+    );
+    return { received: true };
+  }
+
+  /** Test and live card checkout must name a Stripe PaymentMethod. Demo does not. */
+  private requireCardPaymentMethod(
+    dto: CreateOrderDto,
+    payOnDelivery: boolean,
+  ): string | undefined {
+    if (payOnDelivery || this.stripe.checkoutMode === 'demo') return undefined;
+    const id = dto.stripePaymentMethodId?.trim() ?? '';
+    if (!/^pm_[A-Za-z0-9_]+$/.test(id)) {
+      throw new BadRequestException('Enter a card to pay');
+    }
+    return id;
   }
 
   private async restoreStock(
@@ -1758,6 +2142,9 @@ export class OrdersService {
     const items = await this.prisma.orderItem.findMany({ where: { orderId } });
     await this.prisma.$transaction(async (tx) => {
       for (const item of items) {
+        const eventId = `order-restore-${reason}-${orderId}-${item.productId}`;
+        const already = await tx.inventoryLedger.findUnique({ where: { eventId } });
+        if (already) continue;
         const product = await tx.product.findUnique({
           where: { id: item.productId },
         });
@@ -1773,7 +2160,7 @@ export class OrdersService {
             supplierId: product.supplierId,
             delta: item.quantity,
             reason,
-            eventId: `order-restore-${reason}-${orderId}-${product.id}-${Date.now()}`,
+            eventId,
             userId,
             quantityAfter: next,
           },
@@ -1993,6 +2380,12 @@ function estimateLabel(
     default:
       return `3–5 days to ${city}`;
   }
+}
+
+function isUniqueConflict(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
+  );
 }
 
 function roundMoney(value: number): number {
