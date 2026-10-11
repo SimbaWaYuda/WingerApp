@@ -88,6 +88,7 @@ class WingerStrings {
           'Cancel this unpaid pay-on-delivery order? Nothing has been charged. Stock will be restored.',
       'dueOnDelivery': 'Due on delivery',
       'codPendingBanner': 'Pay on delivery — pay {amount} when your order arrives.',
+      'codDeliveredDue': 'Delivered — {amount} is still due. Pay the supplier in cash or mobile money.',
       'codAddressRequired': 'Add a delivery address and city before placing a pay-on-delivery order.',
       'collectPaymentConfirm':
           'Collect {amount} from {customer} for {order}? This marks the order as PAID.',
@@ -552,6 +553,7 @@ class WingerStrings {
           '¿Cancelar este pedido contra entrega sin pagar? No se ha cobrado. Se restaurará el stock.',
       'dueOnDelivery': 'A pagar al entregar',
       'codPendingBanner': 'Pagar al entregar — paga {amount} cuando llegue el pedido.',
+      'codDeliveredDue': 'Entregado — {amount} sigue pendiente. Paga al proveedor en efectivo o dinero móvil.',
       'codAddressRequired': 'Añade dirección y ciudad antes de pedir contra entrega.',
       'collectPaymentConfirm':
           '¿Cobrar {amount} a {customer} por {order}? Esto marca el pedido como PAGADO.',
@@ -1016,6 +1018,7 @@ class WingerStrings {
           'Ghairi oda hii ya kulipa unapopokea ambayo bado haijalipwa? Hakuna malipo yaliyokusanywa. Stock itarejeshwa.',
       'dueOnDelivery': 'Yanayolipwa unapopokea',
       'codPendingBanner': 'Lipa unapopokea — lipa {amount} oda yako itakapofika.',
+      'codDeliveredDue': 'Imewasilishwa — {amount} bado haijalipwa. Mlipe muuzaji kwa pesa taslimu au pesa kwa simu.',
       'codAddressRequired': 'Ongeza anwani na jiji kabla ya kuweka oda ya kulipa unapopokea.',
       'collectPaymentConfirm':
           'Pokea {amount} kutoka kwa {customer} kwa {order}? Hii itaweka oda kama IMELIPWA.',

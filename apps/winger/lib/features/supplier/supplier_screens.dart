@@ -1083,19 +1083,21 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Row(
+            Text(
+              s.t('products'),
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Text(
-                  s.t('products'),
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                const Spacer(),
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _importCsv,
                   icon: const Icon(Icons.upload_file_outlined),
                   label: Text(s.t('importCsv')),
                 ),
-                const SizedBox(width: 8),
                 FilledButton.icon(
                   onPressed: _busy ? null : () => _openEditor(),
                   icon: const Icon(Icons.add),
@@ -1145,39 +1147,54 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: SizedBox(
-                            width: 56,
-                            height: 56,
-                            child: ProductPhoto(url: product.imageUrl, iconSize: 22),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(product.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-                              const SizedBox(height: 4),
-                              Text(
-                                '\$${product.price.toStringAsFixed(2)} · ${s.t('stock')}: ${product.stock} · ${product.galleryUrls.length} ${s.t('photos')}',
-                                style: TextStyle(color: WingerColors.muted),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: SizedBox(
+                                width: 56,
+                                height: 56,
+                                child: ProductPhoto(url: product.imageUrl, iconSize: 22),
                               ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    product.name,
+                                    style: const TextStyle(fontWeight: FontWeight.w700),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '\$${product.price.toStringAsFixed(2)} · ${s.t('stock')}: ${product.stock} · ${product.galleryUrls.length} ${s.t('photos')}',
+                                    style: TextStyle(color: WingerColors.muted),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: _busy ? null : () => _openEditor(product: product),
-                          child: Text(s.t('edit')),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton(
-                          onPressed: _busy ? null : () => _receive(product),
-                          child: Text(s.t('receiveStock')),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.end,
+                          children: [
+                            OutlinedButton(
+                              onPressed: _busy ? null : () => _openEditor(product: product),
+                              child: Text(s.t('edit')),
+                            ),
+                            FilledButton(
+                              onPressed: _busy ? null : () => _receive(product),
+                              child: Text(s.t('receiveStock')),
+                            ),
+                          ],
                         ),
                       ],
                     ),

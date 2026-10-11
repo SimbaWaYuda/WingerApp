@@ -73,7 +73,9 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
 
   Future<void> _reload() async {
     final next = _load();
-    setState(() => _future = next);
+    setState(() {
+      _future = next;
+    });
     await Future.wait([next, _loadOverview()]);
   }
 

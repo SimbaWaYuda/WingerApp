@@ -3277,7 +3277,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         Text(
                           order.isCodPending
                               ? s
-                                  .t('codPendingBanner')
+                                  .t(order.status == OrderStatus.delivered
+                                      ? 'codDeliveredDue'
+                                      : 'codPendingBanner')
                                   .replaceAll(
                                     '{amount}',
                                     order.lockedAmountLabel(),
@@ -3425,103 +3427,33 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final s = WingerStrings.of(context);
     if (order.returnableItems.isEmpty) return;
 
-    var selectedItem = order.returnableItems.first;
-    var reason = _returnReasons.first;
-    final notesCtrl = TextEditingController();
-    final submitted = await showDialog<bool>(
+    final draft = await showDialog<_ReturnDraft>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setLocal) {
-            return AlertDialog(
-              title: Text(s.t('requestReturnTitle')),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(s.t('requestReturnHint'), style: TextStyle(color: WingerColors.muted)),
-                    const SizedBox(height: 12),
-                    Text(s.t('returnItem'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 6),
-                    DropdownButtonFormField<String>(
-                      value: selectedItem.orderItemId,
-                      items: [
-                        for (final item in order.returnableItems)
-                          DropdownMenuItem(
-                            value: item.orderItemId,
-                            child: Text(
-                              '${item.productName} · ${item.supplierName}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setLocal(() {
-                          selectedItem = order.returnableItems.firstWhere(
-                            (item) => item.orderItemId == value,
-                          );
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Text(s.t('returnReason'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 6),
-                    DropdownButtonFormField<String>(
-                      value: reason,
-                      items: [
-                        for (final code in _returnReasons)
-                          DropdownMenuItem(
-                            value: code,
-                            child: Text(_returnReasonLabel(s, code)),
-                          ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setLocal(() => reason = value);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: notesCtrl,
-                      maxLines: 3,
-                      decoration: InputDecoration(labelText: s.t('returnNotes')),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
-                FilledButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: Text(s.t('submitReturn')),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (ctx) => _RequestReturnDialog(
+        items: order.returnableItems,
+        reasons: _returnReasons,
+        reasonLabel: (code) => _returnReasonLabel(s, code),
+      ),
     );
-    final notes = notesCtrl.text;
-    notesCtrl.dispose();
-    if (submitted != true || !mounted) return;
+    if (draft == null || !mounted) return;
 
     setState(() => _returning = true);
     try {
       await context.read<ApiClient>().createReturnRequest(
             orderId: order.id,
-            orderItemId: selectedItem.orderItemId,
-            reason: reason,
-            notes: notes,
-            quantity: selectedItem.quantity,
+            orderItemId: draft.orderItemId,
+            reason: draft.reason,
+            notes: draft.notes,
+            quantity: draft.quantity,
           );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(s.t('returnSubmitted'))),
       );
-      setState(() => _future = _load());
+      final next = _load();
+      setState(() {
+        _future = next;
+      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3706,7 +3638,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     Text(
                       order.isCodPending
                           ? s
-                              .t('codPendingBanner')
+                              .t(order.status == OrderStatus.delivered
+                                  ? 'codDeliveredDue'
+                                  : 'codPendingBanner')
                               .replaceAll(
                                 '{amount}',
                                 order.lockedAmountLabel(),
@@ -3814,15 +3748,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     subtitle: Text(
                       '${request.supplierName}\n'
                       '${_returnReasonLabel(s, request.reason)}'
-                      '${request.notes != null && request.notes!.isNotEmpty ? ' · ${request.notes}' : ''}',
+                      '${request.notes != null && request.notes!.isNotEmpty ? ' · ${request.notes}' : ''}\n'
+                      '${s.t('returnStatus')}: ${request.status} · '
+                      '${s.t('refundStatus')}: ${request.refundStatus}',
                     ),
                     isThreeLine: true,
-                    trailing: Text(
-                      '${s.t('returnStatus')}: ${request.status}\n'
-                      '${s.t('refundStatus')}: ${request.refundStatus}',
-                      textAlign: TextAlign.end,
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
-                    ),
                   ),
                 ),
             ],
@@ -4382,6 +4312,146 @@ class RecentlyViewedScreen extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _ReturnDraft {
+  const _ReturnDraft({
+    required this.orderItemId,
+    required this.reason,
+    required this.notes,
+    required this.quantity,
+  });
+
+  final String orderItemId;
+  final String reason;
+  final String notes;
+  final int quantity;
+}
+
+/// Owns the notes field so the controller is disposed with the dialog route,
+/// after the text field has unmounted.
+class _RequestReturnDialog extends StatefulWidget {
+  const _RequestReturnDialog({
+    required this.items,
+    required this.reasons,
+    required this.reasonLabel,
+  });
+
+  final List<ReturnableItem> items;
+  final List<String> reasons;
+  final String Function(String reason) reasonLabel;
+
+  @override
+  State<_RequestReturnDialog> createState() => _RequestReturnDialogState();
+}
+
+class _RequestReturnDialogState extends State<_RequestReturnDialog> {
+  late ReturnableItem _item;
+  late String _reason;
+  final _notesCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _item = widget.items.first;
+    _reason = widget.reasons.first;
+  }
+
+  @override
+  void dispose() {
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return AlertDialog(
+      title: Text(s.t('requestReturnTitle')),
+      content: SingleChildScrollView(
+        child: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(s.t('requestReturnHint'), style: const TextStyle(color: WingerColors.muted)),
+              const SizedBox(height: 12),
+              Text(s.t('returnItem'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: _item.orderItemId,
+                items: [
+                  for (final item in widget.items)
+                    DropdownMenuItem(
+                      value: item.orderItemId,
+                      child: Text(
+                        '${item.productName} · ${item.supplierName}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _item = widget.items.firstWhere(
+                      (item) => item.orderItemId == value,
+                    );
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              Text(s.t('returnReason'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: _reason,
+                items: [
+                  for (final code in widget.reasons)
+                    DropdownMenuItem(
+                      value: code,
+                      child: Text(
+                        widget.reasonLabel(code),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => _reason = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _notesCtrl,
+                maxLines: 3,
+                decoration: InputDecoration(labelText: s.t('returnNotes')),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(s.t('back')),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(
+            context,
+            _ReturnDraft(
+              orderItemId: _item.orderItemId,
+              reason: _reason,
+              notes: _notesCtrl.text,
+              quantity: _item.quantity,
+            ),
+          ),
+          child: Text(s.t('submitReturn')),
+        ),
+      ],
     );
   }
 }
