@@ -1,4 +1,4 @@
-import { StripeService } from './stripe.service';
+import { cardRefundAmount, StripeService } from './stripe.service';
 
 describe('StripeService payment safety', () => {
   const previousSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -60,5 +60,61 @@ describe('StripeService payment safety', () => {
     expect(() => service.constructWebhookEvent(body, undefined)).toThrow(
       /STRIPE_WEBHOOK_SECRET/,
     );
+  });
+
+  it('refunds the PaymentIntent with a stable key and the line share in cents', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 're_1', status: 'succeeded' });
+    const service = new StripeService();
+    service.bindForTests({ refunds: { create } } as never, 'test');
+
+    const result = await service.refundCardCharge({
+      paymentIntentId: 'pi_1',
+      amount: 29.5,
+      idempotencyKey: 'winger-refund-ret-1',
+      orderId: 'ord-1',
+      returnRequestId: 'ret-1',
+    });
+
+    expect(result).toEqual({ ok: true, refundId: 're_1' });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_intent: 'pi_1',
+        amount: 2950,
+        metadata: { orderId: 'ord-1', returnRequestId: 'ret-1' },
+      }),
+      { idempotencyKey: 'winger-refund-ret-1' },
+    );
+  });
+
+  it('reports a Stripe refund failure without throwing', async () => {
+    const service = new StripeService();
+    service.bindForTests(
+      { refunds: { create: jest.fn().mockRejectedValue(new Error('Charge already refunded')) } } as never,
+      'test',
+    );
+
+    const result = await service.refundCardCharge({
+      paymentIntentId: 'pi_1',
+      amount: 10,
+      idempotencyKey: 'winger-refund-ret-1',
+      orderId: 'ord-1',
+      returnRequestId: 'ret-1',
+    });
+
+    expect(result).toEqual({ ok: false, message: 'Charge already refunded' });
+  });
+});
+
+describe('card refund amount', () => {
+  it('returns the full customer charge when the only line is returned', () => {
+    expect(
+      cardRefundAmount({ paymentAmount: 58.99, subtotal: 50, unitPrice: 50, quantity: 1 }),
+    ).toBe(58.99);
+  });
+
+  it('returns one line share when other lines stay', () => {
+    expect(
+      cardRefundAmount({ paymentAmount: 58.99, subtotal: 50, unitPrice: 25, quantity: 1 }),
+    ).toBe(29.5);
   });
 });

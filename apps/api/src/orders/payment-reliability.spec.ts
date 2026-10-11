@@ -68,8 +68,13 @@ function orderShell(overrides: Record<string, unknown> = {}) {
 describe('payment and commission reliability', () => {
   let service: OrdersService;
   let prisma: any;
-  let commissions: { createSnapshotsForOrder: jest.Mock; advanceRecognitionForItem: jest.Mock };
-  let stripe: { chargeOrder: jest.Mock; checkoutMode: string };
+  let commissions: {
+    createSnapshotsForOrder: jest.Mock;
+    advanceRecognitionForItem: jest.Mock;
+    clawbackForOrderItem: jest.Mock;
+  };
+  let stripe: { chargeOrder: jest.Mock; checkoutMode: string; refundCardCharge: jest.Mock };
+  let notifications: { notifyReturnStatusChange: jest.Mock };
   let onboarding: { onOrderPlaced: jest.Mock; onSupplierShipped: jest.Mock };
   let audit: { record: jest.Mock };
 
@@ -96,7 +101,11 @@ describe('payment and commission reliability', () => {
         findMany: jest.fn().mockResolvedValue([]),
       },
       supplier: { count: jest.fn().mockResolvedValue(0) },
-      returnRequest: { count: jest.fn().mockResolvedValue(0) },
+      returnRequest: {
+        count: jest.fn().mockResolvedValue(0),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
       product: { findUnique: jest.fn(), update: jest.fn() },
       inventoryLedger: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -107,8 +116,14 @@ describe('payment and commission reliability', () => {
     commissions = {
       createSnapshotsForOrder: jest.fn().mockResolvedValue({ created: 1, skipped: 0 }),
       advanceRecognitionForItem: jest.fn().mockResolvedValue(null),
+      clawbackForOrderItem: jest.fn().mockResolvedValue(null),
     };
-    stripe = { chargeOrder: jest.fn(), checkoutMode: 'test' };
+    stripe = {
+      chargeOrder: jest.fn(),
+      checkoutMode: 'test',
+      refundCardCharge: jest.fn().mockResolvedValue({ ok: true, refundId: 're_1' }),
+    };
+    notifications = { notifyReturnStatusChange: jest.fn().mockResolvedValue(undefined) };
     onboarding = {
       onOrderPlaced: jest.fn().mockResolvedValue(undefined),
       onSupplierShipped: jest.fn().mockResolvedValue(undefined),
@@ -119,7 +134,7 @@ describe('payment and commission reliability', () => {
       commissions as unknown as CommissionsService,
       stripe as unknown as StripeService,
       onboarding as unknown as OnboardingService,
-      {} as NotificationsService,
+      notifications as unknown as NotificationsService,
       {} as FxService,
       audit as unknown as AuditService,
     );
@@ -361,7 +376,111 @@ describe('payment and commission reliability', () => {
       }),
     );
   });
+
+  it('refunds a card charge before marking the return issued', async () => {
+    const row = issuedReturnRow();
+    prisma.returnRequest.findUnique
+      .mockResolvedValueOnce(row)
+      .mockResolvedValueOnce({ ...row, refundStatus: 'PENDING' })
+      .mockResolvedValueOnce({
+        ...row,
+        refundStatus: 'ISSUED',
+        order: { displayId: 'WG-10999', customerName: 'Amina' },
+        orderItem: { productName: 'Lamp', supplierName: 'Kijani' },
+      });
+
+    await service.updateReturnRequest('ret-1', { refundStatus: 'ISSUED' as never }, admin());
+
+    expect(stripe.refundCardCharge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: 'pi_1',
+        amount: 58.99,
+        idempotencyKey: 'winger-refund-ret-1',
+        returnRequestId: 'ret-1',
+      }),
+    );
+    expect(prisma.returnRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ refundStatus: 'ISSUED' }) }),
+    );
+    expect(commissions.clawbackForOrderItem).toHaveBeenCalled();
+    expect(stripe.refundCardCharge.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.returnRequest.update.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('leaves a card return unissued when Stripe rejects the refund', async () => {
+    const row = issuedReturnRow();
+    prisma.returnRequest.findUnique
+      .mockResolvedValueOnce(row)
+      .mockResolvedValueOnce({ ...row, refundStatus: 'PENDING' });
+    stripe.refundCardCharge.mockResolvedValueOnce({ ok: false, message: 'Card declined' });
+
+    await expect(
+      service.updateReturnRequest('ret-1', { refundStatus: 'ISSUED' as never }, admin()),
+    ).rejects.toThrow('Card declined');
+    expect(prisma.returnRequest.update).not.toHaveBeenCalled();
+    expect(commissions.clawbackForOrderItem).not.toHaveBeenCalled();
+  });
+
+  it('does not call Stripe when a pay-on-delivery return is marked issued', async () => {
+    const row = issuedReturnRow({
+      order: {
+        ...issuedReturnRow().order,
+        paymentMode: 'cod',
+        stripePaymentIntentId: null,
+      },
+    });
+    prisma.returnRequest.findUnique
+      .mockResolvedValueOnce(row)
+      .mockResolvedValueOnce({ ...row, refundStatus: 'PENDING' })
+      .mockResolvedValueOnce({
+        ...row,
+        refundStatus: 'ISSUED',
+        order: { displayId: 'WG-10999', customerName: 'Amina' },
+        orderItem: { productName: 'Lamp', supplierName: 'Kijani' },
+      });
+
+    await service.updateReturnRequest('ret-1', { refundStatus: 'ISSUED' as never }, supplier());
+
+    expect(stripe.refundCardCharge).not.toHaveBeenCalled();
+    expect(commissions.clawbackForOrderItem).toHaveBeenCalled();
+  });
 });
+
+function issuedReturnRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'ret-1',
+    orderId: 'ord-1',
+    orderItemId: 'item-1',
+    customerId: 'cust-1',
+    reason: 'damaged',
+    notes: null,
+    quantity: 1,
+    status: 'APPROVED',
+    refundStatus: 'PENDING',
+    refundNote: null,
+    refundedAt: null,
+    createdAt: new Date('2026-10-11T00:00:00Z'),
+    order: {
+      id: 'ord-1',
+      displayId: 'WG-10999',
+      paymentMode: 'test',
+      stripePaymentIntentId: 'pi_1',
+      paymentAmount: 58.99,
+      subtotal: 50,
+      total: 58.99,
+    },
+    orderItem: {
+      id: 'item-1',
+      supplierId: 'sup-1',
+      productName: 'Lamp',
+      supplierName: 'Kijani',
+      unitPrice: 50,
+      quantity: 1,
+    },
+    ...overrides,
+  };
+}
 
 function lineItem(overrides: Record<string, unknown> = {}) {
   return {

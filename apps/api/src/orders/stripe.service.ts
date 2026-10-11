@@ -20,6 +20,29 @@ export type PaymentIntentEvent = {
   };
 };
 
+export type CardRefundResult =
+  | { ok: true; refundId: string }
+  | { ok: false; message: string };
+
+/**
+ * Share of the customer charge for a returned line, in payment currency.
+ * Tax and delivery are split by the line's share of the settlement subtotal,
+ * so returning every line refunds the charge and returning one line does not.
+ */
+export function cardRefundAmount(params: {
+  paymentAmount: number;
+  subtotal: number;
+  unitPrice: number;
+  quantity: number;
+}): number {
+  const payment = Number(params.paymentAmount);
+  const subtotal = Number(params.subtotal);
+  const returned = Number(params.unitPrice) * Number(params.quantity);
+  if (!(payment > 0) || !(subtotal > 0) || !(returned > 0)) return 0;
+  const share = Math.min(returned / subtotal, 1);
+  return Math.round(payment * share * 100) / 100;
+}
+
 @Injectable()
 export class StripeService {
   private readonly logger = new Logger(StripeService.name);
@@ -142,5 +165,46 @@ export class StripeService {
       signature,
       secret,
     ) as PaymentIntentEvent;
+  }
+
+  /**
+   * Refunds part of a card PaymentIntent. The idempotency key must stay
+   * stable for one return so a retry cannot refund the customer twice.
+   */
+  async refundCardCharge(params: {
+    paymentIntentId: string;
+    amount: number;
+    idempotencyKey: string;
+    orderId: string;
+    returnRequestId: string;
+  }): Promise<CardRefundResult> {
+    if (!this.stripe) {
+      return { ok: false, message: 'Stripe is not configured' };
+    }
+    const amountCents = Math.round(params.amount * 100);
+    if (amountCents <= 0) {
+      return { ok: false, message: 'Refund amount must be greater than zero' };
+    }
+    try {
+      const refund = await this.stripe.refunds.create(
+        {
+          payment_intent: params.paymentIntentId,
+          amount: amountCents,
+          metadata: {
+            orderId: params.orderId,
+            returnRequestId: params.returnRequestId,
+          },
+        },
+        { idempotencyKey: params.idempotencyKey },
+      );
+      if (refund.status === 'failed' || refund.status === 'canceled') {
+        return { ok: false, message: `Stripe refund ${refund.status}` };
+      }
+      return { ok: true, refundId: refund.id };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Stripe refund failed';
+      this.logger.warn(`Stripe refund failed: ${message}`);
+      return { ok: false, message };
+    }
   }
 }

@@ -417,7 +417,7 @@ model OrderItemCommission {
   @@index([agreementId])
 }
 
-/// Customer return / support request after delivery (no auto-refund yet).
+/// Customer return after delivery. Marking a card refund ISSUED refunds that Stripe charge.
 model ReturnRequest {
   id           String              @id @default(cuid())
   orderId      String

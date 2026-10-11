@@ -22,7 +22,7 @@ import { FxService } from '../fx/fx.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
+import { cardRefundAmount, ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
 
 export type CreateOrderItemDto = {
   productId: string;
@@ -84,13 +84,13 @@ const orderWithItems = {
       replacesOrderItem: {
         select: {
           id: true,
-          order: { select: { displayId: true } },
+          order: { select: { displayId: true, paymentMode: true } },
         },
       },
       replacedBy: {
         select: {
           id: true,
-          order: { select: { displayId: true } },
+          order: { select: { displayId: true, paymentMode: true } },
         },
       },
     },
@@ -884,7 +884,7 @@ export class OrdersService {
         quantity,
       },
       include: {
-        order: { select: { displayId: true } },
+        order: { select: { displayId: true, paymentMode: true } },
         orderItem: {
           select: { productName: true, supplierName: true },
         },
@@ -923,7 +923,7 @@ export class OrdersService {
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: {
-        order: { select: { displayId: true, customerName: true } },
+        order: { select: { displayId: true, customerName: true, paymentMode: true } },
         orderItem: {
           select: { productName: true, supplierName: true, supplierId: true },
         },
@@ -1258,7 +1258,17 @@ export class OrdersService {
     const row = await this.prisma.returnRequest.findUnique({
       where: { id: returnId },
       include: {
-        order: { select: { displayId: true, id: true } },
+        order: {
+          select: {
+            id: true,
+            displayId: true,
+            paymentMode: true,
+            stripePaymentIntentId: true,
+            paymentAmount: true,
+            subtotal: true,
+            total: true,
+          },
+        },
         orderItem: true,
       },
     });
@@ -1357,6 +1367,9 @@ export class OrdersService {
       const becameIssued =
         dto.refundStatus === ReturnRefundStatus.ISSUED &&
         current.refundStatus !== ReturnRefundStatus.ISSUED;
+      if (becameIssued) {
+        await this.refundCardForReturn(row, current.quantity);
+      }
       await this.prisma.returnRequest.update({
         where: { id: row.id },
         data: {
@@ -1383,7 +1396,7 @@ export class OrdersService {
     const updated = await this.prisma.returnRequest.findUnique({
       where: { id: row.id },
       include: {
-        order: { select: { displayId: true, customerName: true } },
+        order: { select: { displayId: true, customerName: true, paymentMode: true } },
         orderItem: {
           select: { productName: true, supplierName: true },
         },
@@ -1409,6 +1422,49 @@ export class OrdersService {
       ...this.toReturnResponse(updated!),
       customerName: updated!.order.customerName,
     };
+  }
+
+  /**
+   * Card charges are refunded in Stripe before the return is marked issued.
+   * Cash on delivery and demo orders never touched Stripe, so they stay ledger-only.
+   */
+  private async refundCardForReturn(
+    row: {
+      id: string;
+      orderId: string;
+      order: {
+        paymentMode: string;
+        stripePaymentIntentId: string | null;
+        paymentAmount: Prisma.Decimal | null;
+        subtotal: Prisma.Decimal;
+        total: Prisma.Decimal;
+      };
+      orderItem: { unitPrice: Prisma.Decimal };
+    },
+    quantity: number,
+  ) {
+    const mode = row.order.paymentMode;
+    if (mode !== 'test' && mode !== 'live') return;
+    const paymentIntentId = row.order.stripePaymentIntentId;
+    if (!paymentIntentId) {
+      throw new BadRequestException('This card payment has no Stripe charge to refund');
+    }
+    const amount = cardRefundAmount({
+      paymentAmount: Number(row.order.paymentAmount ?? row.order.total),
+      subtotal: Number(row.order.subtotal),
+      unitPrice: Number(row.orderItem.unitPrice),
+      quantity,
+    });
+    const result = await this.stripe.refundCardCharge({
+      paymentIntentId,
+      amount,
+      idempotencyKey: `winger-refund-${row.id}`,
+      orderId: row.orderId,
+      returnRequestId: row.id,
+    });
+    if (!result.ok) {
+      throw new BadRequestException(result.message);
+    }
   }
 
   private assertReturnTransition(
@@ -1446,7 +1502,7 @@ export class OrdersService {
       where,
       orderBy: { createdAt: 'desc' },
       include: {
-        order: { select: { displayId: true } },
+        order: { select: { displayId: true, paymentMode: true } },
         orderItem: {
           select: { productName: true, supplierName: true, supplierId: true },
         },
@@ -1506,12 +1562,13 @@ export class OrdersService {
     refundNote?: string | null;
     refundedAt?: Date | null;
     createdAt: Date;
-    order?: { displayId: string };
+    order?: { displayId: string; paymentMode?: string };
     orderItem: { productName: string; supplierName: string };
   }) {
     return {
       id: row.id,
       orderId: row.order?.displayId ?? row.orderId,
+      paymentMode: row.order?.paymentMode ?? null,
       orderItemId: row.orderItemId,
       productName: row.orderItem.productName,
       supplierName: row.orderItem.supplierName,

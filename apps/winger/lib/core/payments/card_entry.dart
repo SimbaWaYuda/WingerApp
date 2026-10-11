@@ -25,7 +25,7 @@ ParsedCard parseCardEntry({
   if (digits.length < 13 || digits.length > 19 || !_luhn(digits)) {
     throw const FormatException('card');
   }
-  final match = RegExp(r'^(\d{2})\s*/\s*(\d{2}|\d{4})$').firstMatch(expiry.trim());
+  final match = RegExp(r'^(\d{1,2})\s*/\s*(\d{2}|\d{4})$').firstMatch(expiry.trim());
   if (match == null) throw const FormatException('expiry');
   final month = int.parse(match.group(1)!);
   var year = int.parse(match.group(2)!);

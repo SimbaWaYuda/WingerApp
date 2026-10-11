@@ -102,7 +102,12 @@ class WingerStrings {
       'supportHint': 'Request a return from order details after delivery.',
       'requestReturn': 'Request return',
       'requestReturnTitle': 'Request a return',
-      'requestReturnHint': 'Your supplier reviews return requests. Refunds are not automatic yet.',
+      'requestReturnHint':
+          'Your supplier reviews the request. A card refund is sent through Stripe when they mark it issued. Pay on delivery is recorded only.',
+      'markRefundCardConfirm':
+          'Refund this card through Stripe? The line commission is removed after Stripe accepts.',
+      'markRefundCashConfirm':
+          'This order was pay on delivery. Marking it issued removes the commission only. No card refund is sent.',
       'returnItem': 'Item to return',
       'returnReason': 'Reason',
       'returnReasonDamaged': 'Damaged or defective',
@@ -567,7 +572,12 @@ class WingerStrings {
       'supportHint': 'Solicita una devolución desde el detalle del pedido tras la entrega.',
       'requestReturn': 'Solicitar devolución',
       'requestReturnTitle': 'Solicitar una devolución',
-      'requestReturnHint': 'Tu proveedor revisará la solicitud. Los reembolsos aún no son automáticos.',
+      'requestReturnHint':
+          'Tu proveedor revisa la solicitud. Si pagaste con tarjeta, Stripe devuelve el dinero cuando marcan el reembolso. Pago contra entrega solo queda registrado.',
+      'markRefundCardConfirm':
+          '¿Reembolsar esta tarjeta por Stripe? La comisión de la línea se retira cuando Stripe acepta.',
+      'markRefundCashConfirm':
+          'Este pedido es pago contra entrega. Marcarlo emitido solo retira la comisión. No se envía un reembolso de tarjeta.',
       'returnItem': 'Artículo a devolver',
       'returnReason': 'Motivo',
       'returnReasonDamaged': 'Dañado o defectuoso',
@@ -1032,7 +1042,12 @@ class WingerStrings {
       'supportHint': 'Omba marejesho kutoka maelezo ya oda baada ya kuwasilishwa.',
       'requestReturn': 'Omba marejesho',
       'requestReturnTitle': 'Omba marejesho',
-      'requestReturnHint': 'Msambazaji wako atakagua ombi. Marejesho ya pesa bado si otomatiki.',
+      'requestReturnHint':
+          'Msambazaji anakagua ombi. Malipo ya kadi yanarudishwa kupitia Stripe wanapoweka marejesho kuwa yametolewa. Lipa unapopokea inaandikwa tu.',
+      'markRefundCardConfirm':
+          'Rudisha malipo ya kadi kupitia Stripe? Kamisheni ya bidhaa hii inaondolewa Stripe ikikubali.',
+      'markRefundCashConfirm':
+          'Oda hii ni lipa unapopokea. Kuiweka kuwa imetolewa huondoa kamisheni tu. Hakuna marejesho ya kadi.',
       'returnItem': 'Bidhaa ya kurejesha',
       'returnReason': 'Sababu',
       'returnReasonDamaged': 'Imeharibika au ina kasoro',

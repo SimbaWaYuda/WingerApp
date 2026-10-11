@@ -17,6 +17,17 @@ void main() {
     expect(card.cvc, '123');
   });
 
+  test('accepts a single-digit month', () {
+    final card = parseCardEntry(
+      number: '4242424242424242',
+      expiry: '6/28',
+      cvc: '123',
+      now: now,
+    );
+    expect(card.expMonth, 6);
+    expect(card.expYear, 2028);
+  });
+
   test('rejects a bad number, a past expiry, and a short cvc', () {
     expect(
       () => parseCardEntry(number: '4242', expiry: '12/30', cvc: '123', now: now),

@@ -422,6 +422,7 @@ class OrderReturnRequest {
     this.refundStatus = 'NONE',
     this.refundNote,
     this.refundedAt,
+    this.paymentMode,
   });
 
   final String id;
@@ -438,6 +439,9 @@ class OrderReturnRequest {
   final String refundStatus;
   final String? refundNote;
   final DateTime? refundedAt;
+  final String? paymentMode;
+
+  bool get isCardPayment => paymentMode == 'test' || paymentMode == 'live';
 
   bool get canReview =>
       status == 'REQUESTED' || status == 'IN_REVIEW';
@@ -464,6 +468,7 @@ OrderReturnRequest orderReturnRequestFromApi(Map<String, dynamic> json) {
     refundStatus: json['refundStatus'] as String? ?? 'NONE',
     refundNote: json['refundNote'] as String?,
     refundedAt: DateTime.tryParse(json['refundedAt'] as String? ?? ''),
+    paymentMode: json['paymentMode'] as String?,
   );
 }
 

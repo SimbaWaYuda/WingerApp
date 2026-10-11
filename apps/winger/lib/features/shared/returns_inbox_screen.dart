@@ -261,6 +261,29 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
     String refundStatus,
   ) async {
     final s = WingerStrings.of(context);
+    if (refundStatus == 'ISSUED') {
+      final card = request.isCardPayment;
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(s.t('markRefundIssued')),
+          content: Text(
+            s.t(card ? 'markRefundCardConfirm' : 'markRefundCashConfirm'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(s.t('back')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(s.t('markRefundIssued')),
+            ),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
     setState(() => _busyId = request.id);
     try {
       await context.read<ApiClient>().updateReturnRequest(
