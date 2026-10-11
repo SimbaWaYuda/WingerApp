@@ -144,6 +144,8 @@ class CatalogRepository {
     String sort = 'relevance',
     int page = 1,
     int pageSize = 24,
+    double? maxMiles,
+    String? originCity,
   }) async {
     try {
       final remote = await api.browseProducts(
@@ -160,6 +162,8 @@ class CatalogRepository {
         sort: sort,
         page: page,
         pageSize: pageSize,
+        maxMiles: maxMiles,
+        originCity: originCity,
       );
       if (remote.items.isNotEmpty) {
         await db.upsertProducts(remote.items);

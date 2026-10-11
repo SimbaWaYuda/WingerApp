@@ -126,6 +126,8 @@ export class ProductsController {
     @Query('sort') sort?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('maxMiles') maxMiles?: string,
+    @Query('originCity') originCity?: string,
   ) {
     const hasBrowseParams =
       page != null ||
@@ -139,7 +141,9 @@ export class ProductsController {
       minRating != null ||
       inStock != null ||
       sort != null ||
-      pageSize != null;
+      pageSize != null ||
+      maxMiles != null ||
+      originCity != null;
 
     // Preserve legacy clients that expect a bare Product[] from GET /products?q=
     if (!hasBrowseParams) {
@@ -160,6 +164,8 @@ export class ProductsController {
       sort,
       page: page != null ? Number(page) : 1,
       pageSize: pageSize != null ? Number(pageSize) : 24,
+      maxMiles: maxMiles != null ? Number(maxMiles) : undefined,
+      originCity,
     });
   }
 

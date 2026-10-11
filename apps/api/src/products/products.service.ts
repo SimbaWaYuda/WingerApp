@@ -21,6 +21,7 @@ import {
 } from '../commissions/commission.math';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { milesBetween, resolvePlace } from './distance';
 
 const MAX_PRODUCT_IMAGES = 8;
 /** Empty cover — clients show a neutral “no photo” tile (never a fake product shot). */
@@ -129,6 +130,11 @@ export type ProductBrowseQuery = {
   sort?: string;
   page?: number;
   pageSize?: number;
+  /** Maximum supplier distance in miles from originCity. */
+  maxMiles?: number;
+  originCity?: string;
+  /** Filled by browse after the mile filter. Not a client field. */
+  supplierIds?: string[];
 };
 
 export type ProductBrowseResult = {
@@ -137,6 +143,8 @@ export type ProductBrowseResult = {
   page: number;
   pageSize: number;
   totalPages: number;
+  /** False when a mile filter was asked for but the customer city is unknown. */
+  distanceReady?: boolean;
 };
 
 @Injectable()
@@ -220,6 +228,24 @@ export class ProductsService {
   async browse(query: ProductBrowseQuery = {}): Promise<ProductBrowseResult> {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(50, Math.max(1, Number(query.pageSize) || 24));
+    const maxMiles = Number(query.maxMiles);
+    if (Number.isFinite(maxMiles) && maxMiles > 0) {
+      const origin = resolvePlace(query.originCity);
+      if (!origin) {
+        return {
+          items: [],
+          total: 0,
+          page,
+          pageSize,
+          totalPages: 1,
+          distanceReady: false,
+        };
+      }
+      query = {
+        ...query,
+        supplierIds: await this.supplierIdsWithinMiles(origin, maxMiles),
+      };
+    }
     const where = buildWhere(query);
     const orderBy = buildOrderBy(query.sort);
 
@@ -240,7 +266,26 @@ export class ProductsService {
       page,
       pageSize,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      distanceReady: true,
     };
+  }
+
+  private async supplierIdsWithinMiles(
+    origin: { lat: number; lng: number },
+    maxMiles: number,
+  ): Promise<string[]> {
+    const suppliers = await this.prisma.supplier.findMany({
+      where: { latitude: { not: null }, longitude: { not: null } },
+      select: { id: true, latitude: true, longitude: true },
+    });
+    return suppliers
+      .filter((supplier) => {
+        const latitude = supplier.latitude;
+        const longitude = supplier.longitude;
+        if (latitude == null || longitude == null) return false;
+        return milesBetween(origin, { lat: latitude, lng: longitude }) <= maxMiles;
+      })
+      .map((supplier) => supplier.id);
   }
 
   async findOne(id: string): Promise<ProductDto> {
@@ -757,6 +802,11 @@ function buildWhere(query: ProductBrowseQuery): Prisma.ProductWhereInput {
   }
   if (query.supplierId?.trim()) {
     and.push({ supplierId: query.supplierId.trim() });
+  }
+  if (query.supplierIds) {
+    and.push({
+      supplierId: { in: query.supplierIds.length ? query.supplierIds : ['__none__'] },
+    });
   }
   if (query.color?.trim()) {
     and.push({ color: { equals: query.color.trim(), mode: 'insensitive' } });

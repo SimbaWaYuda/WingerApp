@@ -664,6 +664,68 @@ class _HomeProductCarouselState extends State<_HomeProductCarousel> {
   }
 }
 
+class _CustomMilesDialog extends StatefulWidget {
+  const _CustomMilesDialog({required this.initial});
+
+  final double? initial;
+
+  @override
+  State<_CustomMilesDialog> createState() => _CustomMilesDialogState();
+}
+
+class _CustomMilesDialogState extends State<_CustomMilesDialog> {
+  late final TextEditingController _ctrl;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    _ctrl = TextEditingController(
+      text: initial == null
+          ? ''
+          : (initial == initial.roundToDouble() ? initial.round().toString() : initial.toString()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _apply() {
+    final n = double.tryParse(_ctrl.text.trim());
+    if (n == null || n <= 0 || n > 500) {
+      setState(() => _error = '1–500');
+      return;
+    }
+    Navigator.pop(context, n);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return AlertDialog(
+      title: Text(s.t('customDistanceTitle')),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          hintText: s.t('customDistanceHint'),
+          errorText: _error,
+        ),
+        onSubmitted: (_) => _apply(),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('cancel'))),
+        FilledButton(onPressed: _apply, child: Text(s.t('apply'))),
+      ],
+    );
+  }
+}
+
 class CustomerSearchScreen extends StatefulWidget {
   const CustomerSearchScreen({
     super.key,
@@ -695,6 +757,9 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   (double?, double?)? _priceRange;
   String _sort = 'relevance';
   bool _inStockOnly = false;
+  /// Maximum supplier distance in miles. Null means any distance.
+  double? _maxMiles;
+  static const _presetMiles = <double>[10, 15, 20, 25, 50];
   int _page = 1;
   Future<ProductPage>? _future;
   Future<List<CatalogCategory>>? _categoriesFuture;
@@ -737,6 +802,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     _priceRange = null;
     _inStockOnly = false;
     _sort = 'relevance';
+    _maxMiles = null;
     _page = 1;
     _reload();
   }
@@ -845,10 +911,40 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         },
       ));
     }
+    if (_maxMiles != null) {
+      chips.add((
+        label: s.t('withinMiles').replaceAll('{n}', _milesText(_maxMiles!)),
+        onClear: () {
+          _maxMiles = null;
+          _page = 1;
+          _reload();
+        },
+      ));
+    }
     return chips;
   }
 
+  String _milesText(double miles) {
+    return miles == miles.roundToDouble() ? miles.round().toString() : miles.toStringAsFixed(1);
+  }
+
+  String _distanceLabel(WingerStrings s) {
+    final miles = _maxMiles;
+    if (miles == null) return s.t('distance');
+    return s.t('withinMiles').replaceAll('{n}', _milesText(miles));
+  }
+
+  Future<void> _pickCustomMiles() async {
+    final miles = await showDialog<double>(
+      context: context,
+      builder: (context) => _CustomMilesDialog(initial: _maxMiles),
+    );
+    if (!mounted || miles == null) return;
+    _applyFilter(() => _maxMiles = miles);
+  }
+
   void _reload() {
+    final city = context.read<AppSession>().city;
     setState(() {
       _future = context.read<CatalogRepository>().browseProducts(
             query: _queryCtrl.text,
@@ -864,6 +960,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             sort: _sort,
             page: _page,
             pageSize: 24,
+            maxMiles: _maxMiles,
+            originCity: city,
           );
     });
   }
@@ -1108,6 +1206,30 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
           ],
         ),
         ExpansionTile(
+          initiallyExpanded: _maxMiles != null,
+          title: Text(s.t('distance'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          children: [
+            _sidebarOption(
+              label: s.t('anyDistance'),
+              selected: _maxMiles == null,
+              onTap: () => _applyFilter(() => _maxMiles = null),
+            ),
+            for (final miles in _presetMiles)
+              _sidebarOption(
+                label: s.t('withinMiles').replaceAll('{n}', _milesText(miles)),
+                selected: _maxMiles == miles,
+                onTap: () => _applyFilter(() => _maxMiles = miles),
+              ),
+            _sidebarOption(
+              label: _maxMiles != null && !_presetMiles.contains(_maxMiles)
+                  ? _distanceLabel(s)
+                  : s.t('customDistance'),
+              selected: _maxMiles != null && !_presetMiles.contains(_maxMiles),
+              onTap: () => unawaited(_pickCustomMiles()),
+            ),
+          ],
+        ),
+        ExpansionTile(
           initiallyExpanded: _priceRange != null,
           title: Text(s.t('price'), style: const TextStyle(fontWeight: FontWeight.w800)),
           children: [
@@ -1252,6 +1374,32 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
               ],
             ),
             _dropdownPill(
+              label: _distanceLabel(s),
+              active: _maxMiles != null,
+              onSelected: (value) {
+                if (value == '__custom__') {
+                  unawaited(_pickCustomMiles());
+                  return;
+                }
+                if (value == '__all__') {
+                  _applyFilter(() => _maxMiles = null);
+                  return;
+                }
+                final miles = double.tryParse(value);
+                if (miles == null) return;
+                _applyFilter(() => _maxMiles = miles);
+              },
+              items: [
+                PopupMenuItem(value: '__all__', child: Text(s.t('anyDistance'))),
+                for (final miles in _presetMiles)
+                  PopupMenuItem(
+                    value: miles.toString(),
+                    child: Text(s.t('withinMiles').replaceAll('{n}', _milesText(miles))),
+                  ),
+                PopupMenuItem(value: '__custom__', child: Text(s.t('customDistance'))),
+              ],
+            ),
+            _dropdownPill(
               label: _priceLabel(s) ?? s.t('price'),
               active: _priceRange != null,
               onSelected: (value) {
@@ -1368,7 +1516,11 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
               children: [
                 const Icon(Icons.search_off, size: 48, color: WingerColors.muted),
                 const SizedBox(height: 12),
-                Text(s.t('noResults'), style: TextStyle(color: WingerColors.muted)),
+                Text(
+                  page?.distanceReady == false ? s.t('distanceNeedsCity') : s.t('noResults'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: WingerColors.muted),
+                ),
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: _clearFilters,

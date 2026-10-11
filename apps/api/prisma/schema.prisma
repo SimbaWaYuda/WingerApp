@@ -116,6 +116,10 @@ model Supplier {
   payoutSetupComplete  Boolean          @default(false)
   deliveryNotes        String?
   deliveryConfigured   Boolean          @default(false)
+  /// Town used for customer distance search. Coordinates are optional.
+  city                 String?
+  latitude             Float?
+  longitude            Float?
   ratingAvg            Float            @default(0)
   ratingCount          Int              @default(0)
   createdAt            DateTime         @default(now())

@@ -443,6 +443,8 @@ class ApiClient {
     String sort = 'relevance',
     int page = 1,
     int pageSize = 24,
+    double? maxMiles,
+    String? originCity,
   }) async {
     final params = <String, String>{
       'page': '$page',
@@ -458,6 +460,8 @@ class ApiClient {
       if (maxPrice != null) 'maxPrice': maxPrice.toString(),
       if (minRating != null) 'minRating': minRating.toString(),
       if (inStock) 'inStock': 'true',
+      if (maxMiles != null && maxMiles > 0) 'maxMiles': maxMiles.toString(),
+      if (originCity != null && originCity.trim().isNotEmpty) 'originCity': originCity.trim(),
     };
     final response = await http
         .get(
@@ -492,6 +496,7 @@ class ApiClient {
       page: map['page'] as int? ?? page,
       pageSize: map['pageSize'] as int? ?? pageSize,
       totalPages: map['totalPages'] as int? ?? 1,
+      distanceReady: map['distanceReady'] as bool? ?? true,
     );
   }
 

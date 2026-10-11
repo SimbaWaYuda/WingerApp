@@ -11,6 +11,9 @@ const suppliers = [
     businessBio:
       'Nairobi-based electronics seller focused on audio and wearables with fast city delivery.',
     deliveryNotes: 'Express available in Nairobi · Standard nationwide',
+    city: 'Kilimani',
+    latitude: -1.2921,
+    longitude: 36.787,
   },
   {
     id: 's-atlas',
@@ -19,6 +22,9 @@ const suppliers = [
     businessBio:
       'Home essentials and lighting for apartments and small offices across East Africa.',
     deliveryNotes: 'Standard 3–5 days · Pickup at Westlands hub',
+    city: 'Westlands',
+    latitude: -1.2674,
+    longitude: 36.811,
   },
   {
     id: 's-metals',
@@ -26,6 +32,9 @@ const suppliers = [
     verificationStatus: 'UNVERIFIED',
     businessBio: 'Trail packs and outdoor gear for weekend adventures.',
     deliveryNotes: 'Standard shipping only',
+    city: 'Nakuru',
+    latitude: -0.3031,
+    longitude: 36.08,
   },
   // Same catalogue SKUs as Kijani at alternate prices — for multi-supplier compare.
   {
@@ -35,6 +44,9 @@ const suppliers = [
     businessBio:
       'Competitive multi-brand electronics with transparent stock and alternate pricing.',
     deliveryNotes: 'Express & standard · Pickup available',
+    city: 'Kitengela',
+    latitude: -1.477,
+    longitude: 36.96,
   },
 ];
 
@@ -238,6 +250,9 @@ async function main() {
         businessBio: supplier.businessBio,
         deliveryNotes: supplier.deliveryNotes,
         deliveryConfigured: true,
+        city: supplier.city,
+        latitude: supplier.latitude,
+        longitude: supplier.longitude,
       },
       create: {
         id: supplier.id,
@@ -246,6 +261,9 @@ async function main() {
         businessBio: supplier.businessBio,
         deliveryNotes: supplier.deliveryNotes,
         deliveryConfigured: true,
+        city: supplier.city,
+        latitude: supplier.latitude,
+        longitude: supplier.longitude,
       },
     });
   }

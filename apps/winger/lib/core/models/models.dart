@@ -169,6 +169,7 @@ class ProductPage {
     required this.page,
     required this.pageSize,
     required this.totalPages,
+    this.distanceReady = true,
   });
 
   final List<Product> items;
@@ -176,6 +177,7 @@ class ProductPage {
   final int page;
   final int pageSize;
   final int totalPages;
+  final bool distanceReady;
 }
 
 class CartItem {
