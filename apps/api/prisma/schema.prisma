@@ -116,6 +116,12 @@ model Supplier {
   payoutSetupComplete  Boolean          @default(false)
   deliveryNotes        String?
   deliveryConfigured   Boolean          @default(false)
+  /// Customer delivery prices in settlement USD. 0 means that method is free.
+  standardDeliveryFee  Decimal          @default(4.99) @db.Decimal(12, 2)
+  expressDeliveryFee   Decimal          @default(9.99) @db.Decimal(12, 2)
+  pickupDeliveryFee    Decimal          @default(0) @db.Decimal(12, 2)
+  /// When set, standard delivery is free once this supplier's items reach this USD amount.
+  freeDeliveryThreshold Decimal?        @db.Decimal(12, 2)
   /// Town used for customer distance search. Coordinates are optional.
   city                 String?
   latitude             Float?

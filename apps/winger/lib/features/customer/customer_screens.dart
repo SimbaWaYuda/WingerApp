@@ -19,6 +19,11 @@ import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
 
+String _deliveryFeeLabel(WingerStrings s, AppSession session, double amount) {
+  if (amount <= 0) return s.t('freeDelivery');
+  return session.formatMoney(amount);
+}
+
 String _customerTitle(WingerStrings s, String path) {
   if (path.startsWith('/customer/search')) return s.t('search');
   if (path.startsWith('/customer/orders')) return s.t('orders');
@@ -2742,7 +2747,7 @@ class _CartScreenState extends State<CartScreen> {
             style: const TextStyle(color: WingerColors.muted),
           ),
           Text(
-            '${s.t('deliveryFee')}: ${session.formatMoney(session.cartDeliveryFee)}'
+            '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}'
             '${session.cartBySupplier.length > 1 ? ' · ${session.cartBySupplier.length} ${s.t('suppliers').toLowerCase()}' : ''}',
             style: const TextStyle(color: WingerColors.muted),
           ),
@@ -2902,12 +2907,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   color: i == step ? Colors.white : WingerColors.ink,
                   fontWeight: FontWeight.w700,
                 ),
-                onPressed: _paying || i >= step || step >= 4
-                    ? null
-                    : () => setState(() {
-                          _payError = null;
-                          step = i;
-                        }),
+                onPressed: () {
+                  if (_paying || i >= step || step >= 4) return;
+                  setState(() {
+                    _payError = null;
+                    step = i;
+                  });
+                },
               ),
           ],
         ),
@@ -2980,7 +2986,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       style: const TextStyle(color: WingerColors.muted),
                     ),
                     Text(
-                      '${s.t('deliveryFee')}: ${session.formatMoney(session.cartDeliveryFee)}',
+                      '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}',
                       style: const TextStyle(color: WingerColors.muted),
                     ),
                     Text(
@@ -3057,7 +3063,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   title: Text(shipment.supplierName, style: const TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Text(
                     '${shipment.estimate}\n'
-                    '${s.t('deliveryFee')}: ${session.formatMoney(shipment.fee)}'
+                    '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, shipment.fee)}'
                     '${session.deliveryMethod == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
                   ),
                   isThreeLine: true,
@@ -3065,7 +3071,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ),
             const SizedBox(height: 8),
             Text(
-              '${s.t('deliveryFee')}: ${session.formatMoney(session.cartDeliveryFee)} · '
+              '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)} · '
               '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
               style: const TextStyle(color: WingerColors.muted),
             ),

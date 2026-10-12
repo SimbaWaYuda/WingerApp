@@ -983,6 +983,46 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> fetchMyDeliveryFees() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/suppliers/me/delivery'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(body?['message']?.toString() ?? 'Delivery fees HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateMyDeliveryFees({
+    required double standardDeliveryFee,
+    required double expressDeliveryFee,
+    required double pickupDeliveryFee,
+    required double? freeDeliveryThreshold,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .patch(
+          _uri('/suppliers/me/delivery'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'standardDeliveryFee': standardDeliveryFee,
+            'expressDeliveryFee': expressDeliveryFee,
+            'pickupDeliveryFee': pickupDeliveryFee,
+            'freeDeliveryThreshold': freeDeliveryThreshold,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(body?['message']?.toString() ?? 'Save delivery fees HTTP ${response.statusCode}');
+    }
+    session.setApiOnline(true);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<List<Product>> fetchMyProducts() async {
     _requireAccessToken();
     final response = await http

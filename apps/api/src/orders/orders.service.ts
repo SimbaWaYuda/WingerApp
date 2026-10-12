@@ -22,6 +22,7 @@ import { FxService } from '../fx/fx.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { computeFulfillmentFees, normalizeDeliveryMethod } from './delivery-fees';
 import { cardRefundAmount, ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
 
 export type CreateOrderItemDto = {
@@ -220,18 +221,21 @@ export class OrdersService {
       };
     });
 
-    const supplierNames = [
-      ...new Set(
-        lines
-          .map((line) => line.product?.supplierName)
-          .filter((name): name is string => !!name),
-      ),
-    ];
-    const fees = computeFulfillmentFees({
+    const fees = await this.quoteFulfillment({
       subtotal,
       deliveryMethod: dto.deliveryMethod,
       city: dto.city,
-      supplierNames,
+      lines: lines.flatMap((line) =>
+        line.product
+          ? [
+              {
+                supplierId: line.product.supplierId,
+                supplierName: line.product.supplierName,
+                lineTotal: line.lineTotal,
+              },
+            ]
+          : [],
+      ),
     });
     const fxConfig = await this.fx.publicConfig();
     const settlement = fxConfig.settlementCurrency;
@@ -339,14 +343,15 @@ export class OrdersService {
       (sum, line) => sum.add(line.lineTotal),
       new Prisma.Decimal(0),
     );
-    const supplierNames = [
-      ...new Set(products.map((product) => product.supplierName)),
-    ];
-    const fees = computeFulfillmentFees({
+    const fees = await this.quoteFulfillment({
       subtotal: Number(subtotal),
       deliveryMethod: dto.deliveryMethod,
       city: dto.city,
-      supplierNames,
+      lines: lines.map((line) => ({
+        supplierId: line.product.supplierId,
+        supplierName: line.product.supplierName,
+        lineTotal: Number(line.lineTotal),
+      })),
     });
     const total = new Prisma.Decimal(fees.total.toFixed(2));
     const payOnDelivery = isPayOnDelivery(dto.paymentMethod);
@@ -2373,6 +2378,56 @@ export class OrdersService {
       })),
     };
   }
+
+  private async quoteFulfillment(input: {
+    subtotal: number;
+    deliveryMethod?: string;
+    city?: string;
+    lines: { supplierId: string; supplierName: string; lineTotal: number }[];
+  }) {
+    const grouped = new Map<string, { supplierName: string; merchandise: number }>();
+    for (const line of input.lines) {
+      const current = grouped.get(line.supplierId);
+      if (current) current.merchandise += line.lineTotal;
+      else {
+        grouped.set(line.supplierId, {
+          supplierName: line.supplierName,
+          merchandise: line.lineTotal,
+        });
+      }
+    }
+    const ids = [...grouped.keys()];
+    const rows = ids.length
+      ? await this.prisma.supplier.findMany({
+          where: { id: { in: ids } },
+          select: {
+            id: true,
+            standardDeliveryFee: true,
+            expressDeliveryFee: true,
+            pickupDeliveryFee: true,
+            freeDeliveryThreshold: true,
+          },
+        })
+      : [];
+    const rates = new Map(rows.map((row) => [row.id, row]));
+    return computeFulfillmentFees({
+      subtotal: input.subtotal,
+      deliveryMethod: input.deliveryMethod,
+      city: input.city,
+      suppliers: [...grouped.entries()].map(([supplierId, group]) => {
+        const row = rates.get(supplierId);
+        return {
+          supplierName: group.supplierName,
+          merchandiseSubtotal: group.merchandise,
+          standardDeliveryFee: row ? Number(row.standardDeliveryFee) : 4.99,
+          expressDeliveryFee: row ? Number(row.expressDeliveryFee) : 9.99,
+          pickupDeliveryFee: row ? Number(row.pickupDeliveryFee) : 0,
+          freeDeliveryThreshold:
+            row?.freeDeliveryThreshold == null ? null : Number(row.freeDeliveryThreshold),
+        };
+      }),
+    });
+  }
 }
 
 function isPayOnDelivery(method?: string): boolean {
@@ -2383,60 +2438,6 @@ function isPayOnDelivery(method?: string): boolean {
     normalized === 'cod' ||
     normalized === 'cash_on_delivery'
   );
-}
-
-/** Simple marketplace fulfillment quotes — additive, no commission impact. */
-function computeFulfillmentFees(input: {
-  subtotal: number;
-  deliveryMethod?: string;
-  city?: string;
-  supplierNames: string[];
-}) {
-  const method = normalizeDeliveryMethod(input.deliveryMethod);
-  const city = (input.city ?? 'Nairobi').trim() || 'Nairobi';
-  const suppliers =
-    input.supplierNames.length > 0 ? input.supplierNames : ['Supplier'];
-  const perShipment =
-    method === 'pickup' ? 0 : method === 'express' ? 9.99 : 4.99;
-  const shipments = suppliers.map((supplierName) => ({
-    supplierName,
-    deliveryMethod: method,
-    fee: perShipment,
-    estimate: estimateLabel(method, city),
-  }));
-  const deliveryFee = roundMoney(
-    shipments.reduce((sum, shipment) => sum + shipment.fee, 0),
-  );
-  const tax = roundMoney(input.subtotal * 0.08);
-  const subtotal = roundMoney(input.subtotal);
-  return {
-    subtotal,
-    deliveryFee,
-    tax,
-    total: roundMoney(subtotal + deliveryFee + tax),
-    deliveryMethod: method,
-    shipments,
-  };
-}
-
-function normalizeDeliveryMethod(method?: string): 'express' | 'standard' | 'pickup' {
-  const normalized = (method ?? 'standard').trim().toLowerCase();
-  if (normalized === 'express' || normalized === 'pickup') return normalized;
-  return 'standard';
-}
-
-function estimateLabel(
-  method: 'express' | 'standard' | 'pickup',
-  city: string,
-): string {
-  switch (method) {
-    case 'express':
-      return `1–2 days to ${city}`;
-    case 'pickup':
-      return `Ready for pickup in ${city}`;
-    default:
-      return `3–5 days to ${city}`;
-  }
 }
 
 function isUniqueConflict(error: unknown): boolean {

@@ -45,6 +45,11 @@ List<ShellDestination> supplierDestinations({int openReturns = 0}) => [
         path: '/supplier/products',
       ),
       const ShellDestination(
+        labelKey: 'deliveryFees',
+        icon: Icons.local_shipping_outlined,
+        path: '/supplier/delivery',
+      ),
+      const ShellDestination(
         labelKey: 'payments',
         icon: Icons.payments_outlined,
         path: '/supplier/payments',
@@ -211,6 +216,15 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                 '${data!['supplierName']}',
                 style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
               ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () => context.go('/supplier/delivery'),
+                icon: const Icon(Icons.local_shipping_outlined),
+                label: Text(s.t('deliveryFees')),
+              ),
+            ),
             const SizedBox(height: 16),
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())
@@ -1880,4 +1894,159 @@ class _SupplierFinance {
   final Map<String, dynamic> summary;
   final List<Map<String, dynamic>> agreements;
   final double defaultRate;
+}
+
+class SupplierDeliveryFeesScreen extends StatefulWidget {
+  const SupplierDeliveryFeesScreen({super.key});
+
+  @override
+  State<SupplierDeliveryFeesScreen> createState() => _SupplierDeliveryFeesScreenState();
+}
+
+class _SupplierDeliveryFeesScreenState extends State<SupplierDeliveryFeesScreen> {
+  final _standardCtrl = TextEditingController();
+  final _expressCtrl = TextEditingController();
+  final _pickupCtrl = TextEditingController();
+  final _thresholdCtrl = TextEditingController();
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_load());
+    });
+  }
+
+  @override
+  void dispose() {
+    _standardCtrl.dispose();
+    _expressCtrl.dispose();
+    _pickupCtrl.dispose();
+    _thresholdCtrl.dispose();
+    super.dispose();
+  }
+
+  String _moneyText(num? value) {
+    if (value == null) return '';
+    final amount = value.toDouble();
+    return amount == amount.roundToDouble() ? amount.round().toString() : amount.toStringAsFixed(2);
+  }
+
+  Future<void> _load() async {
+    try {
+      final fees = await context.read<ApiClient>().fetchMyDeliveryFees();
+      if (!mounted) return;
+      setState(() {
+        _standardCtrl.text = _moneyText(fees['standardDeliveryFee'] as num?);
+        _expressCtrl.text = _moneyText(fees['expressDeliveryFee'] as num?);
+        _pickupCtrl.text = _moneyText(fees['pickupDeliveryFee'] as num?);
+        _thresholdCtrl.text = _moneyText(fees['freeDeliveryThreshold'] as num?);
+        _loading = false;
+        _error = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  double? _parseFee(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    return double.tryParse(text);
+  }
+
+  Future<void> _save() async {
+    final s = WingerStrings.of(context);
+    final standard = _parseFee(_standardCtrl.text);
+    final express = _parseFee(_expressCtrl.text);
+    final pickup = _parseFee(_pickupCtrl.text);
+    final thresholdText = _thresholdCtrl.text.trim();
+    final threshold = thresholdText.isEmpty ? null : double.tryParse(thresholdText);
+    if (standard == null || express == null || pickup == null || standard < 0 || express < 0 || pickup < 0) {
+      setState(() => _error = s.t('deliveryFeesHint'));
+      return;
+    }
+    if (thresholdText.isNotEmpty && (threshold == null || threshold <= 0)) {
+      setState(() => _error = s.t('freeDeliveryThresholdHint'));
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await context.read<ApiClient>().updateMyDeliveryFees(
+            standardDeliveryFee: standard,
+            expressDeliveryFee: express,
+            pickupDeliveryFee: pickup,
+            freeDeliveryThreshold: threshold,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('deliveryFeesSaved'))));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(s.t('deliveryFees'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        Text(s.t('deliveryFeesHint'), style: TextStyle(color: WingerColors.muted)),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _standardCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: s.t('standardDelivery'), prefixText: 'USD '),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _expressCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: s.t('expressDelivery'), prefixText: 'USD '),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _pickupCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: s.t('pickupDelivery'), prefixText: 'USD '),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _thresholdCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: s.t('freeDeliveryThreshold'),
+            prefixText: 'USD ',
+            helperText: s.t('freeDeliveryThresholdHint'),
+            helperMaxLines: 4,
+          ),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(_error!, style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+        ],
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: _saving ? null : () => unawaited(_save()),
+          child: Text(_saving ? s.t('saveDeliveryFees') : s.t('saveDeliveryFees')),
+        ),
+      ],
+    );
+  }
 }

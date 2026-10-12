@@ -318,7 +318,96 @@ export class ProductsService {
       ratingCount: supplier.ratingCount,
       productCount,
       deliveryConfigured: supplier.deliveryConfigured,
+      standardDeliveryFee: Number(supplier.standardDeliveryFee),
+      expressDeliveryFee: Number(supplier.expressDeliveryFee),
+      pickupDeliveryFee: Number(supplier.pickupDeliveryFee),
+      freeDeliveryThreshold:
+        supplier.freeDeliveryThreshold == null
+          ? null
+          : Number(supplier.freeDeliveryThreshold),
     };
+  }
+
+  async getMyDeliveryFees(user: AuthUser) {
+    const supplier = await this.requireSupplier(user);
+    return this.deliveryFeeResponse(supplier);
+  }
+
+  async updateMyDeliveryFees(
+    user: AuthUser,
+    body: {
+      standardDeliveryFee?: number;
+      expressDeliveryFee?: number;
+      pickupDeliveryFee?: number;
+      freeDeliveryThreshold?: number | null;
+    },
+  ) {
+    const supplier = await this.requireSupplier(user);
+    const data: Prisma.SupplierUpdateInput = { deliveryConfigured: true };
+    if (body.standardDeliveryFee !== undefined) {
+      data.standardDeliveryFee = this.parseDeliveryFee(body.standardDeliveryFee, 'Standard delivery');
+    }
+    if (body.expressDeliveryFee !== undefined) {
+      data.expressDeliveryFee = this.parseDeliveryFee(body.expressDeliveryFee, 'Express delivery');
+    }
+    if (body.pickupDeliveryFee !== undefined) {
+      data.pickupDeliveryFee = this.parseDeliveryFee(body.pickupDeliveryFee, 'Pickup');
+    }
+    if ('freeDeliveryThreshold' in body) {
+      data.freeDeliveryThreshold =
+        body.freeDeliveryThreshold == null
+          ? null
+          : this.parseDeliveryThreshold(body.freeDeliveryThreshold);
+    }
+    const updated = await this.prisma.supplier.update({
+      where: { id: supplier.id },
+      data,
+    });
+    return this.deliveryFeeResponse(updated);
+  }
+
+  private async requireSupplier(user: AuthUser) {
+    if (user.role !== UserRole.SUPPLIER || !user.supplierId) {
+      throw new ForbiddenException('Supplier account required');
+    }
+    const supplier = await this.prisma.supplier.findUnique({
+      where: { id: user.supplierId },
+    });
+    if (!supplier) throw new NotFoundException('Supplier not found');
+    return supplier;
+  }
+
+  private deliveryFeeResponse(supplier: {
+    standardDeliveryFee: Prisma.Decimal;
+    expressDeliveryFee: Prisma.Decimal;
+    pickupDeliveryFee: Prisma.Decimal;
+    freeDeliveryThreshold: Prisma.Decimal | null;
+  }) {
+    return {
+      standardDeliveryFee: Number(supplier.standardDeliveryFee),
+      expressDeliveryFee: Number(supplier.expressDeliveryFee),
+      pickupDeliveryFee: Number(supplier.pickupDeliveryFee),
+      freeDeliveryThreshold:
+        supplier.freeDeliveryThreshold == null
+          ? null
+          : Number(supplier.freeDeliveryThreshold),
+    };
+  }
+
+  private parseDeliveryFee(value: unknown, label: string): number {
+    const amount = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 9999) {
+      throw new BadRequestException(`${label} must be from 0 to 9999 USD. Use 0 for free.`);
+    }
+    return Math.round(amount * 100) / 100;
+  }
+
+  private parseDeliveryThreshold(value: unknown): number {
+    const amount = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) {
+      throw new BadRequestException('Free-delivery amount must be greater than 0 and at most 100000 USD.');
+    }
+    return Math.round(amount * 100) / 100;
   }
 
   /** Real KPIs for the signed-in supplier (replaces mock dashboard cards). */

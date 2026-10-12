@@ -1,0 +1,4 @@
+ALTER TABLE "Supplier" ADD COLUMN "standardDeliveryFee" DECIMAL(12,2) NOT NULL DEFAULT 4.99;
+ALTER TABLE "Supplier" ADD COLUMN "expressDeliveryFee" DECIMAL(12,2) NOT NULL DEFAULT 9.99;
+ALTER TABLE "Supplier" ADD COLUMN "pickupDeliveryFee" DECIMAL(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE "Supplier" ADD COLUMN "freeDeliveryThreshold" DECIMAL(12,2);
