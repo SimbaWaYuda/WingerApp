@@ -939,6 +939,27 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     return s.t('withinMiles').replaceAll('{n}', _milesText(miles));
   }
 
+  String _distanceMenuValue() {
+    final miles = _maxMiles;
+    if (miles == null) return '__all__';
+    if (_presetMiles.contains(miles)) return miles.toString();
+    return '__custom__';
+  }
+
+  void _selectDistance(String value) {
+    if (value == '__custom__') {
+      unawaited(_pickCustomMiles());
+      return;
+    }
+    if (value == '__all__') {
+      _applyFilter(() => _maxMiles = null);
+      return;
+    }
+    final miles = double.tryParse(value);
+    if (miles == null) return;
+    _applyFilter(() => _maxMiles = miles);
+  }
+
   Future<void> _pickCustomMiles() async {
     final miles = await showDialog<double>(
       context: context,
@@ -1102,6 +1123,34 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     );
   }
 
+  Widget _buildDistanceDropdown(WingerStrings s) {
+    final customLabel = _maxMiles != null && !_presetMiles.contains(_maxMiles)
+        ? _distanceLabel(s)
+        : s.t('customDistance');
+    return DropdownButtonFormField<String>(
+      key: ValueKey(_distanceMenuValue()),
+      initialValue: _distanceMenuValue(),
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: s.t('distance'),
+        prefixIcon: const Icon(Icons.social_distance_outlined),
+      ),
+      items: [
+        DropdownMenuItem(value: '__all__', child: Text(s.t('anyDistance'))),
+        for (final miles in _presetMiles)
+          DropdownMenuItem(
+            value: miles.toString(),
+            child: Text(s.t('withinMiles').replaceAll('{n}', _milesText(miles))),
+          ),
+        DropdownMenuItem(value: '__custom__', child: Text(customLabel)),
+      ],
+      onChanged: (value) {
+        if (value == null) return;
+        _selectDistance(value);
+      },
+    );
+  }
+
   Widget _buildFilterSidebar(WingerStrings s) {
     return ListView(
       padding: const EdgeInsets.only(right: 8),
@@ -1207,30 +1256,6 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                   ],
                 );
               },
-            ),
-          ],
-        ),
-        ExpansionTile(
-          initiallyExpanded: _maxMiles != null,
-          title: Text(s.t('distance'), style: const TextStyle(fontWeight: FontWeight.w800)),
-          children: [
-            _sidebarOption(
-              label: s.t('anyDistance'),
-              selected: _maxMiles == null,
-              onTap: () => _applyFilter(() => _maxMiles = null),
-            ),
-            for (final miles in _presetMiles)
-              _sidebarOption(
-                label: s.t('withinMiles').replaceAll('{n}', _milesText(miles)),
-                selected: _maxMiles == miles,
-                onTap: () => _applyFilter(() => _maxMiles = miles),
-              ),
-            _sidebarOption(
-              label: _maxMiles != null && !_presetMiles.contains(_maxMiles)
-                  ? _distanceLabel(s)
-                  : s.t('customDistance'),
-              selected: _maxMiles != null && !_presetMiles.contains(_maxMiles),
-              onTap: () => unawaited(_pickCustomMiles()),
             ),
           ],
         ),
@@ -1381,19 +1406,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             _dropdownPill(
               label: _distanceLabel(s),
               active: _maxMiles != null,
-              onSelected: (value) {
-                if (value == '__custom__') {
-                  unawaited(_pickCustomMiles());
-                  return;
-                }
-                if (value == '__all__') {
-                  _applyFilter(() => _maxMiles = null);
-                  return;
-                }
-                final miles = double.tryParse(value);
-                if (miles == null) return;
-                _applyFilter(() => _maxMiles = miles);
-              },
+              onSelected: _selectDistance,
               items: [
                 PopupMenuItem(value: '__all__', child: Text(s.t('anyDistance'))),
                 for (final miles in _presetMiles)
@@ -1649,6 +1662,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             _reload();
           },
         ),
+        const SizedBox(height: 12),
+        _buildDistanceDropdown(s),
         _buildActiveFiltersBar(s),
       ],
     );

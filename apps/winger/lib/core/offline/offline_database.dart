@@ -1,19 +1,17 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
-import 'package:sqlite3/sqlite3.dart';
+import 'package:sqlite3/common.dart';
 
 import '../models/models.dart';
-import 'db_path.dart';
-import 'sqlite_init.dart';
+import 'sqlite_open.dart';
 
 /// Local SQLite store (same schema we planned for Drift) for offline-first Winger.
 class OfflineDatabase {
   OfflineDatabase();
 
-  Database? _db;
+  CommonDatabase? _db;
 
-  Database get db {
+  CommonDatabase get db {
     final database = _db;
     if (database == null) {
       throw StateError('OfflineDatabase not opened. Call open() first.');
@@ -24,13 +22,7 @@ class OfflineDatabase {
   Future<void> open() async {
     if (_db != null) return;
 
-    if (kIsWeb) {
-      _db = sqlite3.openInMemory();
-    } else {
-      await initSqlite();
-      final path = await resolveSqlitePath();
-      _db = path == ':memory:' ? sqlite3.openInMemory() : sqlite3.open(path);
-    }
+    _db = await openSqliteDatabase();
 
     db.execute('PRAGMA foreign_keys = ON;');
     _migrate();
