@@ -565,6 +565,8 @@ class ApiClient {
             deliveryMethod: row['deliveryMethod'] as String? ?? 'standard',
             fee: (row['fee'] as num?)?.toDouble() ?? 0,
             estimate: row['estimate'] as String? ?? '',
+            carrier: row['carrier'] as String?,
+            courierName: row['courierName'] as String?,
           ),
         )
         .toList();
@@ -1001,6 +1003,10 @@ class ApiClient {
     required double expressDeliveryFee,
     required double pickupDeliveryFee,
     required double? freeDeliveryThreshold,
+    required double taxRatePercent,
+    required bool taxOnDelivery,
+    required String carrier,
+    String? courierName,
   }) async {
     _requireAccessToken();
     final response = await http
@@ -1012,6 +1018,10 @@ class ApiClient {
             'expressDeliveryFee': expressDeliveryFee,
             'pickupDeliveryFee': pickupDeliveryFee,
             'freeDeliveryThreshold': freeDeliveryThreshold,
+            'taxRatePercent': taxRatePercent,
+            'taxOnDelivery': taxOnDelivery,
+            'carrier': carrier,
+            'courierName': courierName,
           }),
         )
         .timeout(const Duration(seconds: 8));
@@ -1358,6 +1368,45 @@ class ApiClient {
         body?['message']?.toString() ??
             'Commission summary HTTP ${response.statusCode}',
       );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> fetchConnectStatus() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/suppliers/me/connect'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(body?['message']?.toString() ?? 'Payout status HTTP ${response.statusCode}');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<String> startConnectOnboarding() async {
+    _requireAccessToken();
+    final response = await http
+        .post(_uri('/suppliers/me/connect'), headers: session.authHeaders, body: '{}')
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(body?['message']?.toString() ?? 'Payout setup HTTP ${response.statusCode}');
+    }
+    final map = jsonDecode(response.body) as Map<String, dynamic>;
+    final url = map['url'] as String?;
+    if (url == null || url.isEmpty) throw Exception('Payout setup did not return a link');
+    return url;
+  }
+
+  Future<Map<String, dynamic>> sendSettleablePayouts() async {
+    _requireAccessToken();
+    final response = await http
+        .post(_uri('/suppliers/me/connect/transfers'), headers: session.authHeaders, body: '{}')
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(body?['message']?.toString() ?? 'Payout HTTP ${response.statusCode}');
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }

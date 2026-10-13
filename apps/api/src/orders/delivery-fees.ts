@@ -1,18 +1,44 @@
 export type DeliveryMethod = 'express' | 'standard' | 'pickup';
+export type CarrierMode = 'supplier' | 'courier';
 
 export type SupplierDeliveryQuote = {
+  supplierId: string;
   supplierName: string;
   merchandiseSubtotal: number;
   standardDeliveryFee: number;
   expressDeliveryFee: number;
   pickupDeliveryFee: number;
   freeDeliveryThreshold: number | null;
+  /** Percent of this supplier's items. 0 means no tax. */
+  taxRatePercent: number;
+  taxOnDelivery: boolean;
+  /** supplier delivers, or a named courier. Pickup clears this on the shipment. */
+  carrier: CarrierMode;
+  courierName: string | null;
 };
 
 export function normalizeDeliveryMethod(method?: string): DeliveryMethod {
   const normalized = (method ?? 'standard').trim().toLowerCase();
   if (normalized === 'express' || normalized === 'pickup') return normalized;
   return 'standard';
+}
+
+export function normalizeCarrier(value?: string | null): CarrierMode {
+  return (value ?? '').trim().toLowerCase() === 'courier' ? 'courier' : 'supplier';
+}
+
+/** Pickup has no carrier. A courier name is the label locked at checkout. */
+export function carrierForShipment(
+  method: DeliveryMethod,
+  supplier: SupplierDeliveryQuote,
+): { carrier: CarrierMode | null; courierName: string | null } {
+  if (method === 'pickup') return { carrier: null, courierName: null };
+  const carrier = normalizeCarrier(supplier.carrier);
+  if (carrier === 'courier') {
+    const name = (supplier.courierName ?? '').trim();
+    return { carrier, courierName: name || 'Courier' };
+  }
+  return { carrier: 'supplier', courierName: null };
 }
 
 export function deliveryFeeForSupplier(
@@ -32,6 +58,12 @@ export function deliveryFeeForSupplier(
   return roundMoney(supplier.standardDeliveryFee);
 }
 
+export function taxForSupplier(deliveryFee: number, supplier: SupplierDeliveryQuote): number {
+  const rate = Number.isFinite(supplier.taxRatePercent) ? supplier.taxRatePercent : 8;
+  const base = supplier.merchandiseSubtotal + (supplier.taxOnDelivery ? deliveryFee : 0);
+  return roundMoney((base * rate) / 100);
+}
+
 export function estimateLabel(method: DeliveryMethod, city: string): string {
   switch (method) {
     case 'express':
@@ -43,7 +75,7 @@ export function estimateLabel(method: DeliveryMethod, city: string): string {
   }
 }
 
-/** Product subtotal is taxed at 8%. Delivery is quoted per supplier and stays out of tax. */
+/** Each supplier's tax rate applies to their items, and to their delivery fee when they opted in. */
 export function computeFulfillmentFees(input: {
   subtotal: number;
   deliveryMethod?: string;
@@ -52,29 +84,38 @@ export function computeFulfillmentFees(input: {
 }) {
   const method = normalizeDeliveryMethod(input.deliveryMethod);
   const city = (input.city ?? 'Nairobi').trim() || 'Nairobi';
-  const suppliers =
-    input.suppliers.length > 0
-      ? input.suppliers
-      : [
-          {
-            supplierName: 'Supplier',
-            merchandiseSubtotal: input.subtotal,
-            standardDeliveryFee: 4.99,
-            expressDeliveryFee: 9.99,
-            pickupDeliveryFee: 0,
-            freeDeliveryThreshold: null,
-          },
-        ];
-  const shipments = suppliers.map((supplier) => ({
-    supplierName: supplier.supplierName,
-    deliveryMethod: method,
-    fee: deliveryFeeForSupplier(method, supplier),
-    estimate: estimateLabel(method, city),
-  }));
+  const fallback: SupplierDeliveryQuote = {
+    supplierId: '',
+    supplierName: 'Supplier',
+    merchandiseSubtotal: input.subtotal,
+    standardDeliveryFee: 4.99,
+    expressDeliveryFee: 9.99,
+    pickupDeliveryFee: 0,
+    freeDeliveryThreshold: null,
+    taxRatePercent: 8,
+    taxOnDelivery: false,
+    carrier: 'supplier',
+    courierName: null,
+  };
+  const suppliers = input.suppliers.length > 0 ? input.suppliers : [fallback];
+  const shipments = suppliers.map((supplier) => {
+    const fee = deliveryFeeForSupplier(method, supplier);
+    const carrier = carrierForShipment(method, supplier);
+    return {
+      supplierId: supplier.supplierId,
+      supplierName: supplier.supplierName,
+      deliveryMethod: method,
+      fee,
+      tax: taxForSupplier(fee, supplier),
+      estimate: estimateLabel(method, city),
+      carrier: carrier.carrier,
+      courierName: carrier.courierName,
+    };
+  });
   const deliveryFee = roundMoney(
     shipments.reduce((sum, shipment) => sum + shipment.fee, 0),
   );
-  const tax = roundMoney(input.subtotal * 0.08);
+  const tax = roundMoney(shipments.reduce((sum, shipment) => sum + shipment.tax, 0));
   const subtotal = roundMoney(input.subtotal);
   return {
     subtotal,

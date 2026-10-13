@@ -9,6 +9,8 @@ import '../../core/api/api_client.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
 import '../../core/payments/card_entry.dart';
+import '../../core/payments/stripe_card_form.dart';
+import '../../core/payments/stripe_card_handle.dart';
 import '../../core/repositories/catalog_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
@@ -22,6 +24,16 @@ import '../onboarding/onboarding_checklist.dart';
 String _deliveryFeeLabel(WingerStrings s, AppSession session, double amount) {
   if (amount <= 0) return s.t('freeDelivery');
   return session.formatMoney(amount);
+}
+
+String? _carrierLine(WingerStrings s, {String? carrier, String? courierName}) {
+  return carrierCaption(
+    carrier: carrier,
+    courierName: courierName,
+    supplierDelivery: s.t('carrierSupplierLabel'),
+    courierDelivery: s.t('carrierCourierLabel'),
+    unnamedCourier: s.t('carrierCourierFallback'),
+  );
 }
 
 String _customerTitle(WingerStrings s, String path) {
@@ -2827,6 +2839,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final TextEditingController _cardNumber = TextEditingController();
   final TextEditingController _cardExpiry = TextEditingController();
   final TextEditingController _cardCvc = TextEditingController();
+  final StripeCardHandle _stripeCard = StripeCardHandle();
 
   String _cardCheckoutNote(WingerStrings s, AppSession session) {
     final payAmount = session.showPaymentEstimate
@@ -3077,9 +3090,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 child: ListTile(
                   title: Text(shipment.supplierName, style: const TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Text(
-                    '${shipment.estimate}\n'
-                    '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, shipment.fee)}'
-                    '${session.deliveryMethod == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
+                    [
+                      shipment.estimate,
+                      ?_carrierLine(s, carrier: shipment.carrier, courierName: shipment.courierName),
+                      '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, shipment.fee)}'
+                          '${session.deliveryMethod == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
+                    ].join('\n'),
                   ),
                   isThreeLine: true,
                 ),
@@ -3135,35 +3151,55 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             if (_payMethod == _CheckoutPayMethod.card &&
                 (session.stripeCheckoutMode == 'test' || session.stripeCheckoutMode == 'live')) ...[
               const SizedBox(height: 16),
-              TextField(
-                controller: _cardNumber,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: s.t('cardNumber')),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _cardExpiry,
-                      keyboardType: TextInputType.datetime,
-                      decoration: InputDecoration(
-                        labelText: s.t('cardExpiry'),
-                        hintText: 'MM/YY',
+              if (usesHostedStripeCard && (session.stripePublishableKey ?? '').isNotEmpty) ...[
+                SizedBox(
+                  height: 120,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: StripeCardForm(
+                      handle: _stripeCard,
+                      apiOrigin: session.apiBaseUrl,
+                      frameUrl:
+                          '${session.apiBaseUrl}/payments/card-element?key=${Uri.encodeQueryComponent(session.stripePublishableKey!)}',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  s.t('cardHostedNote'),
+                  style: const TextStyle(color: WingerColors.muted, fontSize: 12),
+                ),
+              ] else ...[
+                TextField(
+                  controller: _cardNumber,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(labelText: s.t('cardNumber')),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _cardExpiry,
+                        keyboardType: TextInputType.datetime,
+                        decoration: InputDecoration(
+                          labelText: s.t('cardExpiry'),
+                          hintText: 'MM/YY',
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _cardCvc,
-                      keyboardType: TextInputType.number,
-                      obscureText: true,
-                      decoration: InputDecoration(labelText: s.t('cardCvc')),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _cardCvc,
+                        keyboardType: TextInputType.number,
+                        obscureText: true,
+                        decoration: InputDecoration(labelText: s.t('cardCvc')),
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
               if (session.stripeCheckoutMode == 'test') ...[
                 const SizedBox(height: 8),
                 Text(
@@ -3240,22 +3276,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                               if (key == null || key.isEmpty) {
                                 throw Exception(s.t('cardInvalid'));
                               }
-                              final ParsedCard card;
-                              try {
-                                card = parseCardEntry(
-                                  number: _cardNumber.text,
-                                  expiry: _cardExpiry.text,
-                                  cvc: _cardCvc.text,
+                              if (usesHostedStripeCard) {
+                                stripePaymentMethodId = await _stripeCard.createPaymentMethod();
+                              } else {
+                                final ParsedCard card;
+                                try {
+                                  card = parseCardEntry(
+                                    number: _cardNumber.text,
+                                    expiry: _cardExpiry.text,
+                                    cvc: _cardCvc.text,
+                                  );
+                                } on FormatException {
+                                  throw Exception(s.t('cardInvalid'));
+                                }
+                                stripePaymentMethodId = await createStripePaymentMethod(
+                                  card: card,
+                                  publishableKey: key,
                                 );
-                              } on FormatException {
-                                throw Exception(s.t('cardInvalid'));
+                                _cardNumber.clear();
+                                _cardCvc.clear();
                               }
-                              stripePaymentMethodId = await createStripePaymentMethod(
-                                card: card,
-                                publishableKey: key,
-                              );
-                              _cardNumber.clear();
-                              _cardCvc.clear();
                             }
                             final order = await session.placeOrder(
                               paymentMethod: method,
@@ -3873,6 +3913,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             const SizedBox(height: 8),
             for (final entry in shipmentsBySupplier.entries) ...[
               Text(entry.key, style: const TextStyle(fontWeight: FontWeight.w700)),
+              if (_carrierLine(
+                    s,
+                    carrier: entry.value.first.carrier,
+                    courierName: entry.value.first.courierName,
+                  )
+                  case final line?)
+                Text(line, style: TextStyle(color: WingerColors.muted)),
               const SizedBox(height: 6),
               for (final leg in entry.value)
                 Card(

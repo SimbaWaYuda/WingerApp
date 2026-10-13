@@ -667,6 +667,15 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text('${row['supplierName'] ?? ''}'),
+                                if (carrierCaption(
+                                      carrier: row['carrier'] as String?,
+                                      courierName: row['courierName'] as String?,
+                                      supplierDelivery: s.t('carrierSupplierLabel'),
+                                      courierDelivery: s.t('carrierCourierLabel'),
+                                      unnamedCourier: s.t('carrierCourierFallback'),
+                                    )
+                                    case final line?)
+                                  Text(line, style: TextStyle(color: WingerColors.muted)),
                                 Text('${row['productName'] ?? ''} × ${row['quantity'] ?? 1}'),
                                 const SizedBox(height: 4),
                                 Text(

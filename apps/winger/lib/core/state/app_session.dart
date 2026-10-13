@@ -230,6 +230,7 @@ class AppSession extends ChangeNotifier {
           deliveryMethod: deliveryMethod,
           fee: perShipment,
           estimate: deliveryEstimateFor(city),
+          carrier: deliveryMethod == 'pickup' ? null : 'supplier',
         ),
     ];
     cartDeliveryFee = _roundMoney(

@@ -207,4 +207,110 @@ export class StripeService {
       return { ok: false, message };
     }
   }
+
+  /** Connect payouts run only against the test secret. Live charges are refused. */
+  connectTestReady(): boolean {
+    return this.checkoutMode === 'test' && this.stripe != null;
+  }
+
+  async createExpressAccount(params: {
+    email: string;
+    supplierId: string;
+  }): Promise<{ id: string }> {
+    this.assertConnectTest();
+    const country = (process.env.STRIPE_CONNECT_COUNTRY || 'US').trim().toUpperCase() || 'US';
+    const account = await this.stripe!.accounts.create({
+      type: 'express',
+      country,
+      email: params.email,
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+      metadata: { supplierId: params.supplierId },
+    });
+    return { id: account.id };
+  }
+
+  async createAccountLink(params: {
+    accountId: string;
+    refreshUrl: string;
+    returnUrl: string;
+  }): Promise<{ url: string }> {
+    this.assertConnectTest();
+    const link = await this.stripe!.accountLinks.create({
+      account: params.accountId,
+      refresh_url: params.refreshUrl,
+      return_url: params.returnUrl,
+      type: 'account_onboarding',
+    });
+    return { url: link.url };
+  }
+
+  async retrieveConnectAccount(accountId: string): Promise<{
+    payoutsEnabled: boolean;
+    chargesEnabled: boolean;
+    detailsSubmitted: boolean;
+  }> {
+    this.assertConnectTest();
+    const account = await this.stripe!.accounts.retrieve(accountId);
+    return {
+      payoutsEnabled: account.payouts_enabled === true,
+      chargesEnabled: account.charges_enabled === true,
+      detailsSubmitted: account.details_submitted === true,
+    };
+  }
+
+  async createSupplierTransfer(params: {
+    amountCents: number;
+    currency: string;
+    destinationAccountId: string;
+    sourceChargeId: string;
+    idempotencyKey: string;
+    orderItemId: string;
+    supplierId: string;
+  }): Promise<{ id: string }> {
+    this.assertConnectTest();
+    const transfer = await this.stripe!.transfers.create(
+      {
+        amount: params.amountCents,
+        currency: params.currency.toLowerCase(),
+        destination: params.destinationAccountId,
+        source_transaction: params.sourceChargeId,
+        metadata: {
+          orderItemId: params.orderItemId,
+          supplierId: params.supplierId,
+        },
+      },
+      { idempotencyKey: params.idempotencyKey },
+    );
+    return { id: transfer.id };
+  }
+
+  async chargeIdForPaymentIntent(paymentIntentId: string): Promise<string | null> {
+    this.assertConnectTest();
+    const intent = await this.stripe!.paymentIntents.retrieve(paymentIntentId);
+    const charge = intent.latest_charge;
+    if (!charge) return null;
+    return typeof charge === 'string' ? charge : charge.id;
+  }
+
+  async reverseSupplierTransfer(params: {
+    transferId: string;
+    idempotencyKey: string;
+  }): Promise<{ id: string }> {
+    this.assertConnectTest();
+    const reversal = await this.stripe!.transfers.createReversal(
+      params.transferId,
+      {},
+      { idempotencyKey: params.idempotencyKey },
+    );
+    return { id: reversal.id };
+  }
+
+  private assertConnectTest(): void {
+    if (!this.connectTestReady()) {
+      throw new Error('Stripe payouts stay in test mode');
+    }
+  }
 }

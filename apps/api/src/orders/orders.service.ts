@@ -23,6 +23,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { computeFulfillmentFees, normalizeDeliveryMethod } from './delivery-fees';
+import { PayoutsService } from './payouts.service';
 import { cardRefundAmount, ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
 
 export type CreateOrderItemDto = {
@@ -108,6 +109,7 @@ export class OrdersService {
     private readonly notifications: NotificationsService,
     private readonly fx: FxService,
     private readonly audit: AuditService,
+    private readonly payouts: PayoutsService,
   ) {}
 
   /**
@@ -432,7 +434,11 @@ export class OrdersService {
           city: city || 'Nairobi',
           checkoutIdempotencyKey: checkoutKey,
           items: {
-            create: lines.map((line) => ({
+            create: lines.map((line) => {
+              const shipment = fees.shipments.find(
+                (row) => row.supplierId === line.product.supplierId,
+              );
+              return {
               productId: line.product.id,
               productName: line.product.name,
               supplierId: line.product.supplierId,
@@ -448,7 +454,10 @@ export class OrdersService {
               quantity: line.quantity,
               lineTotal: line.lineTotal,
               status: OrderStatus.PROCESSING,
-            })),
+              carrier: shipment?.carrier ?? null,
+              courierName: shipment?.courierName ?? null,
+              };
+            }),
           },
         },
         include: orderWithItems,
@@ -682,6 +691,8 @@ export class OrdersService {
         lineTotal: true,
         quantity: true,
         trackingCode: true,
+        carrier: true,
+        courierName: true,
         order: { select: { id: true, displayId: true, createdAt: true } },
       },
     });
@@ -702,6 +713,8 @@ export class OrdersService {
       status: OrderStatus;
       lineTotal: number;
       trackingCode: string | null;
+      carrier: string | null;
+      courierName: string | null;
       createdAt: Date;
     }> = [];
 
@@ -736,6 +749,8 @@ export class OrdersService {
           status: item.status,
           lineTotal: Math.round(amount * 100) / 100,
           trackingCode: item.trackingCode,
+          carrier: item.carrier,
+          courierName: item.courierName,
           createdAt: item.order.createdAt,
         });
       }
@@ -1174,6 +1189,8 @@ export class OrdersService {
               quantity: qty,
               lineTotal,
               status: OrderStatus.PROCESSING,
+              carrier: source.carrier,
+              courierName: source.courierName,
               replacesOrderItemId: source.id,
             },
           },
@@ -1395,6 +1412,7 @@ export class OrdersService {
           actor: user,
           returnRequestId: current.id,
         });
+        await this.payouts.reverseIfTransferred(current.orderItemId);
       }
     }
 
@@ -1685,6 +1703,7 @@ export class OrdersService {
           orderItemId: item.id,
           actor: user,
         });
+        await this.payouts.reverseIfTransferred(item.id);
       }
     }
 
@@ -1772,7 +1791,7 @@ export class OrdersService {
     if (dto.collectPayment) {
       await this.collectSupplierCash(item.orderId, item.supplierId, user);
     } else {
-      await this.commissions.advanceRecognitionForItem(item.id);
+      await this.recognizeAndTransfer(item.id);
     }
 
     const order = await this.prisma.order.findUniqueOrThrow({
@@ -1828,7 +1847,7 @@ export class OrdersService {
     });
     if (order.paymentStatus === PaymentStatus.PAID && existingCollections.length === 0) {
       for (const row of supplierItems) {
-        await this.commissions.advanceRecognitionForItem(row.id);
+        await this.recognizeAndTransfer(row.id);
       }
       return;
     }
@@ -1893,7 +1912,14 @@ export class OrdersService {
     }
 
     for (const row of supplierItems) {
-      await this.commissions.advanceRecognitionForItem(row.id);
+      await this.recognizeAndTransfer(row.id);
+    }
+  }
+
+  private async recognizeAndTransfer(orderItemId: string) {
+    const snap = await this.commissions.advanceRecognitionForItem(orderItemId);
+    if (snap?.status === CommissionRecognitionStatus.SETTLEABLE) {
+      await this.payouts.transferIfSettleable(orderItemId);
     }
   }
 
@@ -2281,6 +2307,8 @@ export class OrdersService {
         status: OrderStatus;
         trackingCode: string | null;
         pickupCode: string | null;
+        carrier?: string | null;
+        courierName?: string | null;
         replacesOrderItemId?: string | null;
         replacesOrderItem?: {
           id: string;
@@ -2363,6 +2391,8 @@ export class OrdersService {
         status: item.status,
         trackingCode: item.trackingCode,
         pickupCode: item.pickupCode,
+        carrier: item.carrier ?? null,
+        courierName: item.courierName ?? null,
         replacesOrderItemId: item.replacesOrderItemId ?? null,
         replacesOrderId: item.replacesOrderItem?.order.displayId ?? null,
         replacedByOrderId: item.replacedBy?.order.displayId ?? null,
@@ -2406,6 +2436,10 @@ export class OrdersService {
             expressDeliveryFee: true,
             pickupDeliveryFee: true,
             freeDeliveryThreshold: true,
+            taxRatePercent: true,
+            taxOnDelivery: true,
+            carrier: true,
+            courierName: true,
           },
         })
       : [];
@@ -2417,6 +2451,7 @@ export class OrdersService {
       suppliers: [...grouped.entries()].map(([supplierId, group]) => {
         const row = rates.get(supplierId);
         return {
+          supplierId,
           supplierName: group.supplierName,
           merchandiseSubtotal: group.merchandise,
           standardDeliveryFee: row ? Number(row.standardDeliveryFee) : 4.99,
@@ -2424,6 +2459,10 @@ export class OrdersService {
           pickupDeliveryFee: row ? Number(row.pickupDeliveryFee) : 0,
           freeDeliveryThreshold:
             row?.freeDeliveryThreshold == null ? null : Number(row.freeDeliveryThreshold),
+          taxRatePercent: row ? Number(row.taxRatePercent) : 8,
+          taxOnDelivery: row?.taxOnDelivery ?? false,
+          carrier: row?.carrier === 'courier' ? 'courier' as const : 'supplier' as const,
+          courierName: row?.courierName ?? null,
         };
       }),
     });

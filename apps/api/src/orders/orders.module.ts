@@ -4,7 +4,10 @@ import { CommissionsModule } from '../commissions/commissions.module';
 import { FxModule } from '../fx/fx.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
+import { CardElementController } from './card-element.controller';
+import { ConnectController, SupplierConnectController } from './connect.controller';
 import { OrdersController } from './orders.controller';
+import { PayoutsService } from './payouts.service';
 import { OrdersService } from './orders.service';
 import { StripeService } from './stripe.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
@@ -17,8 +20,14 @@ import { StripeWebhookController } from './stripe-webhook.controller';
     NotificationsModule,
     FxModule,
   ],
-  controllers: [OrdersController, StripeWebhookController],
-  providers: [OrdersService, StripeService],
-  exports: [OrdersService],
+  controllers: [
+    OrdersController,
+    StripeWebhookController,
+    CardElementController,
+    ConnectController,
+    SupplierConnectController,
+  ],
+  providers: [OrdersService, StripeService, PayoutsService],
+  exports: [OrdersService, PayoutsService],
 })
 export class OrdersModule {}

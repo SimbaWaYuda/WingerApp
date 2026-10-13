@@ -769,6 +769,9 @@ export class CommissionsService {
         commissionAmount: Number(r.commissionAmount),
         status: r.status,
         isDemo: r.isDemo,
+        transferAmount: r.transferAmount == null ? null : Number(r.transferAmount),
+        transferCurrency: r.transferCurrency,
+        transferReversed: r.transferReversed,
         createdAt: r.createdAt.toISOString(),
       })),
     };

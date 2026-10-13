@@ -205,12 +205,32 @@ class CartShipmentQuote {
     required this.deliveryMethod,
     required this.fee,
     required this.estimate,
+    this.carrier,
+    this.courierName,
   });
 
   final String supplierName;
   final String deliveryMethod;
   final double fee;
   final String estimate;
+  final String? carrier;
+  final String? courierName;
+}
+
+String? carrierCaption({
+  String? carrier,
+  String? courierName,
+  required String supplierDelivery,
+  required String courierDelivery,
+  required String unnamedCourier,
+}) {
+  if (carrier == 'supplier') return supplierDelivery;
+  if (carrier == 'courier') {
+    final name = (courierName ?? '').trim();
+    if (name.isEmpty) return unnamedCourier;
+    return courierDelivery.replaceAll('{name}', name);
+  }
+  return null;
 }
 
 class CartValidationResult {
@@ -264,6 +284,8 @@ class ShipmentLeg {
     required this.status,
     this.trackingCode,
     this.pickupCode,
+    this.carrier,
+    this.courierName,
   });
 
   final String supplierName;
@@ -271,6 +293,8 @@ class ShipmentLeg {
   final OrderStatus status;
   final String? trackingCode;
   final String? pickupCode;
+  final String? carrier;
+  final String? courierName;
 }
 
 class CustomerOrder {
@@ -527,6 +551,8 @@ class OrderItemRow {
     required this.status,
     this.trackingCode,
     this.pickupCode,
+    this.carrier,
+    this.courierName,
     this.replacesOrderId,
     this.replacesOrderItemId,
     this.replacedByOrderId,
@@ -542,6 +568,8 @@ class OrderItemRow {
   final OrderStatus status;
   final String? trackingCode;
   final String? pickupCode;
+  final String? carrier;
+  final String? courierName;
   final String? replacesOrderId;
   final String? replacesOrderItemId;
   final String? replacedByOrderId;
@@ -637,6 +665,8 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           status: orderStatusFromApi(item['status'] as String?),
           trackingCode: item['trackingCode'] as String?,
           pickupCode: item['pickupCode'] as String?,
+          carrier: item['carrier'] as String?,
+          courierName: item['courierName'] as String?,
           replacesOrderId: item['replacesOrderId'] as String?,
           replacesOrderItemId: item['replacesOrderItemId'] as String?,
           replacedByOrderId: item['replacedByOrderId'] as String?,
@@ -650,6 +680,8 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           status: orderStatusFromApi(item['status'] as String?),
           trackingCode: item['trackingCode'] as String?,
           pickupCode: item['pickupCode'] as String?,
+          carrier: item['carrier'] as String?,
+          courierName: item['courierName'] as String?,
         ),
     ],
     canRateSuppliers: [

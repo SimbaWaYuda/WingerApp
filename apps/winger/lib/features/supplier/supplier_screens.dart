@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -23,38 +24,38 @@ import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
 
 List<ShellDestination> supplierDestinations({int openReturns = 0}) => [
-      const ShellDestination(
-        labelKey: 'overview',
-        icon: Icons.dashboard_outlined,
-        path: '/supplier',
-      ),
-      const ShellDestination(
-        labelKey: 'orders',
-        icon: Icons.receipt_long_outlined,
-        path: '/supplier/orders',
-      ),
-      ShellDestination(
-        labelKey: 'returns',
-        icon: Icons.assignment_return_outlined,
-        path: '/supplier/returns',
-        badgeCount: openReturns,
-      ),
-      const ShellDestination(
-        labelKey: 'products',
-        icon: Icons.inventory_2_outlined,
-        path: '/supplier/products',
-      ),
-      const ShellDestination(
-        labelKey: 'deliveryFees',
-        icon: Icons.local_shipping_outlined,
-        path: '/supplier/delivery',
-      ),
-      const ShellDestination(
-        labelKey: 'payments',
-        icon: Icons.payments_outlined,
-        path: '/supplier/payments',
-      ),
-    ];
+  const ShellDestination(
+    labelKey: 'overview',
+    icon: Icons.dashboard_outlined,
+    path: '/supplier',
+  ),
+  const ShellDestination(
+    labelKey: 'orders',
+    icon: Icons.receipt_long_outlined,
+    path: '/supplier/orders',
+  ),
+  ShellDestination(
+    labelKey: 'returns',
+    icon: Icons.assignment_return_outlined,
+    path: '/supplier/returns',
+    badgeCount: openReturns,
+  ),
+  const ShellDestination(
+    labelKey: 'products',
+    icon: Icons.inventory_2_outlined,
+    path: '/supplier/products',
+  ),
+  const ShellDestination(
+    labelKey: 'deliveryFees',
+    icon: Icons.local_shipping_outlined,
+    path: '/supplier/delivery',
+  ),
+  const ShellDestination(
+    labelKey: 'payments',
+    icon: Icons.payments_outlined,
+    path: '/supplier/payments',
+  ),
+];
 
 class SupplierShell extends StatefulWidget {
   const SupplierShell({super.key, required this.child});
@@ -74,12 +75,9 @@ class _SupplierShellState extends State<SupplierShell> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _refreshBadge());
-    _badgeTimer = Timer.periodic(
-      const Duration(seconds: 45),
-      (_) {
-        if (mounted) _refreshBadge();
-      },
-    );
+    _badgeTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (mounted) _refreshBadge();
+    });
   }
 
   @override
@@ -126,7 +124,8 @@ class SupplierDashboardScreen extends StatefulWidget {
   const SupplierDashboardScreen({super.key});
 
   @override
-  State<SupplierDashboardScreen> createState() => _SupplierDashboardScreenState();
+  State<SupplierDashboardScreen> createState() =>
+      _SupplierDashboardScreenState();
 }
 
 class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
@@ -165,7 +164,8 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
         final kpis = <KpiCardData>[
           KpiCardData(
             label: s.t('grossSales'),
-            value: '\$${((data?['grossSales'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}',
+            value:
+                '\$${((data?['grossSales'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}',
             delta: '${data?['orderLineCount'] ?? 0} ${s.t('lines')}',
           ),
           KpiCardData(
@@ -175,7 +175,8 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
           ),
           KpiCardData(
             label: s.t('settleableCommission'),
-            value: '\$${((data?['settleableCommission'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            value:
+                '\$${((data?['settleableCommission'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
             delta: s.t('settleable'),
           ),
           KpiCardData(
@@ -202,11 +203,15 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                 Expanded(
                   child: Text(
                     s.t('overview'),
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 IconButton(
-                  onPressed: () => setState(() => _future = _load()),
+                  onPressed: () => setState(() {
+                    _future = _load();
+                  }),
                   icon: const Icon(Icons.refresh),
                 ),
               ],
@@ -214,7 +219,10 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
             if (data?['supplierName'] != null)
               Text(
                 '${data!['supplierName']}',
-                style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: WingerColors.muted,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             const SizedBox(height: 8),
             Align(
@@ -242,7 +250,10 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        snapshot.error.toString().replaceFirst('Exception: ', ''),
+                        snapshot.error.toString().replaceFirst(
+                          'Exception: ',
+                          '',
+                        ),
                         style: TextStyle(color: WingerColors.muted),
                       ),
                       const SizedBox(height: 12),
@@ -287,8 +298,10 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                       padding: const EdgeInsets.all(14),
                       child: Row(
                         children: [
-                          const Icon(Icons.assignment_return_outlined,
-                              color: WingerColors.attentionInk),
+                          const Icon(
+                            Icons.assignment_return_outlined,
+                            color: WingerColors.attentionInk,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -301,8 +314,10 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                               ),
                             ),
                           ),
-                          const Icon(Icons.chevron_right,
-                              color: WingerColors.attentionInk),
+                          const Icon(
+                            Icons.chevron_right,
+                            color: WingerColors.attentionInk,
+                          ),
                         ],
                       ),
                     ),
@@ -310,7 +325,13 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                 ),
               ],
               const SizedBox(height: 20),
-              Text(s.t('orders'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(
+                s.t('orders'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
               const SizedBox(height: 8),
               Text(
                 s.t('supplierDashboardHint'),
@@ -403,10 +424,15 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
 
   /// Unique per order line — never derived from product id alone.
   String _defaultTrackingCode(CustomerOrder order, OrderItemRow item) {
-    final orderKey = order.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
-    final itemKey = item.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
-    final shortItem =
-        itemKey.length > 6 ? itemKey.substring(itemKey.length - 6) : itemKey;
+    final orderKey = order.id
+        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+        .toUpperCase();
+    final itemKey = item.id
+        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+        .toUpperCase();
+    final shortItem = itemKey.length > 6
+        ? itemKey.substring(itemKey.length - 6)
+        : itemKey;
     return 'TRK-$orderKey-$shortItem';
   }
 
@@ -415,9 +441,12 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
     final orderPart = digits.length >= 4
         ? digits.substring(digits.length - 4)
         : digits.padLeft(4, '0');
-    final itemKey = item.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
-    final shortItem =
-        itemKey.length > 4 ? itemKey.substring(itemKey.length - 4) : itemKey;
+    final itemKey = item.id
+        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+        .toUpperCase();
+    final shortItem = itemKey.length > 4
+        ? itemKey.substring(itemKey.length - 4)
+        : itemKey;
     return 'PU-$orderPart-$shortItem';
   }
 
@@ -457,18 +486,15 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
     if (confirmed != true || !mounted) return;
 
     try {
-      final replacement = await context.read<ApiClient>().createReplacementOrder(
-            orderId: order.id,
-            itemId: item.id,
-          );
+      final replacement = await context
+          .read<ApiClient>()
+          .createReplacementOrder(orderId: order.id, itemId: item.id);
       if (!mounted) return;
       _reload();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            s
-                .t('replacementCreated')
-                .replaceAll('{id}', replacement.id),
+            s.t('replacementCreated').replaceAll('{id}', replacement.id),
           ),
         ),
       );
@@ -535,17 +561,17 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
       final message = collectPayment && status == null
           ? s.t('paymentCollected')
           : status == OrderStatus.delivered
-              ? (order.isCodPending
-                  ? s.t('markedDeliveredCodPending')
-                  : s.t('markedDelivered'))
-              : status == OrderStatus.shipped
-                  ? s.t('markedShipped')
-                  : status == OrderStatus.readyForPickup
-                      ? s.t('markReady')
-                      : 'Fulfillment updated';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+          ? (order.isCodPending
+                ? s.t('markedDeliveredCodPending')
+                : s.t('markedDelivered'))
+          : status == OrderStatus.shipped
+          ? s.t('markedShipped')
+          : status == OrderStatus.readyForPickup
+          ? s.t('markReady')
+          : 'Fulfillment updated';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -576,7 +602,10 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
-                Text(order.customerName, style: TextStyle(color: WingerColors.muted)),
+                Text(
+                  order.customerName,
+                  style: TextStyle(color: WingerColors.muted),
+                ),
                 const SizedBox(height: 12),
                 Text(
                   s.t('fulfillPickupHint'),
@@ -638,7 +667,12 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(s.t('orders'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              s.t('orders'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -666,9 +700,15 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (orders.isEmpty)
-              Text('No paid orders for your catalogue yet.', style: TextStyle(color: WingerColors.muted))
+              Text(
+                'No paid orders for your catalogue yet.',
+                style: TextStyle(color: WingerColors.muted),
+              )
             else if (pairs.isEmpty)
-              Text(s.t('noOrdersInFilter'), style: TextStyle(color: WingerColors.muted))
+              Text(
+                s.t('noOrdersInFilter'),
+                style: TextStyle(color: WingerColors.muted),
+              )
             else
               for (final pair in pairs)
                 Builder(
@@ -676,152 +716,183 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                     final order = pair.order;
                     final item = pair.item;
                     return Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Text(order.id, style: const TextStyle(fontWeight: FontWeight.w800)),
-                              const Spacer(),
-                              StatusBadge(status: item.status),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${order.paymentStatus} · ${order.paymentMode}',
-                            style: TextStyle(
-                              color: order.paymentMode == 'cod' &&
-                                      order.paymentStatus == 'PENDING'
-                                  ? WingerColors.attentionInk
-                                  : WingerColors.muted,
-                              fontWeight: FontWeight.w600,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  order.id,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const Spacer(),
+                                StatusBadge(status: item.status),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(order.customerName),
-                          Text('${item.productName} × ${item.quantity}'),
-                          Text('\$${item.lineTotal.toStringAsFixed(2)}'),
-                          if (order.isPayOnDelivery && order.customerPaysOtherCurrency) ...[
                             const SizedBox(height: 4),
                             Text(
-                              s.t('customerPays').replaceAll('{amount}', order.customerPayLabel()),
-                              style: const TextStyle(
-                                color: WingerColors.attentionInk,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                          if (item.trackingCode != null) ...[
-                            const SizedBox(height: 4),
-                            Text('${s.t('trackingCode')}: ${item.trackingCode}', style: TextStyle(color: WingerColors.muted)),
-                          ],
-                          if (item.pickupCode != null) ...[
-                            const SizedBox(height: 4),
-                            Text('${s.t('pickupCode')}: ${item.pickupCode}', style: TextStyle(color: WingerColors.muted)),
-                          ],
-                          if (item.isReplacement &&
-                              item.replacesOrderId != null) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              s
-                                  .t('replacementForOrder')
-                                  .replaceAll('{id}', item.replacesOrderId!),
-                              style: const TextStyle(
-                                color: WingerColors.successInk,
+                              '${order.paymentStatus} · ${order.paymentMode}',
+                              style: TextStyle(
+                                color:
+                                    order.paymentMode == 'cod' &&
+                                        order.paymentStatus == 'PENDING'
+                                    ? WingerColors.attentionInk
+                                    : WingerColors.muted,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
-                          ],
-                          if (item.status == OrderStatus.returned) ...[
                             const SizedBox(height: 8),
-                            Text(
-                              s.t('returnedLineHint'),
-                              style: TextStyle(color: WingerColors.muted),
-                            ),
-                          ],
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              if (item.status == OrderStatus.returned) ...[
-                                FilledButton(
-                                  onPressed: () =>
-                                      _createReplacement(order, item),
-                                  child: Text(s.t('createReplacement')),
+                            Text(order.customerName),
+                            Text('${item.productName} × ${item.quantity}'),
+                            Text('\$${item.lineTotal.toStringAsFixed(2)}'),
+                            if (carrierCaption(
+                                  carrier: item.carrier,
+                                  courierName: item.courierName,
+                                  supplierDelivery: s.t('carrierSupplierLabel'),
+                                  courierDelivery: s.t('carrierCourierLabel'),
+                                  unnamedCourier: s.t('carrierCourierFallback'),
+                                )
+                                case final line?) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                line,
+                                style: TextStyle(color: WingerColors.muted),
+                              ),
+                            ],
+                            if (order.isPayOnDelivery &&
+                                order.customerPaysOtherCurrency) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                s
+                                    .t('customerPays')
+                                    .replaceAll(
+                                      '{amount}',
+                                      order.customerPayLabel(),
+                                    ),
+                                style: const TextStyle(
+                                  color: WingerColors.attentionInk,
+                                  fontWeight: FontWeight.w700,
                                 ),
-                                FilledButton.tonal(
-                                  onPressed: () =>
-                                      context.go('/supplier/returns'),
-                                  child: Text(s.t('returns')),
+                              ),
+                            ],
+                            if (item.trackingCode != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                '${s.t('trackingCode')}: ${item.trackingCode}',
+                                style: TextStyle(color: WingerColors.muted),
+                              ),
+                            ],
+                            if (item.pickupCode != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                '${s.t('pickupCode')}: ${item.pickupCode}',
+                                style: TextStyle(color: WingerColors.muted),
+                              ),
+                            ],
+                            if (item.isReplacement &&
+                                item.replacesOrderId != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                s
+                                    .t('replacementForOrder')
+                                    .replaceAll('{id}', item.replacesOrderId!),
+                                style: const TextStyle(
+                                  color: WingerColors.successInk,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                              ] else ...[
-                                OutlinedButton(
-                                  onPressed:
-                                      item.status == OrderStatus.delivered
-                                          ? null
-                                          : () =>
-                                              _openFulfillment(order, item),
-                                  child: Text(s.t('fulfillment')),
-                                ),
-                                FilledButton(
-                                  onPressed: item.status ==
-                                              OrderStatus.shipped ||
-                                          item.status == OrderStatus.delivered
-                                      ? null
-                                      : () => _updateItem(
+                              ),
+                            ],
+                            if (item.status == OrderStatus.returned) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                s.t('returnedLineHint'),
+                                style: TextStyle(color: WingerColors.muted),
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                if (item.status == OrderStatus.returned) ...[
+                                  FilledButton(
+                                    onPressed: () =>
+                                        _createReplacement(order, item),
+                                    child: Text(s.t('createReplacement')),
+                                  ),
+                                  FilledButton.tonal(
+                                    onPressed: () =>
+                                        context.go('/supplier/returns'),
+                                    child: Text(s.t('returns')),
+                                  ),
+                                ] else ...[
+                                  OutlinedButton(
+                                    onPressed:
+                                        item.status == OrderStatus.delivered
+                                        ? null
+                                        : () => _openFulfillment(order, item),
+                                    child: Text(s.t('fulfillment')),
+                                  ),
+                                  FilledButton(
+                                    onPressed:
+                                        item.status == OrderStatus.shipped ||
+                                            item.status == OrderStatus.delivered
+                                        ? null
+                                        : () => _updateItem(
                                             order: order,
                                             item: item,
                                             status: OrderStatus.shipped,
                                             trackingCode:
                                                 _isProductScopedTracking(
-                                              item.trackingCode,
-                                            )
-                                                    ? _defaultTrackingCode(
+                                                  item.trackingCode,
+                                                )
+                                                ? _defaultTrackingCode(
+                                                    order,
+                                                    item,
+                                                  )
+                                                : (item.trackingCode ??
+                                                      _defaultTrackingCode(
                                                         order,
                                                         item,
-                                                      )
-                                                    : (item.trackingCode ??
-                                                        _defaultTrackingCode(
-                                                          order,
-                                                          item,
-                                                        )),
+                                                      )),
                                           ),
-                                  child: Text(s.t('markShipped')),
-                                ),
-                                FilledButton.tonal(
-                                  onPressed: item.status ==
-                                          OrderStatus.delivered
-                                      ? null
-                                      : item.status == OrderStatus.shipped ||
+                                    child: Text(s.t('markShipped')),
+                                  ),
+                                  FilledButton.tonal(
+                                    onPressed:
+                                        item.status == OrderStatus.delivered
+                                        ? null
+                                        : item.status == OrderStatus.shipped ||
                                               item.status ==
                                                   OrderStatus.readyForPickup
-                                          ? () => _updateItem(
-                                                order: order,
-                                                item: item,
-                                                status: OrderStatus.delivered,
-                                              )
-                                          : null,
-                                  child: Text(s.t('markDelivered')),
-                                ),
-                                if (order.isCodPending)
-                                  OutlinedButton(
-                                    onPressed: () => _updateItem(
-                                      order: order,
-                                      item: item,
-                                      collectPayment: true,
-                                    ),
-                                    child: Text(s.t('collectPayment')),
+                                        ? () => _updateItem(
+                                            order: order,
+                                            item: item,
+                                            status: OrderStatus.delivered,
+                                          )
+                                        : null,
+                                    child: Text(s.t('markDelivered')),
                                   ),
+                                  if (order.isCodPending)
+                                    OutlinedButton(
+                                      onPressed: () => _updateItem(
+                                        order: order,
+                                        item: item,
+                                        collectPayment: true,
+                                      ),
+                                      child: Text(s.t('collectPayment')),
+                                    ),
+                                ],
                               ],
-                            ],
-                          ),
-                        ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  );
+                    );
                   },
                 ),
           ],
@@ -842,8 +913,7 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
   Future<List<Product>>? _future;
   bool _busy = false;
 
-  String get _supplierId =>
-      context.read<AppSession>().supplierId ?? 's-kijani';
+  String get _supplierId => context.read<AppSession>().supplierId ?? 's-kijani';
 
   @override
   void didChangeDependencies() {
@@ -863,7 +933,9 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
   }
 
   void _reload() {
-    setState(() => _future = _load());
+    setState(() {
+      _future = _load();
+    });
   }
 
   Future<void> _receive(Product product) async {
@@ -898,9 +970,9 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
       bytes: productCsvTemplateBytes(),
     );
     if (!mounted || saved == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(s.t('csvTemplateSaved'))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(s.t('csvTemplateSaved'))));
   }
 
   Future<void> _importCsv() async {
@@ -941,8 +1013,8 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
     final parseNotes = parsed.rowErrors.isEmpty
         ? ''
         : '\n\n${s.t('importCsvSkipped').replaceAll('{n}', '${parsed.rowErrors.length}')}\n'
-            '${parsed.rowErrors.take(5).join('\n')}'
-            '${parsed.rowErrors.length > 5 ? '\n…' : ''}';
+              '${parsed.rowErrors.take(5).join('\n')}'
+              '${parsed.rowErrors.length > 5 ? '\n…' : ''}';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -952,8 +1024,14 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
           '${products.length > 5 ? '\n…' : ''}$parseNotes',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.t('importCsv'))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.t('back')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.t('importCsv')),
+          ),
         ],
       ),
     );
@@ -961,7 +1039,9 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
 
     setState(() => _busy = true);
     try {
-      final result = await context.read<ApiClient>().bulkImportProducts(products);
+      final result = await context.read<ApiClient>().bulkImportProducts(
+        products,
+      );
       if (!mounted) return;
       final created = result['createdCount'] as int? ?? 0;
       final updated = result['updatedCount'] as int? ?? 0;
@@ -975,16 +1055,19 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
           .replaceAll('{updated}', '$updated')
           .replaceAll('{fail}', '$failed');
       if (errors.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(summary)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(summary)));
       } else {
-        final errorLines = errors.take(8).map((e) {
-          final row = e['row'];
-          final name = e['name'];
-          final message = e['message'] ?? '';
-          return 'Row $row${name != null ? ' ($name)' : ''}: $message';
-        }).join('\n');
+        final errorLines = errors
+            .take(8)
+            .map((e) {
+              final row = e['row'];
+              final name = e['name'];
+              final message = e['message'] ?? '';
+              return 'Row $row${name != null ? ' ($name)' : ''}: $message';
+            })
+            .join('\n');
         await showDialog<void>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -1023,9 +1106,9 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
         draft.price! < 0 ||
         draft.stock == null ||
         draft.stock! < 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.t('productFormInvalid'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('productFormInvalid'))));
       return;
     }
 
@@ -1075,9 +1158,9 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
       final message = raw.toLowerCase().contains('image')
           ? s.t('productImageUploadFailed')
           : raw;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1099,7 +1182,9 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
           children: [
             Text(
               s.t('products'),
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Wrap(
@@ -1131,7 +1216,10 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
             ),
             Text(
               s.t('supplierProductsHint'),
-              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: WingerColors.muted,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             Text(
               s.t('bulkImportHint'),
@@ -1153,14 +1241,20 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                 padding: const EdgeInsets.only(top: 24),
                 child: Text(
                   s.t('noSupplierProducts'),
-                  style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: WingerColors.muted,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               )
             else
               for (final product in rows)
                 Card(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -1172,7 +1266,10 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                               child: SizedBox(
                                 width: 56,
                                 height: 56,
-                                child: ProductPhoto(url: product.imageUrl, iconSize: 22),
+                                child: ProductPhoto(
+                                  url: product.imageUrl,
+                                  iconSize: 22,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 12),
@@ -1182,7 +1279,9 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                                 children: [
                                   Text(
                                     product.name,
-                                    style: const TextStyle(fontWeight: FontWeight.w700),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
@@ -1201,7 +1300,9 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                           alignment: WrapAlignment.end,
                           children: [
                             OutlinedButton(
-                              onPressed: _busy ? null : () => _openEditor(product: product),
+                              onPressed: _busy
+                                  ? null
+                                  : () => _openEditor(product: product),
                               child: Text(s.t('edit')),
                             ),
                             FilledButton(
@@ -1257,8 +1358,8 @@ class _ProductEditorResult {
 
 class _ExtraSpecEditors {
   _ExtraSpecEditors({String label = '', String value = ''})
-      : labelCtrl = TextEditingController(text: label),
-        valueCtrl = TextEditingController(text: value);
+    : labelCtrl = TextEditingController(text: label),
+      valueCtrl = TextEditingController(text: value);
 
   final TextEditingController labelCtrl;
   final TextEditingController valueCtrl;
@@ -1310,20 +1411,24 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
       text: product != null ? '${product.stock}' : '10',
     );
     _categoryCtrl = TextEditingController(
-      text: product == null || product.category == 'General' ? '' : product.category,
+      text: product == null || product.category == 'General'
+          ? ''
+          : product.category,
     );
     _modelCtrl = TextEditingController(
       text: product == null || product.model == 'Standard' ? '' : product.model,
     );
     _colorCtrl = TextEditingController(
-      text: product == null ||
+      text:
+          product == null ||
               product.color == 'Default' ||
               product.color == 'Graphite'
           ? ''
           : product.color,
     );
     _sizeCtrl = TextEditingController(
-      text: product == null ||
+      text:
+          product == null ||
               product.size == 'Standard' ||
               product.size == 'One size'
           ? ''
@@ -1395,9 +1500,9 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
       setState(() => _pendingPaths.addAll(accepted));
     }
     if (rejectedSmall > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.t('productImageTooSmall'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('productImageTooSmall'))));
     }
   }
 
@@ -1450,7 +1555,9 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     return AlertDialog(
-      title: Text(widget.product == null ? s.t('addProduct') : s.t('editProduct')),
+      title: Text(
+        widget.product == null ? s.t('addProduct') : s.t('editProduct'),
+      ),
       content: SizedBox(
         width: 520,
         child: SingleChildScrollView(
@@ -1458,7 +1565,10 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(s.t('photos'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(
+                s.t('photos'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               const SizedBox(height: 4),
               Text(
                 s.t('productPhotosHint'),
@@ -1501,11 +1611,19 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                 ],
               ),
               const SizedBox(height: 12),
-              TextField(controller: _nameCtrl, decoration: InputDecoration(labelText: s.t('productName'))),
-              TextField(controller: _brandCtrl, decoration: InputDecoration(labelText: s.t('brand'))),
+              TextField(
+                controller: _nameCtrl,
+                decoration: InputDecoration(labelText: s.t('productName')),
+              ),
+              TextField(
+                controller: _brandCtrl,
+                decoration: InputDecoration(labelText: s.t('brand')),
+              ),
               TextField(
                 controller: _priceCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: InputDecoration(labelText: s.t('price')),
               ),
               TextField(
@@ -1514,18 +1632,39 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                 decoration: InputDecoration(labelText: s.t('stock')),
               ),
               const SizedBox(height: 8),
-              Text(s.t('specifications'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(
+                s.t('specifications'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               const SizedBox(height: 2),
               Text(
                 s.t('specificationsHint'),
                 style: TextStyle(color: WingerColors.muted, fontSize: 12),
               ),
-              TextField(controller: _categoryCtrl, decoration: InputDecoration(labelText: s.t('categories'))),
-              TextField(controller: _modelCtrl, decoration: InputDecoration(labelText: s.t('sku'))),
-              TextField(controller: _colorCtrl, decoration: InputDecoration(labelText: s.t('color'))),
-              TextField(controller: _sizeCtrl, decoration: InputDecoration(labelText: s.t('size'))),
-              TextField(controller: _batteryCtrl, decoration: InputDecoration(labelText: s.t('battery'))),
-              TextField(controller: _weightCtrl, decoration: InputDecoration(labelText: s.t('weight'))),
+              TextField(
+                controller: _categoryCtrl,
+                decoration: InputDecoration(labelText: s.t('categories')),
+              ),
+              TextField(
+                controller: _modelCtrl,
+                decoration: InputDecoration(labelText: s.t('sku')),
+              ),
+              TextField(
+                controller: _colorCtrl,
+                decoration: InputDecoration(labelText: s.t('color')),
+              ),
+              TextField(
+                controller: _sizeCtrl,
+                decoration: InputDecoration(labelText: s.t('size')),
+              ),
+              TextField(
+                controller: _batteryCtrl,
+                decoration: InputDecoration(labelText: s.t('battery')),
+              ),
+              TextField(
+                controller: _weightCtrl,
+                decoration: InputDecoration(labelText: s.t('weight')),
+              ),
               const SizedBox(height: 8),
               for (var i = 0; i < _extraSpecs.length; i++)
                 Padding(
@@ -1536,14 +1675,18 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                       Expanded(
                         child: TextField(
                           controller: _extraSpecs[i].labelCtrl,
-                          decoration: InputDecoration(labelText: s.t('customSpecLabel')),
+                          decoration: InputDecoration(
+                            labelText: s.t('customSpecLabel'),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: TextField(
                           controller: _extraSpecs[i].valueCtrl,
-                          decoration: InputDecoration(labelText: s.t('customSpecValue')),
+                          decoration: InputDecoration(
+                            labelText: s.t('customSpecValue'),
+                          ),
                         ),
                       ),
                       IconButton(
@@ -1562,7 +1705,8 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
-                    onPressed: () => setState(() => _extraSpecs.add(_ExtraSpecEditors())),
+                    onPressed: () =>
+                        setState(() => _extraSpecs.add(_ExtraSpecEditors())),
                     icon: const Icon(Icons.add),
                     label: Text(s.t('addSpecField')),
                   ),
@@ -1577,7 +1721,10 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('back'))),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(s.t('back')),
+        ),
         FilledButton(onPressed: _submit, child: Text(s.t('save'))),
       ],
     );
@@ -1656,11 +1803,65 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
     final summary = await api.fetchSupplierCommissionSummary();
     final agreements = await api.fetchCommissionAgreements();
     final settings = await api.fetchCommissionSettings();
+    final connect = await api.fetchConnectStatus();
     return _SupplierFinance(
       summary: summary,
       agreements: agreements,
-      defaultRate: (settings['defaultCommissionPercent'] as num?)?.toDouble() ?? 10,
+      defaultRate:
+          (settings['defaultCommissionPercent'] as num?)?.toDouble() ?? 10,
+      connect: connect,
     );
+  }
+
+  Future<void> _connectPayouts() async {
+    setState(() => _busy = true);
+    try {
+      final url = await context.read<ApiClient>().startConnectOnboarding();
+      final opened = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(url)));
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _sendPayouts() async {
+    setState(() => _busy = true);
+    try {
+      final result = await context.read<ApiClient>().sendSettleablePayouts();
+      if (!mounted) return;
+      final sent = result['transferred'] ?? 0;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${WingerStrings.of(context).t('payoutSent')} ($sent)'),
+        ),
+      );
+      setState(() {
+        _future = _load();
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _propose() async {
@@ -1671,11 +1872,13 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
     setState(() => _busy = true);
     try {
       await context.read<ApiClient>().proposeCommissionAgreement(
-            supplierId: supplierId,
-            ratePercent: rate,
-          );
+        supplierId: supplierId,
+        ratePercent: rate,
+      );
       if (!mounted) return;
-      setState(() => _future = _load());
+      setState(() {
+        _future = _load();
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1690,12 +1893,14 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
     setState(() => _busy = true);
     try {
       await context.read<ApiClient>().commissionAgreementAction(
-            agreementId: id,
-            action: action,
-            ratePercent: rate,
-          );
+        agreementId: id,
+        action: action,
+        ratePercent: rate,
+      );
       if (!mounted) return;
-      setState(() => _future = _load());
+      setState(() {
+        _future = _load();
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1717,10 +1922,16 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
       future: future,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        final activeRate = (data?.summary['activeRatePercent'] as num?)?.toDouble() ?? data?.defaultRate ?? 10;
-        final settleable = (data?.summary['settleableCommission'] as num?)?.toDouble() ?? 0;
-        final recognized = (data?.summary['recognizedCommission'] as num?)?.toDouble() ?? 0;
-        final pending = (data?.summary['pendingCommission'] as num?)?.toDouble() ?? 0;
+        final activeRate =
+            (data?.summary['activeRatePercent'] as num?)?.toDouble() ??
+            data?.defaultRate ??
+            10;
+        final settleable =
+            (data?.summary['settleableCommission'] as num?)?.toDouble() ?? 0;
+        final recognized =
+            (data?.summary['recognizedCommission'] as num?)?.toDouble() ?? 0;
+        final pending =
+            (data?.summary['pendingCommission'] as num?)?.toDouble() ?? 0;
         final lines = (data?.summary['lines'] as List<dynamic>? ?? const [])
             .cast<Map<String, dynamic>>();
         final agreements = data?.agreements ?? const [];
@@ -1728,9 +1939,53 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(s.t('payments'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              s.t('payments'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 8),
-            Text(s.t('commissionSupplierHint'), style: TextStyle(color: WingerColors.muted)),
+            Text(
+              s.t('payoutsHint'),
+              style: TextStyle(color: WingerColors.muted),
+            ),
+            const SizedBox(height: 12),
+            if (data?.connect['payoutsEnabled'] == true)
+              Text(
+                s.t('payoutsConnected'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              )
+            else
+              FilledButton(
+                onPressed: _busy ? null : _connectPayouts,
+                child: Text(s.t('connectPayouts')),
+              ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() {
+                          _future = _load();
+                        }),
+                  child: Text(s.t('refreshPayouts')),
+                ),
+                if (data?.connect['payoutsEnabled'] == true)
+                  FilledButton(
+                    onPressed: _busy ? null : _sendPayouts,
+                    child: Text(s.t('sendPayouts')),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              s.t('commissionSupplierHint'),
+              style: TextStyle(color: WingerColors.muted),
+            ),
             const SizedBox(height: 6),
             Text(
               '${s.t('supplierAccount')}: ${context.watch<AppSession>().displayName}'
@@ -1756,7 +2011,9 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
               ),
               const SizedBox(height: 8),
               TextButton(
-                onPressed: () => setState(() => _future = _load()),
+                onPressed: () => setState(() {
+                  _future = _load();
+                }),
                 child: Text(s.t('retry')),
               ),
             ] else ...[
@@ -1766,16 +2023,48 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                 crossAxisCount: MediaQuery.sizeOf(context).width >= 900 ? 3 : 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: MediaQuery.sizeOf(context).width >= 900 ? 1.45 : 0.95,
+                childAspectRatio: MediaQuery.sizeOf(context).width >= 900
+                    ? 1.45
+                    : 0.95,
                 children: [
-                  KpiCard(data: KpiCardData(label: s.t('activeRate'), value: '${activeRate.toStringAsFixed(1)}%', delta: s.t('commission'))),
-                  KpiCard(data: KpiCardData(label: s.t('settleableCommission'), value: '\$${settleable.toStringAsFixed(2)}', delta: s.t('settleable'))),
-                  KpiCard(data: KpiCardData(label: s.t('recognizedCommission'), value: '\$${recognized.toStringAsFixed(2)}', delta: s.t('recognized'))),
-                  KpiCard(data: KpiCardData(label: s.t('pendingCommission'), value: '\$${pending.toStringAsFixed(2)}', delta: s.t('pending'))),
+                  KpiCard(
+                    data: KpiCardData(
+                      label: s.t('activeRate'),
+                      value: '${activeRate.toStringAsFixed(1)}%',
+                      delta: s.t('commission'),
+                    ),
+                  ),
+                  KpiCard(
+                    data: KpiCardData(
+                      label: s.t('settleableCommission'),
+                      value: '\$${settleable.toStringAsFixed(2)}',
+                      delta: s.t('settleable'),
+                    ),
+                  ),
+                  KpiCard(
+                    data: KpiCardData(
+                      label: s.t('recognizedCommission'),
+                      value: '\$${recognized.toStringAsFixed(2)}',
+                      delta: s.t('recognized'),
+                    ),
+                  ),
+                  KpiCard(
+                    data: KpiCardData(
+                      label: s.t('pendingCommission'),
+                      value: '\$${pending.toStringAsFixed(2)}',
+                      delta: s.t('pending'),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
-              Text(s.t('proposeAgreement'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(
+                s.t('proposeAgreement'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
               const SizedBox(height: 8),
               Card(
                 child: Padding(
@@ -1786,25 +2075,44 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                         width: 120,
                         child: TextField(
                           controller: _proposeCtrl,
-                          decoration: InputDecoration(suffixText: '%', labelText: s.t('commissionRate')),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            suffixText: '%',
+                            labelText: s.t('commissionRate'),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
-                      FilledButton(onPressed: _busy ? null : _propose, child: Text(s.t('proposeAgreement'))),
+                      FilledButton(
+                        onPressed: _busy ? null : _propose,
+                        child: Text(s.t('proposeAgreement')),
+                      ),
                     ],
                   ),
                 ),
               ),
               const SizedBox(height: 16),
-              Text(s.t('commissionAgreements'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(
+                s.t('commissionAgreements'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
               const SizedBox(height: 8),
               if (agreements.isEmpty)
-                Text(s.t('noAgreements'), style: TextStyle(color: WingerColors.muted))
+                Text(
+                  s.t('noAgreements'),
+                  style: TextStyle(color: WingerColors.muted),
+                )
               else
                 for (final row in agreements)
                   Card(
-                    color: row['status'] == 'APPROVED' ? WingerColors.brandMuted : null,
+                    color: row['status'] == 'APPROVED'
+                        ? WingerColors.brandMuted
+                        : null,
                     child: Padding(
                       padding: const EdgeInsets.all(12),
                       child: Column(
@@ -1819,35 +2127,63 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
                                 s.t('awaitingYourAccept'),
-                                style: const TextStyle(color: WingerColors.successInk, fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                  color: WingerColors.successInk,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           if (row['counterRatePercent'] != null)
-                            Text('${s.t('counter')}: ${row['counterRatePercent']}%'),
+                            Text(
+                              '${s.t('counter')}: ${row['counterRatePercent']}%',
+                            ),
                           if (row['effectiveRatePercent'] != null)
-                            Text('${s.t('effective')}: ${row['effectiveRatePercent']}%'),
+                            Text(
+                              '${s.t('effective')}: ${row['effectiveRatePercent']}%',
+                            ),
                           const SizedBox(height: 8),
                           if (row['status'] == 'APPROVED')
                             FilledButton.icon(
-                              onPressed: _busy ? null : () => _action(row['id'] as String, 'accept'),
+                              onPressed: _busy
+                                  ? null
+                                  : () =>
+                                        _action(row['id'] as String, 'accept'),
                               icon: const Icon(Icons.check_circle_outline),
                               label: Text(s.t('acceptAgreement')),
                             ),
-                          if (row['status'] == 'PROPOSED' || row['status'] == 'COUNTERED' || row['status'] == 'APPROVED') ...[
+                          if (row['status'] == 'PROPOSED' ||
+                              row['status'] == 'COUNTERED' ||
+                              row['status'] == 'APPROVED') ...[
                             const SizedBox(height: 8),
                             TextField(
                               controller: _counterCtrl,
-                              decoration: InputDecoration(labelText: s.t('counterRate'), suffixText: '%'),
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: InputDecoration(
+                                labelText: s.t('counterRate'),
+                                suffixText: '%',
+                              ),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
                             ),
                             const SizedBox(height: 8),
                             OutlinedButton(
                               onPressed: _busy
                                   ? null
                                   : () async {
-                                      final rate = double.tryParse(_counterCtrl.text.trim()) ??
-                                          ((row['proposedRatePercent'] as num?)?.toDouble() ?? 10) - 1;
-                                      await _action(row['id'] as String, 'counter', rate: rate);
+                                      final rate =
+                                          double.tryParse(
+                                            _counterCtrl.text.trim(),
+                                          ) ??
+                                          ((row['proposedRatePercent'] as num?)
+                                                      ?.toDouble() ??
+                                                  10) -
+                                              1;
+                                      await _action(
+                                        row['id'] as String,
+                                        'counter',
+                                        rate: rate,
+                                      );
                                     },
                               child: Text(s.t('counter')),
                             ),
@@ -1857,22 +2193,41 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                     ),
                   ),
               const SizedBox(height: 16),
-              Text(s.t('commissionLines'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(
+                s.t('commissionLines'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
               const SizedBox(height: 8),
               if (lines.isEmpty)
-                Text(s.t('noCommissionLines'), style: TextStyle(color: WingerColors.muted))
+                Text(
+                  s.t('noCommissionLines'),
+                  style: TextStyle(color: WingerColors.muted),
+                )
               else
                 for (final line in lines)
                   Card(
                     child: ListTile(
-                      title: Text('${line['orderId']} · ${line['productName']}'),
+                      title: Text(
+                        '${line['orderId']} · ${line['productName']}',
+                      ),
                       subtitle: Text(
-                        '${line['ratePercent']}% of \$${(line['commissionBase'] as num?)?.toStringAsFixed(2) ?? '0'}',
+                        [
+                          '${line['ratePercent']}% of \$${(line['commissionBase'] as num?)?.toStringAsFixed(2) ?? '0'}',
+                          if (line['transferAmount'] != null &&
+                              line['transferReversed'] != true)
+                            '${s.t('payoutSent')} ${line['transferCurrency'] ?? 'USD'} ${(line['transferAmount'] as num).toStringAsFixed(2)}',
+                        ].join('\n'),
                       ),
                       trailing: Text(
                         '${line['status']}\n\$${(line['commissionAmount'] as num?)?.toStringAsFixed(2) ?? '0'}',
                         textAlign: TextAlign.end,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ),
@@ -1889,25 +2244,33 @@ class _SupplierFinance {
     required this.summary,
     required this.agreements,
     required this.defaultRate,
+    required this.connect,
   });
 
   final Map<String, dynamic> summary;
   final List<Map<String, dynamic>> agreements;
   final double defaultRate;
+  final Map<String, dynamic> connect;
 }
 
 class SupplierDeliveryFeesScreen extends StatefulWidget {
   const SupplierDeliveryFeesScreen({super.key});
 
   @override
-  State<SupplierDeliveryFeesScreen> createState() => _SupplierDeliveryFeesScreenState();
+  State<SupplierDeliveryFeesScreen> createState() =>
+      _SupplierDeliveryFeesScreenState();
 }
 
-class _SupplierDeliveryFeesScreenState extends State<SupplierDeliveryFeesScreen> {
+class _SupplierDeliveryFeesScreenState
+    extends State<SupplierDeliveryFeesScreen> {
   final _standardCtrl = TextEditingController();
   final _expressCtrl = TextEditingController();
   final _pickupCtrl = TextEditingController();
   final _thresholdCtrl = TextEditingController();
+  final _taxCtrl = TextEditingController();
+  final _courierCtrl = TextEditingController();
+  bool _taxOnDelivery = false;
+  String _carrier = 'supplier';
   bool _loading = true;
   bool _saving = false;
   String? _error;
@@ -1926,13 +2289,17 @@ class _SupplierDeliveryFeesScreenState extends State<SupplierDeliveryFeesScreen>
     _expressCtrl.dispose();
     _pickupCtrl.dispose();
     _thresholdCtrl.dispose();
+    _taxCtrl.dispose();
+    _courierCtrl.dispose();
     super.dispose();
   }
 
   String _moneyText(num? value) {
     if (value == null) return '';
     final amount = value.toDouble();
-    return amount == amount.roundToDouble() ? amount.round().toString() : amount.toStringAsFixed(2);
+    return amount == amount.roundToDouble()
+        ? amount.round().toString()
+        : amount.toStringAsFixed(2);
   }
 
   Future<void> _load() async {
@@ -1944,6 +2311,10 @@ class _SupplierDeliveryFeesScreenState extends State<SupplierDeliveryFeesScreen>
         _expressCtrl.text = _moneyText(fees['expressDeliveryFee'] as num?);
         _pickupCtrl.text = _moneyText(fees['pickupDeliveryFee'] as num?);
         _thresholdCtrl.text = _moneyText(fees['freeDeliveryThreshold'] as num?);
+        _taxCtrl.text = _moneyText(fees['taxRatePercent'] as num? ?? 8);
+        _taxOnDelivery = fees['taxOnDelivery'] as bool? ?? false;
+        _carrier = fees['carrier'] == 'courier' ? 'courier' : 'supplier';
+        _courierCtrl.text = fees['courierName'] as String? ?? '';
         _loading = false;
         _error = null;
       });
@@ -1968,13 +2339,30 @@ class _SupplierDeliveryFeesScreenState extends State<SupplierDeliveryFeesScreen>
     final express = _parseFee(_expressCtrl.text);
     final pickup = _parseFee(_pickupCtrl.text);
     final thresholdText = _thresholdCtrl.text.trim();
-    final threshold = thresholdText.isEmpty ? null : double.tryParse(thresholdText);
-    if (standard == null || express == null || pickup == null || standard < 0 || express < 0 || pickup < 0) {
+    final threshold = thresholdText.isEmpty
+        ? null
+        : double.tryParse(thresholdText);
+    if (standard == null ||
+        express == null ||
+        pickup == null ||
+        standard < 0 ||
+        express < 0 ||
+        pickup < 0) {
       setState(() => _error = s.t('deliveryFeesHint'));
       return;
     }
     if (thresholdText.isNotEmpty && (threshold == null || threshold <= 0)) {
       setState(() => _error = s.t('freeDeliveryThresholdHint'));
+      return;
+    }
+    final taxRate = _parseFee(_taxCtrl.text);
+    if (taxRate == null || taxRate < 0 || taxRate > 100) {
+      setState(() => _error = s.t('taxRateHint'));
+      return;
+    }
+    final courierName = _courierCtrl.text.trim();
+    if (_carrier == 'courier' && courierName.isEmpty) {
+      setState(() => _error = s.t('courierNameRequired'));
       return;
     }
     setState(() {
@@ -1983,13 +2371,19 @@ class _SupplierDeliveryFeesScreenState extends State<SupplierDeliveryFeesScreen>
     });
     try {
       await context.read<ApiClient>().updateMyDeliveryFees(
-            standardDeliveryFee: standard,
-            expressDeliveryFee: express,
-            pickupDeliveryFee: pickup,
-            freeDeliveryThreshold: threshold,
-          );
+        standardDeliveryFee: standard,
+        expressDeliveryFee: express,
+        pickupDeliveryFee: pickup,
+        freeDeliveryThreshold: threshold,
+        taxRatePercent: taxRate,
+        taxOnDelivery: _taxOnDelivery,
+        carrier: _carrier,
+        courierName: courierName.isEmpty ? null : courierName,
+      );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('deliveryFeesSaved'))));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('deliveryFeesSaved'))));
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
@@ -2005,26 +2399,80 @@ class _SupplierDeliveryFeesScreenState extends State<SupplierDeliveryFeesScreen>
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(s.t('deliveryFees'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        Text(
+          s.t('deliveryFees'),
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
         const SizedBox(height: 8),
-        Text(s.t('deliveryFeesHint'), style: TextStyle(color: WingerColors.muted)),
+        Text(
+          s.t('deliveryFeesHint'),
+          style: TextStyle(color: WingerColors.muted),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          s.t('carrierSection'),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+        ),
+        const SizedBox(height: 8),
+        Text(s.t('carrierHint'), style: TextStyle(color: WingerColors.muted)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ChoiceChip(
+              label: Text(s.t('carrierSupplier')),
+              selected: _carrier == 'supplier',
+              selectedColor: WingerColors.brandMuted,
+              onSelected: (_) => setState(() => _carrier = 'supplier'),
+            ),
+            ChoiceChip(
+              label: Text(s.t('carrierCourier')),
+              selected: _carrier == 'courier',
+              selectedColor: WingerColors.brandMuted,
+              onSelected: (_) => setState(() => _carrier = 'courier'),
+            ),
+          ],
+        ),
+        if (_carrier == 'courier') ...[
+          const SizedBox(height: 12),
+          TextField(
+            controller: _courierCtrl,
+            decoration: InputDecoration(
+              labelText: s.t('courierName'),
+              helperText: s.t('courierNameRequired'),
+              helperMaxLines: 2,
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         TextField(
           controller: _standardCtrl,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(labelText: s.t('standardDelivery'), prefixText: 'USD '),
+          decoration: InputDecoration(
+            labelText: s.t('standardDelivery'),
+            prefixText: 'USD ',
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
           controller: _expressCtrl,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(labelText: s.t('expressDelivery'), prefixText: 'USD '),
+          decoration: InputDecoration(
+            labelText: s.t('expressDelivery'),
+            prefixText: 'USD ',
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
           controller: _pickupCtrl,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(labelText: s.t('pickupDelivery'), prefixText: 'USD '),
+          decoration: InputDecoration(
+            labelText: s.t('pickupDelivery'),
+            prefixText: 'USD ',
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
@@ -2037,14 +2485,45 @@ class _SupplierDeliveryFeesScreenState extends State<SupplierDeliveryFeesScreen>
             helperMaxLines: 4,
           ),
         ),
+        const SizedBox(height: 20),
+        Text(
+          s.t('taxSection'),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _taxCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: s.t('taxRate'),
+            suffixText: '%',
+            helperText: s.t('taxRateHint'),
+            helperMaxLines: 3,
+          ),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(s.t('taxOnDelivery')),
+          value: _taxOnDelivery,
+          activeThumbColor: WingerColors.brand,
+          onChanged: (value) => setState(() => _taxOnDelivery = value),
+        ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          Text(_error!, style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+          Text(
+            _error!,
+            style: const TextStyle(
+              color: Colors.red,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
         const SizedBox(height: 16),
         FilledButton(
           onPressed: _saving ? null : () => unawaited(_save()),
-          child: Text(_saving ? s.t('saveDeliveryFees') : s.t('saveDeliveryFees')),
+          child: Text(
+            _saving ? s.t('saveDeliveryFees') : s.t('saveDeliveryFees'),
+          ),
         ),
       ],
     );

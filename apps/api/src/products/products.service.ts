@@ -325,6 +325,10 @@ export class ProductsService {
         supplier.freeDeliveryThreshold == null
           ? null
           : Number(supplier.freeDeliveryThreshold),
+      taxRatePercent: Number(supplier.taxRatePercent),
+      taxOnDelivery: supplier.taxOnDelivery,
+      carrier: supplier.carrier === 'courier' ? 'courier' : 'supplier',
+      courierName: supplier.courierName,
     };
   }
 
@@ -340,10 +344,25 @@ export class ProductsService {
       expressDeliveryFee?: number;
       pickupDeliveryFee?: number;
       freeDeliveryThreshold?: number | null;
+      taxRatePercent?: number;
+      taxOnDelivery?: boolean;
+      carrier?: string;
+      courierName?: string | null;
     },
   ) {
     const supplier = await this.requireSupplier(user);
     const data: Prisma.SupplierUpdateInput = { deliveryConfigured: true };
+    const nextCarrier =
+      body.carrier !== undefined ? this.parseCarrier(body.carrier) : supplier.carrier;
+    if (body.carrier !== undefined) data.carrier = nextCarrier;
+    let nextCourierName = supplier.courierName;
+    if ('courierName' in body) {
+      nextCourierName = this.parseOptionalCourierName(body.courierName);
+      data.courierName = nextCourierName;
+    }
+    if (nextCarrier === 'courier' && !nextCourierName?.trim()) {
+      throw new BadRequestException('Courier name must be from 1 to 80 characters.');
+    }
     if (body.standardDeliveryFee !== undefined) {
       data.standardDeliveryFee = this.parseDeliveryFee(body.standardDeliveryFee, 'Standard delivery');
     }
@@ -358,6 +377,12 @@ export class ProductsService {
         body.freeDeliveryThreshold == null
           ? null
           : this.parseDeliveryThreshold(body.freeDeliveryThreshold);
+    }
+    if (body.taxRatePercent !== undefined) {
+      data.taxRatePercent = this.parseTaxRate(body.taxRatePercent);
+    }
+    if (body.taxOnDelivery !== undefined) {
+      data.taxOnDelivery = body.taxOnDelivery === true;
     }
     const updated = await this.prisma.supplier.update({
       where: { id: supplier.id },
@@ -382,6 +407,10 @@ export class ProductsService {
     expressDeliveryFee: Prisma.Decimal;
     pickupDeliveryFee: Prisma.Decimal;
     freeDeliveryThreshold: Prisma.Decimal | null;
+    taxRatePercent: Prisma.Decimal;
+    taxOnDelivery: boolean;
+    carrier: string;
+    courierName: string | null;
   }) {
     return {
       standardDeliveryFee: Number(supplier.standardDeliveryFee),
@@ -391,7 +420,34 @@ export class ProductsService {
         supplier.freeDeliveryThreshold == null
           ? null
           : Number(supplier.freeDeliveryThreshold),
+      taxRatePercent: Number(supplier.taxRatePercent),
+      taxOnDelivery: supplier.taxOnDelivery,
+      carrier: supplier.carrier === 'courier' ? 'courier' : 'supplier',
+      courierName: supplier.courierName,
     };
+  }
+
+  private parseCarrier(value: unknown): 'supplier' | 'courier' {
+    const mode = String(value ?? '').trim().toLowerCase();
+    if (mode === 'supplier' || mode === 'courier') return mode;
+    throw new BadRequestException('Carrier must be supplier or courier.');
+  }
+
+  private parseOptionalCourierName(value: unknown): string | null {
+    if (value == null || String(value).trim() === '') return null;
+    const name = String(value).trim();
+    if (name.length > 80) {
+      throw new BadRequestException('Courier name must be from 1 to 80 characters.');
+    }
+    return name;
+  }
+
+  private parseTaxRate(value: unknown): number {
+    const rate = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      throw new BadRequestException('Tax rate must be from 0 to 100 percent.');
+    }
+    return Math.round(rate * 100) / 100;
   }
 
   private parseDeliveryFee(value: unknown, label: string): number {

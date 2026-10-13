@@ -137,6 +137,7 @@ describe('payment and commission reliability', () => {
       notifications as unknown as NotificationsService,
       {} as FxService,
       audit as unknown as AuditService,
+      { transferIfSettleable: jest.fn(), reverseIfTransferred: jest.fn() } as never,
     );
   });
 

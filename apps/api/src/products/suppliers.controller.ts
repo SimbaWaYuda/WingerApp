@@ -36,6 +36,10 @@ export class SuppliersController {
       expressDeliveryFee?: number;
       pickupDeliveryFee?: number;
       freeDeliveryThreshold?: number | null;
+      taxRatePercent?: number;
+      taxOnDelivery?: boolean;
+      carrier?: string;
+      courierName?: string | null;
     },
   ) {
     return this.productsService.updateMyDeliveryFees(user, body);
