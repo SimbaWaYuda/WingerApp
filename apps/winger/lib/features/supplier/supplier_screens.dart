@@ -1101,6 +1101,12 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
       builder: (ctx) => _ProductEditorDialog(product: product),
     );
     if (draft == null || !mounted) return;
+    if (draft.taxRateInvalid) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('taxRateHint'))));
+      return;
+    }
     if (draft.name.isEmpty ||
         draft.price == null ||
         draft.price! < 0 ||
@@ -1130,6 +1136,7 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
             .map((spec) => {'label': spec.label, 'value': spec.value})
             .toList(),
         'description': draft.description,
+        'taxRatePercent': draft.taxRatePercent,
       };
       late Product saved;
       if (product == null) {
@@ -1285,7 +1292,8 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    '\$${product.price.toStringAsFixed(2)} · ${s.t('stock')}: ${product.stock} · ${product.galleryUrls.length} ${s.t('photos')}',
+                                    '\$${product.price.toStringAsFixed(2)} · ${s.t('stock')}: ${product.stock} · ${product.galleryUrls.length} ${s.t('photos')}'
+                                    '${product.taxRatePercent == null ? '' : ' · ${s.t('productTaxRate')} ${product.taxRatePercent}%'}',
                                     style: TextStyle(color: WingerColors.muted),
                                   ),
                                 ],
@@ -1336,6 +1344,8 @@ class _ProductEditorResult {
     required this.weight,
     required this.extraSpecs,
     required this.description,
+    required this.taxRatePercent,
+    required this.taxRateInvalid,
     required this.pendingPaths,
     required this.removedImageIds,
   });
@@ -1352,6 +1362,8 @@ class _ProductEditorResult {
   final String weight;
   final List<ProductSpec> extraSpecs;
   final String description;
+  final double? taxRatePercent;
+  final bool taxRateInvalid;
   final List<String> pendingPaths;
   final List<String> removedImageIds;
 }
@@ -1393,6 +1405,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
   late final TextEditingController _batteryCtrl;
   late final TextEditingController _weightCtrl;
   late final TextEditingController _descCtrl;
+  late final TextEditingController _taxCtrl;
   late List<ProductImageRef> _existing;
   final List<_ExtraSpecEditors> _extraSpecs = [];
   final List<String> _pendingPaths = [];
@@ -1441,6 +1454,14 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
       text: product == null || product.weight == '—' ? '' : product.weight,
     );
     _descCtrl = TextEditingController(text: product?.description ?? '');
+    final productTax = product?.taxRatePercent;
+    _taxCtrl = TextEditingController(
+      text: productTax == null
+          ? ''
+          : (productTax == productTax.roundToDouble()
+                ? productTax.round().toString()
+                : productTax.toStringAsFixed(2)),
+    );
     _existing = [...?product?.images];
     for (final spec in product?.extraSpecs ?? const <ProductSpec>[]) {
       _extraSpecs.add(_ExtraSpecEditors(label: spec.label, value: spec.value));
@@ -1460,6 +1481,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     _batteryCtrl.dispose();
     _weightCtrl.dispose();
     _descCtrl.dispose();
+    _taxCtrl.dispose();
     for (final row in _extraSpecs) {
       row.dispose();
     }
@@ -1545,6 +1567,14 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
               ),
         ],
         description: _descCtrl.text.trim(),
+        taxRatePercent: _taxCtrl.text.trim().isEmpty
+            ? null
+            : double.tryParse(_taxCtrl.text.trim()),
+        taxRateInvalid:
+            _taxCtrl.text.trim().isNotEmpty &&
+            (double.tryParse(_taxCtrl.text.trim()) == null ||
+                double.parse(_taxCtrl.text.trim()) < 0 ||
+                double.parse(_taxCtrl.text.trim()) > 100),
         pendingPaths: List<String>.from(_pendingPaths),
         removedImageIds: List<String>.from(_removedImageIds),
       ),
@@ -1625,6 +1655,16 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                   decimal: true,
                 ),
                 decoration: InputDecoration(labelText: s.t('price')),
+              ),
+              TextField(
+                controller: _taxCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: s.t('productTaxRate'),
+                  suffixText: '%',
+                  helperText: s.t('productTaxHint'),
+                  helperMaxLines: 3,
+                ),
               ),
               TextField(
                 controller: _stockCtrl,
@@ -2239,6 +2279,20 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
   }
 }
 
+class _CityTaxEditors {
+  _CityTaxEditors({String city = '', String rate = ''})
+    : cityCtrl = TextEditingController(text: city),
+      rateCtrl = TextEditingController(text: rate);
+
+  final TextEditingController cityCtrl;
+  final TextEditingController rateCtrl;
+
+  void dispose() {
+    cityCtrl.dispose();
+    rateCtrl.dispose();
+  }
+}
+
 class _SupplierFinance {
   const _SupplierFinance({
     required this.summary,
@@ -2269,6 +2323,7 @@ class _SupplierDeliveryFeesScreenState
   final _thresholdCtrl = TextEditingController();
   final _taxCtrl = TextEditingController();
   final _courierCtrl = TextEditingController();
+  final List<_CityTaxEditors> _cityTaxes = [];
   bool _taxOnDelivery = false;
   String _carrier = 'supplier';
   bool _loading = true;
@@ -2291,6 +2346,9 @@ class _SupplierDeliveryFeesScreenState
     _thresholdCtrl.dispose();
     _taxCtrl.dispose();
     _courierCtrl.dispose();
+    for (final row in _cityTaxes) {
+      row.dispose();
+    }
     super.dispose();
   }
 
@@ -2313,6 +2371,19 @@ class _SupplierDeliveryFeesScreenState
         _thresholdCtrl.text = _moneyText(fees['freeDeliveryThreshold'] as num?);
         _taxCtrl.text = _moneyText(fees['taxRatePercent'] as num? ?? 8);
         _taxOnDelivery = fees['taxOnDelivery'] as bool? ?? false;
+        for (final row in _cityTaxes) {
+          row.dispose();
+        }
+        _cityTaxes
+          ..clear()
+          ..addAll(
+            (fees['taxCities'] as List<dynamic>? ?? const []).whereType<Map>().map(
+              (row) => _CityTaxEditors(
+                city: row['city']?.toString() ?? '',
+                rate: _moneyText(row['taxRatePercent'] as num?),
+              ),
+            ),
+          );
         _carrier = fees['carrier'] == 'courier' ? 'courier' : 'supplier';
         _courierCtrl.text = fees['courierName'] as String? ?? '';
         _loading = false;
@@ -2360,6 +2431,18 @@ class _SupplierDeliveryFeesScreenState
       setState(() => _error = s.t('taxRateHint'));
       return;
     }
+    final taxCities = <Map<String, dynamic>>[];
+    for (final row in _cityTaxes) {
+      final city = row.cityCtrl.text.trim();
+      final rateText = row.rateCtrl.text.trim();
+      if (city.isEmpty && rateText.isEmpty) continue;
+      final rate = double.tryParse(rateText);
+      if (city.isEmpty || rate == null || rate < 0 || rate > 100) {
+        setState(() => _error = s.t('taxCityRequired'));
+        return;
+      }
+      taxCities.add({'city': city, 'taxRatePercent': rate});
+    }
     final courierName = _courierCtrl.text.trim();
     if (_carrier == 'courier' && courierName.isEmpty) {
       setState(() => _error = s.t('courierNameRequired'));
@@ -2377,6 +2460,7 @@ class _SupplierDeliveryFeesScreenState
         freeDeliveryThreshold: threshold,
         taxRatePercent: taxRate,
         taxOnDelivery: _taxOnDelivery,
+        taxCities: taxCities,
         carrier: _carrier,
         courierName: courierName.isEmpty ? null : courierName,
       );
@@ -2507,6 +2591,58 @@ class _SupplierDeliveryFeesScreenState
           value: _taxOnDelivery,
           activeThumbColor: WingerColors.brand,
           onChanged: (value) => setState(() => _taxOnDelivery = value),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          s.t('taxByCity'),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        const SizedBox(height: 4),
+        Text(s.t('taxByCityHint'), style: TextStyle(color: WingerColors.muted)),
+        const SizedBox(height: 8),
+        for (var i = 0; i < _cityTaxes.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _cityTaxes[i].cityCtrl,
+                    decoration: InputDecoration(labelText: s.t('taxCity')),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: _cityTaxes[i].rateCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: s.t('taxRate'),
+                      suffixText: '%',
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => setState(() {
+                    _cityTaxes.removeAt(i).dispose();
+                  }),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _cityTaxes.length >= 30
+                ? null
+                : () => setState(() => _cityTaxes.add(_CityTaxEditors())),
+            icon: const Icon(Icons.add),
+            label: Text(s.t('addTaxCity')),
+          ),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),

@@ -22,7 +22,11 @@ import { FxService } from '../fx/fx.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { computeFulfillmentFees, normalizeDeliveryMethod } from './delivery-fees';
+import {
+  cityTaxRateFor,
+  computeFulfillmentFees,
+  normalizeDeliveryMethod,
+} from './delivery-fees';
 import { PayoutsService } from './payouts.service';
 import { cardRefundAmount, ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
 
@@ -212,6 +216,8 @@ export class OrdersService {
           battery: product.battery,
           weight: product.weight,
           description: product.description,
+          taxRatePercent:
+            product.taxRatePercent == null ? null : Number(product.taxRatePercent),
           stock: product.stock,
           stockStatus:
             product.stockStatus === StockStatus.LOW_STOCK
@@ -234,6 +240,10 @@ export class OrdersService {
                 supplierId: line.product.supplierId,
                 supplierName: line.product.supplierName,
                 lineTotal: line.lineTotal,
+                taxRatePercent:
+                  line.product.taxRatePercent == null
+                    ? null
+                    : Number(line.product.taxRatePercent),
               },
             ]
           : [],
@@ -353,6 +363,10 @@ export class OrdersService {
         supplierId: line.product.supplierId,
         supplierName: line.product.supplierName,
         lineTotal: Number(line.lineTotal),
+        taxRatePercent:
+          line.product.taxRatePercent == null
+            ? null
+            : Number(line.product.taxRatePercent),
       })),
     });
     const total = new Prisma.Decimal(fees.total.toFixed(2));
@@ -2413,16 +2427,35 @@ export class OrdersService {
     subtotal: number;
     deliveryMethod?: string;
     city?: string;
-    lines: { supplierId: string; supplierName: string; lineTotal: number }[];
+    lines: {
+      supplierId: string;
+      supplierName: string;
+      lineTotal: number;
+      taxRatePercent?: number | null;
+    }[];
   }) {
-    const grouped = new Map<string, { supplierName: string; merchandise: number }>();
+    const grouped = new Map<
+      string,
+      {
+        supplierName: string;
+        merchandise: number;
+        lines: { lineTotal: number; taxRatePercent: number | null }[];
+      }
+    >();
     for (const line of input.lines) {
+      const taxLine = {
+        lineTotal: line.lineTotal,
+        taxRatePercent: line.taxRatePercent ?? null,
+      };
       const current = grouped.get(line.supplierId);
-      if (current) current.merchandise += line.lineTotal;
-      else {
+      if (current) {
+        current.merchandise += line.lineTotal;
+        current.lines.push(taxLine);
+      } else {
         grouped.set(line.supplierId, {
           supplierName: line.supplierName,
           merchandise: line.lineTotal,
+          lines: [taxLine],
         });
       }
     }
@@ -2440,6 +2473,7 @@ export class OrdersService {
             taxOnDelivery: true,
             carrier: true,
             courierName: true,
+            cityTaxes: { select: { cityKey: true, taxRatePercent: true } },
           },
         })
       : [];
@@ -2450,6 +2484,10 @@ export class OrdersService {
       city: input.city,
       suppliers: [...grouped.entries()].map(([supplierId, group]) => {
         const row = rates.get(supplierId);
+        const cityRules = (row?.cityTaxes ?? []).map((rule) => ({
+          cityKey: rule.cityKey,
+          taxRatePercent: Number(rule.taxRatePercent),
+        }));
         return {
           supplierId,
           supplierName: group.supplierName,
@@ -2460,6 +2498,8 @@ export class OrdersService {
           freeDeliveryThreshold:
             row?.freeDeliveryThreshold == null ? null : Number(row.freeDeliveryThreshold),
           taxRatePercent: row ? Number(row.taxRatePercent) : 8,
+          cityTaxRatePercent: cityTaxRateFor(cityRules, input.city),
+          lines: group.lines,
           taxOnDelivery: row?.taxOnDelivery ?? false,
           carrier: row?.carrier === 'courier' ? 'courier' as const : 'supplier' as const,
           courierName: row?.courierName ?? null,

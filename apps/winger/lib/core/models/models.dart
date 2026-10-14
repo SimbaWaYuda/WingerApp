@@ -51,6 +51,7 @@ class Product {
     this.battery = '—',
     this.weight = '—',
     this.description = '',
+    this.taxRatePercent,
     this.stock = 24,
     this.stockStatus = StockStatus.inStock,
     this.supplierVerified = false,
@@ -79,6 +80,8 @@ class Product {
   final String battery;
   final String weight;
   final String description;
+  /// Null uses the delivery-city rate, then the supplier rate.
+  final double? taxRatePercent;
   final int stock;
   final StockStatus stockStatus;
 

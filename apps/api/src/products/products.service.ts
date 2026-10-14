@@ -22,6 +22,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { milesBetween, resolvePlace } from './distance';
+import { normalizeCityKey } from '../orders/delivery-fees';
 
 const MAX_PRODUCT_IMAGES = 8;
 /** Empty cover — clients show a neutral “no photo” tile (never a fake product shot). */
@@ -63,6 +64,8 @@ export type UpsertSupplierProductDto = {
   battery?: string;
   weight?: string;
   extraSpecs?: ProductSpecDto[];
+  /** Null clears a product rate so the city or supplier rate applies. */
+  taxRatePercent?: number | null;
 };
 
 export type ProductImageDto = {
@@ -93,6 +96,7 @@ export type ProductDto = {
   weight: string;
   extraSpecs: ProductSpecDto[];
   description: string;
+  taxRatePercent: number | null;
   stock: number;
   stockStatus: 'inStock' | 'lowStock' | 'outOfStock';
   createdAt?: string;
@@ -346,6 +350,7 @@ export class ProductsService {
       freeDeliveryThreshold?: number | null;
       taxRatePercent?: number;
       taxOnDelivery?: boolean;
+      taxCities?: { city?: string; taxRatePercent?: number }[];
       carrier?: string;
       courierName?: string | null;
     },
@@ -384,9 +389,27 @@ export class ProductsService {
     if (body.taxOnDelivery !== undefined) {
       data.taxOnDelivery = body.taxOnDelivery === true;
     }
-    const updated = await this.prisma.supplier.update({
-      where: { id: supplier.id },
-      data,
+    const taxCities =
+      body.taxCities !== undefined ? this.parseTaxCities(body.taxCities) : null;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.supplier.update({
+        where: { id: supplier.id },
+        data,
+      });
+      if (taxCities) {
+        await tx.supplierCityTax.deleteMany({ where: { supplierId: supplier.id } });
+        if (taxCities.length > 0) {
+          await tx.supplierCityTax.createMany({
+            data: taxCities.map((row) => ({
+              supplierId: supplier.id,
+              city: row.city,
+              cityKey: row.cityKey,
+              taxRatePercent: row.taxRatePercent,
+            })),
+          });
+        }
+      }
+      return saved;
     });
     return this.deliveryFeeResponse(updated);
   }
@@ -402,7 +425,8 @@ export class ProductsService {
     return supplier;
   }
 
-  private deliveryFeeResponse(supplier: {
+  private async deliveryFeeResponse(supplier: {
+    id: string;
     standardDeliveryFee: Prisma.Decimal;
     expressDeliveryFee: Prisma.Decimal;
     pickupDeliveryFee: Prisma.Decimal;
@@ -412,6 +436,10 @@ export class ProductsService {
     carrier: string;
     courierName: string | null;
   }) {
+    const taxCities = await this.prisma.supplierCityTax.findMany({
+      where: { supplierId: supplier.id },
+      orderBy: { city: 'asc' },
+    });
     return {
       standardDeliveryFee: Number(supplier.standardDeliveryFee),
       expressDeliveryFee: Number(supplier.expressDeliveryFee),
@@ -422,9 +450,44 @@ export class ProductsService {
           : Number(supplier.freeDeliveryThreshold),
       taxRatePercent: Number(supplier.taxRatePercent),
       taxOnDelivery: supplier.taxOnDelivery,
+      taxCities: taxCities.map((row) => ({
+        city: row.city,
+        taxRatePercent: Number(row.taxRatePercent),
+      })),
       carrier: supplier.carrier === 'courier' ? 'courier' : 'supplier',
       courierName: supplier.courierName,
     };
+  }
+
+  private parseTaxCities(
+    value: unknown,
+  ): { city: string; cityKey: string; taxRatePercent: number }[] {
+    if (!Array.isArray(value)) {
+      throw new BadRequestException('City tax rules must be a list.');
+    }
+    if (value.length > 30) {
+      throw new BadRequestException('A supplier can have at most 30 city tax rates.');
+    }
+    const seen = new Set<string>();
+    const rows: { city: string; cityKey: string; taxRatePercent: number }[] = [];
+    for (const entry of value) {
+      const raw = entry as { city?: unknown; taxRatePercent?: unknown };
+      const city = String(raw.city ?? '').trim().replace(/\s+/g, ' ');
+      if (!city || city.length > 60) {
+        throw new BadRequestException('Each city tax rule needs a city name of 1 to 60 characters.');
+      }
+      const cityKey = normalizeCityKey(city);
+      if (seen.has(cityKey)) {
+        throw new BadRequestException(`Tax for ${city} is listed more than once.`);
+      }
+      seen.add(cityKey);
+      rows.push({
+        city,
+        cityKey,
+        taxRatePercent: this.parseTaxRate(raw.taxRatePercent),
+      });
+    }
+    return rows;
   }
 
   private parseCarrier(value: unknown): 'supplier' | 'courier' {
@@ -440,6 +503,11 @@ export class ProductsService {
       throw new BadRequestException('Courier name must be from 1 to 80 characters.');
     }
     return name;
+  }
+
+  private parseOptionalProductTax(value: unknown): number | null {
+    if (value == null || value === '') return null;
+    return this.parseTaxRate(value);
   }
 
   private parseTaxRate(value: unknown): number {
@@ -705,6 +773,7 @@ export class ProductsService {
         battery: (dto.battery?.trim() || '—').slice(0, 80),
         weight: (dto.weight?.trim() || '—').slice(0, 80),
         extraSpecs: normalizeExtraSpecs(dto.extraSpecs),
+        taxRatePercent: this.parseOptionalProductTax(dto.taxRatePercent),
         ...(customImageUrl
           ? {
               images: {
@@ -770,6 +839,9 @@ export class ProductsService {
     if (dto.weight != null) data.weight = dto.weight.trim().slice(0, 80) || existing.weight;
     if (dto.extraSpecs !== undefined) {
       data.extraSpecs = normalizeExtraSpecs(dto.extraSpecs);
+    }
+    if (dto.taxRatePercent !== undefined) {
+      data.taxRatePercent = this.parseOptionalProductTax(dto.taxRatePercent);
     }
     if (dto.stock != null) {
       const stock = Math.floor(Number(dto.stock));
@@ -1044,6 +1116,7 @@ function toDto(product: {
   weight: string;
   extraSpecs?: unknown;
   description: string;
+  taxRatePercent?: { toNumber(): number } | number | null;
   stock: number;
   stockStatus: StockStatus;
   createdAt?: Date;
@@ -1097,6 +1170,12 @@ function toDto(product: {
     weight: product.weight,
     extraSpecs: normalizeExtraSpecs(product.extraSpecs),
     description: product.description,
+    taxRatePercent:
+      product.taxRatePercent == null
+        ? null
+        : typeof product.taxRatePercent === 'number'
+          ? product.taxRatePercent
+          : product.taxRatePercent.toNumber(),
     stock: product.stock,
     stockStatus: mapStatus(product.stockStatus),
     createdAt: product.createdAt?.toISOString(),

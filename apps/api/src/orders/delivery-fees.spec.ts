@@ -1,4 +1,9 @@
-import { computeFulfillmentFees, deliveryFeeForSupplier } from './delivery-fees';
+import {
+  cityTaxRateFor,
+  computeFulfillmentFees,
+  deliveryFeeForSupplier,
+  normalizeCityKey,
+} from './delivery-fees';
 
 const kijani = {
   supplierId: 's-kijani',
@@ -67,6 +72,45 @@ describe('delivery fees', () => {
     expect(quote.shipments.map((shipment) => shipment.tax)).toEqual([7.2, 0]);
     expect(quote.tax).toBe(7.2);
     expect(quote.total).toBe(roundTotal(100, quote.deliveryFee, quote.tax));
+  });
+
+  it('uses the delivery city rate for items and for delivery', () => {
+    const quote = computeFulfillmentFees({
+      subtotal: 40,
+      deliveryMethod: 'standard',
+      city: 'Nairobi',
+      suppliers: [{ ...kijani, taxRatePercent: 8, cityTaxRatePercent: 16, taxOnDelivery: true }],
+    });
+    expect(quote.tax).toBe(7.2);
+  });
+
+  it('lets a product rate replace the city rate while delivery keeps the city rate', () => {
+    const quote = computeFulfillmentFees({
+      subtotal: 50,
+      deliveryMethod: 'express',
+      suppliers: [
+        {
+          ...kijani,
+          merchandiseSubtotal: 50,
+          expressDeliveryFee: 10,
+          taxRatePercent: 8,
+          cityTaxRatePercent: 16,
+          taxOnDelivery: true,
+          lines: [
+            { lineTotal: 20, taxRatePercent: 0 },
+            { lineTotal: 30, taxRatePercent: null },
+          ],
+        },
+      ],
+    });
+    expect(quote.shipments[0].tax).toBe(6.4);
+  });
+
+  it('matches a city rate by name and ignores a blank city', () => {
+    const rules = [{ cityKey: normalizeCityKey('  Nairobi '), taxRatePercent: 16 }];
+    expect(cityTaxRateFor(rules, 'nairobi')).toBe(16);
+    expect(cityTaxRateFor(rules, '')).toBeNull();
+    expect(cityTaxRateFor(rules, 'Mombasa')).toBeNull();
   });
 
   it('records supplier delivery, a named courier, and no carrier on pickup', () => {

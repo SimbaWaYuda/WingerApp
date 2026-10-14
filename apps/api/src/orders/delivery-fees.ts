@@ -9,8 +9,15 @@ export type SupplierDeliveryQuote = {
   expressDeliveryFee: number;
   pickupDeliveryFee: number;
   freeDeliveryThreshold: number | null;
-  /** Percent of this supplier's items. 0 means no tax. */
+  /** Percent used when the city and the product have no rate. 0 means no tax. */
   taxRatePercent: number;
+  /** Rate for the checkout city. Null when that city has no rule. */
+  cityTaxRatePercent?: number | null;
+  /**
+   * Per-item rates. Null on a line means use the city rate, then the supplier rate.
+   * When omitted, the whole merchandise subtotal uses the city or supplier rate.
+   */
+  lines?: { lineTotal: number; taxRatePercent: number | null }[];
   taxOnDelivery: boolean;
   /** supplier delivers, or a named courier. Pickup clears this on the shipment. */
   carrier: CarrierMode;
@@ -58,10 +65,54 @@ export function deliveryFeeForSupplier(
   return roundMoney(supplier.standardDeliveryFee);
 }
 
+/** Checkout city key. Empty when the customer has not entered a city. */
+export function normalizeCityKey(city?: string | null): string {
+  return (city ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** Product rate wins, then the delivery city, then the supplier default. */
+export function resolveTaxRate(
+  productRate: number | null | undefined,
+  cityRate: number | null | undefined,
+  supplierRate: number,
+): number {
+  if (productRate != null && Number.isFinite(productRate)) return productRate;
+  if (cityRate != null && Number.isFinite(cityRate)) return cityRate;
+  return Number.isFinite(supplierRate) ? supplierRate : 8;
+}
+
+export function cityTaxRateFor(
+  rules: { cityKey: string; taxRatePercent: number }[],
+  city?: string | null,
+): number | null {
+  const key = normalizeCityKey(city);
+  if (!key) return null;
+  const match = rules.find((rule) => rule.cityKey === key);
+  return match ? match.taxRatePercent : null;
+}
+
 export function taxForSupplier(deliveryFee: number, supplier: SupplierDeliveryQuote): number {
-  const rate = Number.isFinite(supplier.taxRatePercent) ? supplier.taxRatePercent : 8;
-  const base = supplier.merchandiseSubtotal + (supplier.taxOnDelivery ? deliveryFee : 0);
-  return roundMoney((base * rate) / 100);
+  const lines = supplier.lines;
+  const merchandiseTax =
+    lines && lines.length > 0
+      ? lines.reduce((sum, line) => {
+          const rate = resolveTaxRate(
+            line.taxRatePercent,
+            supplier.cityTaxRatePercent,
+            supplier.taxRatePercent,
+          );
+          return sum + (line.lineTotal * rate) / 100;
+        }, 0)
+      : (supplier.merchandiseSubtotal *
+          resolveTaxRate(null, supplier.cityTaxRatePercent, supplier.taxRatePercent)) /
+        100;
+  const deliveryRate = resolveTaxRate(
+    null,
+    supplier.cityTaxRatePercent,
+    supplier.taxRatePercent,
+  );
+  const deliveryTax = supplier.taxOnDelivery ? (deliveryFee * deliveryRate) / 100 : 0;
+  return roundMoney(merchandiseTax + deliveryTax);
 }
 
 export function estimateLabel(method: DeliveryMethod, city: string): string {

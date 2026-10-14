@@ -126,9 +126,10 @@ model Supplier {
   pickupDeliveryFee    Decimal          @default(0) @db.Decimal(12, 2)
   /// When set, standard delivery is free once this supplier's items reach this USD amount.
   freeDeliveryThreshold Decimal?        @db.Decimal(12, 2)
-  /// Percent applied to this supplier's items. 0 means no tax. Delivery is taxed only when taxOnDelivery is set.
+  /// Percent used when the delivery city and the product have no rate of their own. 0 means no tax.
   taxRatePercent       Decimal          @default(8) @db.Decimal(5, 2)
   taxOnDelivery        Boolean          @default(false)
+  cityTaxes            SupplierCityTax[]
   /// Who carries a delivered order: the supplier, or a named courier. Pickup ignores this.
   carrier              String           @default("supplier")
   courierName          String?
@@ -146,6 +147,21 @@ model Supplier {
   reviews              SupplierReview[]
   commissionAgreements SupplierCommissionAgreement[]
   cashCollections      CashCollection[]
+}
+
+/// Destination-city tax for one supplier. A product rate overrides this.
+model SupplierCityTax {
+  id             String   @id @default(cuid())
+  supplierId     String
+  supplier       Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  /// Trimmed city name shown to the supplier.
+  city           String
+  /// Lowercase city used to match checkout. Unique per supplier.
+  cityKey        String
+  taxRatePercent Decimal  @db.Decimal(5, 2)
+
+  @@unique([supplierId, cityKey])
+  @@index([supplierId])
 }
 
 /// Customer rating of a supplier after a delivered shipment.
@@ -285,6 +301,8 @@ model Product {
   /// Custom supplier specs: [{ "label": "Material", "value": "Cotton" }]
   extraSpecs    Json        @default("[]")
   description   String      @default("")
+  /// Null uses the delivery-city rate, then the supplier rate. 0 means this product is tax free.
+  taxRatePercent Decimal?   @db.Decimal(5, 2)
   stock         Int         @default(0)
   stockStatus   StockStatus @default(IN_STOCK)
   createdAt     DateTime    @default(now())

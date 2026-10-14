@@ -38,6 +38,7 @@ export class SuppliersController {
       freeDeliveryThreshold?: number | null;
       taxRatePercent?: number;
       taxOnDelivery?: boolean;
+      taxCities?: { city?: string; taxRatePercent?: number }[];
       carrier?: string;
       courierName?: string | null;
     },

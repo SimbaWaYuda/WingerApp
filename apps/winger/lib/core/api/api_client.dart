@@ -1005,6 +1005,7 @@ class ApiClient {
     required double? freeDeliveryThreshold,
     required double taxRatePercent,
     required bool taxOnDelivery,
+    required List<Map<String, dynamic>> taxCities,
     required String carrier,
     String? courierName,
   }) async {
@@ -1020,6 +1021,7 @@ class ApiClient {
             'freeDeliveryThreshold': freeDeliveryThreshold,
             'taxRatePercent': taxRatePercent,
             'taxOnDelivery': taxOnDelivery,
+            'taxCities': taxCities,
             'carrier': carrier,
             'courierName': courierName,
           }),
@@ -1695,6 +1697,7 @@ class ApiClient {
           .where((spec) => spec.label.isNotEmpty && spec.value.isNotEmpty)
           .toList(),
       description: json['description'] as String? ?? '',
+      taxRatePercent: (json['taxRatePercent'] as num?)?.toDouble(),
       stock: json['stock'] as int? ?? 0,
       stockStatus: switch (stockStatusRaw) {
         'lowStock' => StockStatus.lowStock,
