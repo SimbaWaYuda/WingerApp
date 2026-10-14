@@ -1,4 +1,8 @@
-import { supplierNetSettlement, supplierTransferAmount } from './supplier-payout.math';
+import {
+  supplierNetSettlement,
+  supplierTransferAmount,
+  supplierTransferForBalance,
+} from './supplier-payout.math';
 
 describe('supplier payout amount', () => {
   it('pays the item total minus commission and leaves tax and delivery on the platform', () => {
@@ -22,6 +26,32 @@ describe('supplier payout amount', () => {
         settlementCurrency: 'USD',
         paymentCurrency: 'TZS',
         fxRate: 2500,
+      }),
+    ).toEqual({ amount: 90000, currency: 'TZS' });
+  });
+
+  it('pays the settlement net when Stripe settled the charge in USD', () => {
+    expect(
+      supplierTransferForBalance({
+        lineTotal: 319,
+        commissionAmount: 31.9,
+        settlementCurrency: 'USD',
+        paymentCurrency: 'TZS',
+        fxRate: 2650,
+        balanceCurrency: 'usd',
+      }),
+    ).toEqual({ amount: 287.1, currency: 'USD' });
+  });
+
+  it('uses the payment currency only when that is the settled balance', () => {
+    expect(
+      supplierTransferForBalance({
+        lineTotal: 40,
+        commissionAmount: 4,
+        settlementCurrency: 'USD',
+        paymentCurrency: 'TZS',
+        fxRate: 2500,
+        balanceCurrency: 'tzs',
       }),
     ).toEqual({ amount: 90000, currency: 'TZS' });
   });

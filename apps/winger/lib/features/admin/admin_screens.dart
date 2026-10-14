@@ -8,6 +8,7 @@ import '../../core/models/models.dart';
 import '../../core/repositories/catalog_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
+import '../../core/widgets/courier_trip.dart';
 import '../../core/widgets/kpi_card.dart';
 import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
@@ -832,6 +833,13 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
                                     style: TextStyle(color: WingerColors.muted),
                                   ),
                                 ],
+                                CourierTripLines(
+                                  driverName: row['driverName'] as String?,
+                                  driverPhone: row['driverPhone'] as String?,
+                                  plateNumber: row['plateNumber'] as String?,
+                                  fee: (row['courierFee'] as num?)?.toDouble(),
+                                  trackingUrl: row['trackingUrl'] as String?,
+                                ),
                               ],
                             ),
                           ),
@@ -893,6 +901,19 @@ class _CommissionTotalChip extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+String? _commissionNote(WingerStrings s, Map<String, dynamic> report) {
+  final totals = (report['totals'] as Map<String, dynamic>?) ?? report;
+  final demo = (totals['demoCommission'] as num?)?.toDouble() ?? 0;
+  switch (report['cardCheckout'] as String?) {
+    case 'test':
+      return s.t('demoCommissionNoteTest');
+    case 'live':
+      return s.t('demoCommissionNoteLive');
+    default:
+      return demo > 0 ? s.t('demoCommissionNote') : null;
   }
 }
 
@@ -1115,12 +1136,11 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
                           ),
                         ],
                       ),
-                      if (((totals['demoCommission'] as num?)?.toDouble() ??
-                              0) >
-                          0) ...[
+                      if (_commissionNote(s, _supplierTotals!)
+                          case final note?) ...[
                         const SizedBox(height: 8),
                         Text(
-                          s.t('demoCommissionNote'),
+                          note,
                           style: TextStyle(
                             color: WingerColors.muted,
                             fontWeight: FontWeight.w600,

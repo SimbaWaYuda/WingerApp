@@ -80,6 +80,7 @@ class Product {
   final String battery;
   final String weight;
   final String description;
+
   /// Null uses the delivery-city rate, then the supplier rate.
   final double? taxRatePercent;
   final int stock;
@@ -105,7 +106,8 @@ class Product {
     }
 
     return [
-      if (filled(model, ignore: {'Standard'})) ProductSpec(label: 'sku', value: model),
+      if (filled(model, ignore: {'Standard'}))
+        ProductSpec(label: 'sku', value: model),
       if (filled(category, ignore: {'General'}))
         ProductSpec(label: 'categories', value: category),
       if (filled(color, ignore: {'Default', 'Graphite'}))
@@ -120,8 +122,9 @@ class Product {
     ];
   }
 
-  double get savings =>
-      previousPrice == null ? 0 : (previousPrice! - price).clamp(0, double.infinity);
+  double get savings => previousPrice == null
+      ? 0
+      : (previousPrice! - price).clamp(0, double.infinity);
 }
 
 class CatalogCategory {
@@ -184,10 +187,7 @@ class ProductPage {
 }
 
 class CartItem {
-  const CartItem({
-    required this.product,
-    required this.quantity,
-  });
+  const CartItem({required this.product, required this.quantity});
 
   final Product product;
   final int quantity;
@@ -289,6 +289,11 @@ class ShipmentLeg {
     this.pickupCode,
     this.carrier,
     this.courierName,
+    this.driverName,
+    this.driverPhone,
+    this.plateNumber,
+    this.courierFee,
+    this.trackingUrl,
   });
 
   final String supplierName;
@@ -298,6 +303,11 @@ class ShipmentLeg {
   final String? pickupCode;
   final String? carrier;
   final String? courierName;
+  final String? driverName;
+  final String? driverPhone;
+  final String? plateNumber;
+  final double? courierFee;
+  final String? trackingUrl;
 }
 
 class CustomerOrder {
@@ -372,8 +382,7 @@ class CustomerOrder {
   bool get canRequestReturn => returnableItems.isNotEmpty;
 
   bool get isCodPending =>
-      paymentMode == 'cod' &&
-      paymentStatus.toUpperCase() == 'PENDING';
+      paymentMode == 'cod' && paymentStatus.toUpperCase() == 'PENDING';
 
   bool get isPayOnDelivery =>
       paymentMode == 'cod' ||
@@ -472,8 +481,7 @@ class OrderReturnRequest {
 
   bool get isCardPayment => paymentMode == 'test' || paymentMode == 'live';
 
-  bool get canReview =>
-      status == 'REQUESTED' || status == 'IN_REVIEW';
+  bool get canReview => status == 'REQUESTED' || status == 'IN_REVIEW';
 
   bool get canManageRefund =>
       (status == 'APPROVED' || status == 'CLOSED') &&
@@ -491,8 +499,8 @@ OrderReturnRequest orderReturnRequestFromApi(Map<String, dynamic> json) {
     notes: json['notes'] as String?,
     quantity: json['quantity'] as int? ?? 1,
     status: json['status'] as String? ?? 'REQUESTED',
-    createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-        DateTime.now(),
+    createdAt:
+        DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
     customerName: json['customerName'] as String?,
     refundStatus: json['refundStatus'] as String? ?? 'NONE',
     refundNote: json['refundNote'] as String?,
@@ -537,8 +545,8 @@ CustomerNotification customerNotificationFromApi(Map<String, dynamic> json) {
     entityId: json['entityId'] as String?,
     readAt: DateTime.tryParse(json['readAt'] as String? ?? ''),
     whatsappStatus: json['whatsappStatus'] as String?,
-    createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-        DateTime.now(),
+    createdAt:
+        DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
   );
 }
 
@@ -556,6 +564,11 @@ class OrderItemRow {
     this.pickupCode,
     this.carrier,
     this.courierName,
+    this.driverName,
+    this.driverPhone,
+    this.plateNumber,
+    this.courierFee,
+    this.trackingUrl,
     this.replacesOrderId,
     this.replacesOrderItemId,
     this.replacedByOrderId,
@@ -573,6 +586,11 @@ class OrderItemRow {
   final String? pickupCode;
   final String? carrier;
   final String? courierName;
+  final String? driverName;
+  final String? driverPhone;
+  final String? plateNumber;
+  final double? courierFee;
+  final String? trackingUrl;
   final String? replacesOrderId;
   final String? replacesOrderItemId;
   final String? replacedByOrderId;
@@ -629,6 +647,23 @@ String orderStatusToApi(OrderStatus status) {
   };
 }
 
+String? _bookingField(Map<String, dynamic> item, String key) {
+  final booking = item['courierBooking'];
+  if (booking is! Map) return null;
+  final value = booking[key];
+  if (value == null) return null;
+  final text = value.toString().trim();
+  return text.isEmpty ? null : text;
+}
+
+double? _bookingFee(Map<String, dynamic> item) {
+  final booking = item['courierBooking'];
+  if (booking is! Map) return null;
+  final value = booking['fee'];
+  if (value is num) return value.toDouble();
+  return null;
+}
+
 CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
   final items = (json['items'] as List<dynamic>? ?? [])
       .cast<Map<String, dynamic>>();
@@ -645,7 +680,8 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
     paymentStatus: json['paymentStatus'] as String? ?? 'PENDING',
     paymentMode: json['paymentMode'] as String? ?? 'demo',
     paymentMethod: json['paymentMethod'] as String?,
-    currency: json['settlementCurrency'] as String? ?? json['currency'] as String?,
+    currency:
+        json['settlementCurrency'] as String? ?? json['currency'] as String?,
     displayCurrency: json['displayCurrency'] as String?,
     displayTotal: (json['displayTotal'] as num?)?.toDouble(),
     paymentCurrency: json['paymentCurrency'] as String?,
@@ -653,8 +689,8 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
     customerName: json['customerName'] as String? ?? '',
     addressLine: json['addressLine'] as String?,
     city: json['city'] as String?,
-    placedAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-        DateTime.now(),
+    placedAt:
+        DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
     itemRows: [
       for (final item in items)
         OrderItemRow(
@@ -670,6 +706,11 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           pickupCode: item['pickupCode'] as String?,
           carrier: item['carrier'] as String?,
           courierName: item['courierName'] as String?,
+          driverName: _bookingField(item, 'driverName'),
+          driverPhone: _bookingField(item, 'driverPhone'),
+          plateNumber: _bookingField(item, 'plateNumber'),
+          courierFee: _bookingFee(item),
+          trackingUrl: _bookingField(item, 'trackingUrl'),
           replacesOrderId: item['replacesOrderId'] as String?,
           replacesOrderItemId: item['replacesOrderItemId'] as String?,
           replacedByOrderId: item['replacedByOrderId'] as String?,
@@ -685,6 +726,11 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           pickupCode: item['pickupCode'] as String?,
           carrier: item['carrier'] as String?,
           courierName: item['courierName'] as String?,
+          driverName: _bookingField(item, 'driverName'),
+          driverPhone: _bookingField(item, 'driverPhone'),
+          plateNumber: _bookingField(item, 'plateNumber'),
+          courierFee: _bookingFee(item),
+          trackingUrl: _bookingField(item, 'trackingUrl'),
         ),
     ],
     canRateSuppliers: [

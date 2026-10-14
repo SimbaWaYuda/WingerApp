@@ -9,7 +9,7 @@ import {
 import { CommissionRecognitionStatus, Prisma, UserRole } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
-import { supplierTransferAmount } from './supplier-payout.math';
+import { supplierTransferForBalance } from './supplier-payout.math';
 import { StripeService } from './stripe.service';
 
 @Injectable()
@@ -106,9 +106,15 @@ export class PayoutsService {
     for (const row of rows) {
       results.push(await this.transferIfSettleable(row.orderItemId));
     }
+    const skipped: Record<string, number> = {};
+    for (const row of results) {
+      if (row.transferred) continue;
+      skipped[row.reason] = (skipped[row.reason] ?? 0) + 1;
+    }
     return {
       attempted: results.length,
       transferred: results.filter((row) => row.transferred).length,
+      skipped,
     };
   }
 
@@ -143,24 +149,29 @@ export class PayoutsService {
       if (!this.stripe.connectTestReady()) {
         return { transferred: false, reason: 'test_mode_only' };
       }
-      const quote = supplierTransferAmount({
+      const balance = await this.stripe.chargeBalanceForPaymentIntent(
+        item.order.stripePaymentIntentId,
+      );
+      if (!balance) return { transferred: false, reason: 'no_charge' };
+      const quote = supplierTransferForBalance({
         lineTotal: Number(item.lineTotal),
         commissionAmount: Number(snap.commissionAmount),
         settlementCurrency: item.order.settlementCurrency || item.order.currency,
         paymentCurrency: item.order.paymentCurrency || item.order.currency,
         fxRate: item.order.fxRate == null ? null : Number(item.order.fxRate),
+        balanceCurrency: balance.currency,
       });
       if (!quote) return { transferred: false, reason: 'nothing_to_transfer' };
-      const chargeId = await this.stripe.chargeIdForPaymentIntent(
-        item.order.stripePaymentIntentId,
-      );
-      if (!chargeId) return { transferred: false, reason: 'no_charge' };
+      const amountMinor = Math.round(quote.amount * 100);
+      if (amountMinor <= 0 || amountMinor > balance.amountMinor) {
+        return { transferred: false, reason: 'exceeds_charge' };
+      }
       const transfer = await this.stripe.createSupplierTransfer({
-        amountCents: Math.round(quote.amount * 100),
+        amountCents: amountMinor,
         currency: quote.currency,
         destinationAccountId: item.supplier.stripeAccountId,
-        sourceChargeId: chargeId,
-        idempotencyKey: `transfer-${item.id}`,
+        sourceChargeId: balance.chargeId,
+        idempotencyKey: `transfer-${item.id}-${quote.currency.toLowerCase()}`,
         orderItemId: item.id,
         supplierId: item.supplierId,
       });

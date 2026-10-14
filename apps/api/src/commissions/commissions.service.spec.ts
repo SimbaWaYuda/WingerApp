@@ -10,6 +10,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
+import { cardCheckoutMode } from '../orders/checkout-mode';
 import { AuditService } from './audit.service';
 import { CommissionsService } from './commissions.service';
 
@@ -257,6 +258,7 @@ describe('CommissionsService', () => {
 
       const result = await service.listAdminSupplierTotals(admin());
       expect(result.excludesDemo).toBe(true);
+      expect(result.cardCheckout).toBe(cardCheckoutMode(process.env.STRIPE_SECRET_KEY));
       expect(result.totals.totalCommission).toBe(18);
       expect(result.totals.demoCommission).toBe(99);
       expect(result.suppliers[0]).toMatchObject({

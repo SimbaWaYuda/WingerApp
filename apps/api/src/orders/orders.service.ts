@@ -27,7 +27,12 @@ import {
   computeFulfillmentFees,
   normalizeDeliveryMethod,
 } from './delivery-fees';
-import { nextCourierReference } from './courier-booking';
+import {
+  CourierTripDetails,
+  CourierTripInput,
+  nextCourierReference,
+  parseCourierTripDetails,
+} from './courier-booking';
 import { PayoutsService } from './payouts.service';
 import { cardRefundAmount, ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
 
@@ -61,6 +66,8 @@ export type UpdateItemStatusDto = {
   pickupCode?: string;
   /** Collect COD payment (marks order PAID). */
   collectPayment?: boolean;
+  /** Driver and tracking details for a courier shipment. */
+  courierDetails?: CourierTripInput;
 };
 
 export type CreateReturnRequestDto = {
@@ -709,6 +716,15 @@ export class OrdersService {
         trackingCode: true,
         carrier: true,
         courierName: true,
+        courierBooking: {
+          select: {
+            driverName: true,
+            driverPhone: true,
+            plateNumber: true,
+            fee: true,
+            trackingUrl: true,
+          },
+        },
         order: { select: { id: true, displayId: true, createdAt: true } },
       },
     });
@@ -731,6 +747,11 @@ export class OrdersService {
       trackingCode: string | null;
       carrier: string | null;
       courierName: string | null;
+      driverName: string | null;
+      driverPhone: string | null;
+      plateNumber: string | null;
+      courierFee: number | null;
+      trackingUrl: string | null;
       createdAt: Date;
     }> = [];
 
@@ -767,6 +788,12 @@ export class OrdersService {
           trackingCode: item.trackingCode,
           carrier: item.carrier,
           courierName: item.courierName,
+          driverName: item.courierBooking?.driverName ?? null,
+          driverPhone: item.courierBooking?.driverPhone ?? null,
+          plateNumber: item.courierBooking?.plateNumber ?? null,
+          courierFee:
+            item.courierBooking?.fee == null ? null : Number(item.courierBooking.fee),
+          trackingUrl: item.courierBooking?.trackingUrl ?? null,
           createdAt: item.order.createdAt,
         });
       }
@@ -1772,6 +1799,31 @@ export class OrdersService {
       );
     }
 
+    let trip: CourierTripDetails | null = null;
+    if (dto.courierDetails) {
+      try {
+        trip = parseCourierTripDetails(dto.courierDetails);
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : 'Invalid courier details',
+        );
+      }
+    }
+
+    if (dto.status == null && !dto.collectPayment && trip) {
+      if (item.carrier !== 'courier') {
+        throw new BadRequestException('Courier details are only for a courier shipment');
+      }
+      if (
+        item.status !== OrderStatus.SHIPPED &&
+        item.status !== OrderStatus.DELIVERED
+      ) {
+        throw new BadRequestException('Book the courier before adding driver details');
+      }
+      await this.saveCourierTrip(item.id, trip);
+      return this.reloadItemOrder(item.orderId, user);
+    }
+
     const nextItemStatus = dto.status ?? item.status;
     if (
       nextItemStatus === OrderStatus.RETURNED ||
@@ -1791,7 +1843,7 @@ export class OrdersService {
       },
     });
     if (nextItemStatus === OrderStatus.SHIPPED && item.carrier === 'courier') {
-      await this.bookCourier(item.id);
+      await this.bookCourier(item.id, trip);
     }
 
     const items = await this.prisma.orderItem.findMany({
@@ -1817,8 +1869,12 @@ export class OrdersService {
       await this.recognizeAndTransfer(item.id);
     }
 
+    return this.reloadItemOrder(item.orderId, user);
+  }
+
+  private async reloadItemOrder(orderId: string, user: AuthUser) {
     const order = await this.prisma.order.findUniqueOrThrow({
-      where: { id: item.orderId },
+      where: { id: orderId },
       include: {
         items: {
           ...(user.role === UserRole.SUPPLIER && user.supplierId
@@ -2299,7 +2355,7 @@ export class OrdersService {
   }
 
   /** Books a courier when a courier line is marked shipped. Pickup and supplier delivery skip this. */
-  private async bookCourier(orderItemId: string) {
+  private async bookCourier(orderItemId: string, trip: CourierTripDetails | null) {
     const item = await this.prisma.orderItem.findUnique({
       where: { id: orderItemId },
       include: { order: true, courierBooking: true },
@@ -2307,6 +2363,7 @@ export class OrdersService {
     if (!item || item.carrier !== 'courier') return;
 
     if (item.courierBooking) {
+      if (trip) await this.saveCourierTrip(item.id, trip);
       if (item.trackingCode !== item.courierBooking.reference) {
         await this.prisma.orderItem.update({
           where: { id: item.id },
@@ -2325,12 +2382,37 @@ export class OrdersService {
         status: 'booked',
         dropoffCity: item.order.city,
         dropoffAddress: item.order.addressLine,
+        ...this.tripColumns(trip),
       },
     });
     await this.prisma.orderItem.update({
       where: { id: item.id },
       data: { trackingCode: reference },
     });
+  }
+
+  private async saveCourierTrip(orderItemId: string, trip: CourierTripDetails) {
+    const booking = await this.prisma.courierBooking.findUnique({
+      where: { orderItemId },
+    });
+    if (!booking) {
+      throw new BadRequestException('Book the courier before adding driver details');
+    }
+    await this.prisma.courierBooking.update({
+      where: { orderItemId },
+      data: this.tripColumns(trip),
+    });
+  }
+
+  private tripColumns(trip: CourierTripDetails | null) {
+    if (!trip) return {};
+    return {
+      driverName: trip.driverName,
+      driverPhone: trip.driverPhone,
+      plateNumber: trip.plateNumber,
+      fee: trip.fee == null ? null : new Prisma.Decimal(trip.fee.toFixed(2)),
+      trackingUrl: trip.trackingUrl,
+    };
   }
 
   private toResponse(
@@ -2371,6 +2453,11 @@ export class OrdersService {
           reference: string;
           status: string;
           courierName: string;
+          driverName?: string | null;
+          driverPhone?: string | null;
+          plateNumber?: string | null;
+          fee?: Prisma.Decimal | number | null;
+          trackingUrl?: string | null;
         } | null;
         replacesOrderItemId?: string | null;
         replacesOrderItem?: {
@@ -2461,6 +2548,14 @@ export class OrdersService {
               reference: item.courierBooking.reference,
               status: item.courierBooking.status,
               courierName: item.courierBooking.courierName,
+              driverName: item.courierBooking.driverName ?? null,
+              driverPhone: item.courierBooking.driverPhone ?? null,
+              plateNumber: item.courierBooking.plateNumber ?? null,
+              fee:
+                item.courierBooking.fee == null
+                  ? null
+                  : Number(item.courierBooking.fee),
+              trackingUrl: item.courierBooking.trackingUrl ?? null,
             }
           : null,
         replacesOrderItemId: item.replacesOrderItemId ?? null,

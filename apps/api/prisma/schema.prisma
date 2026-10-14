@@ -445,6 +445,12 @@ model CourierBooking {
   status         String    @default("booked")
   dropoffCity    String?
   dropoffAddress String?
+  driverName     String?
+  driverPhone    String?
+  plateNumber    String?
+  /// Courier fee shown to the customer. It does not change the order total.
+  fee            Decimal?  @db.Decimal(12, 2)
+  trackingUrl    String?
   bookedAt       DateTime  @default(now())
 
   @@index([status])

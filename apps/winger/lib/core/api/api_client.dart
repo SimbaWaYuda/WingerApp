@@ -24,8 +24,9 @@ class ApiClient {
 
   Future<bool> healthCheck() async {
     try {
-      final response =
-          await http.get(_uri('/health')).timeout(const Duration(seconds: 2));
+      final response = await http
+          .get(_uri('/health'))
+          .timeout(const Duration(seconds: 2));
       final ok = response.statusCode == 200;
       session.setApiOnline(ok);
       return ok;
@@ -58,7 +59,8 @@ class ApiClient {
             },
             if (businessName != null && businessName.isNotEmpty)
               'businessName': businessName,
-            if (preferredSupplierSlug != null && preferredSupplierSlug.isNotEmpty)
+            if (preferredSupplierSlug != null &&
+                preferredSupplierSlug.isNotEmpty)
               'preferredSupplierSlug': preferredSupplierSlug,
           }),
         )
@@ -67,7 +69,8 @@ class ApiClient {
     if (response.statusCode != 200 && response.statusCode != 201) {
       final body = _tryJson(response.body);
       throw Exception(
-        body?['message']?.toString() ?? 'Signup failed (${response.statusCode})',
+        body?['message']?.toString() ??
+            'Signup failed (${response.statusCode})',
       );
     }
 
@@ -108,7 +111,9 @@ class ApiClient {
 
     if (response.statusCode != 200 && response.statusCode != 201) {
       final body = _tryJson(response.body);
-      throw Exception(body?['message']?.toString() ?? 'Login failed (${response.statusCode})');
+      throw Exception(
+        body?['message']?.toString() ?? 'Login failed (${response.statusCode})',
+      );
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -176,8 +181,8 @@ class ApiClient {
           .timeout(const Duration(seconds: 5));
       if (configResponse.statusCode != 200) return;
       final config = jsonDecode(configResponse.body) as Map<String, dynamic>;
-      final settlement =
-          (config['settlementCurrency'] as String? ?? 'USD').toUpperCase();
+      final settlement = (config['settlementCurrency'] as String? ?? 'USD')
+          .toUpperCase();
       final displayOptions =
           (config['supportedDisplayCurrencies'] as List<dynamic>? ?? const [])
               .map((e) => e.toString().toUpperCase())
@@ -187,8 +192,9 @@ class ApiClient {
               .map((e) => e.toString().toUpperCase())
               .toList();
       final mode = config['stripeCheckoutMode'] as String? ?? 'demo';
-      session.stripeCheckoutMode =
-          mode == 'test' || mode == 'live' ? mode : 'demo';
+      session.stripeCheckoutMode = mode == 'test' || mode == 'live'
+          ? mode
+          : 'demo';
       final publishable = config['stripePublishableKey'] as String?;
       session.stripePublishableKey =
           publishable != null && publishable.isNotEmpty ? publishable : null;
@@ -206,12 +212,13 @@ class ApiClient {
         );
         return;
       }
-      final quoteResponse = await http.get(
-        _uri('/fx/quote').replace(queryParameters: {
-          'from': settlement,
-          'to': display,
-        }),
-      ).timeout(const Duration(seconds: 5));
+      final quoteResponse = await http
+          .get(
+            _uri(
+              '/fx/quote',
+            ).replace(queryParameters: {'from': settlement, 'to': display}),
+          )
+          .timeout(const Duration(seconds: 5));
       if (quoteResponse.statusCode != 200) {
         final body = _tryJson(quoteResponse.body);
         session.applyCurrencyQuote(
@@ -362,14 +369,17 @@ class ApiClient {
     }
     session.setApiOnline(true);
     final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((raw) {
-      final row = raw as Map<String, dynamic>;
-      return CatalogSupplier(
-        id: row['id'] as String? ?? '',
-        name: row['name'] as String? ?? 'Supplier',
-        productCount: row['productCount'] as int? ?? 0,
-      );
-    }).where((s) => s.id.isNotEmpty).toList();
+    return data
+        .map((raw) {
+          final row = raw as Map<String, dynamic>;
+          return CatalogSupplier(
+            id: row['id'] as String? ?? '',
+            name: row['name'] as String? ?? 'Supplier',
+            productCount: row['productCount'] as int? ?? 0,
+          );
+        })
+        .where((s) => s.id.isNotEmpty)
+        .toList();
   }
 
   Future<List<CatalogCategory>> fetchColors() async {
@@ -461,7 +471,8 @@ class ApiClient {
       if (minRating != null) 'minRating': minRating.toString(),
       if (inStock) 'inStock': 'true',
       if (maxMiles != null && maxMiles > 0) 'maxMiles': maxMiles.toString(),
-      if (originCity != null && originCity.trim().isNotEmpty) 'originCity': originCity.trim(),
+      if (originCity != null && originCity.trim().isNotEmpty)
+        'originCity': originCity.trim(),
     };
     final response = await http
         .get(
@@ -525,10 +536,7 @@ class ApiClient {
             'city': city ?? session.city,
             'items': [
               for (final item in items)
-                {
-                  'productId': item.product.id,
-                  'quantity': item.quantity,
-                },
+                {'productId': item.product.id, 'quantity': item.quantity},
             ],
           }),
         )
@@ -545,18 +553,19 @@ class ApiClient {
     final lines = (map['lines'] as List<dynamic>? ?? const [])
         .cast<Map<String, dynamic>>()
         .map((row) {
-      final productJson = row['product'] as Map<String, dynamic>?;
-      return CartValidationLine(
-        productId: row['productId'] as String,
-        available: row['available'] as bool? ?? false,
-        reason: row['reason'] as String?,
-        requestedQty: row['requestedQty'] as int? ?? 0,
-        availableQty: row['availableQty'] as int? ?? 0,
-        unitPrice: (row['unitPrice'] as num?)?.toDouble() ?? 0,
-        lineTotal: (row['lineTotal'] as num?)?.toDouble() ?? 0,
-        product: productJson == null ? null : _productFromJson(productJson),
-      );
-    }).toList();
+          final productJson = row['product'] as Map<String, dynamic>?;
+          return CartValidationLine(
+            productId: row['productId'] as String,
+            available: row['available'] as bool? ?? false,
+            reason: row['reason'] as String?,
+            requestedQty: row['requestedQty'] as int? ?? 0,
+            availableQty: row['availableQty'] as int? ?? 0,
+            unitPrice: (row['unitPrice'] as num?)?.toDouble() ?? 0,
+            lineTotal: (row['lineTotal'] as num?)?.toDouble() ?? 0,
+            product: productJson == null ? null : _productFromJson(productJson),
+          );
+        })
+        .toList();
     final shipments = (map['shipments'] as List<dynamic>? ?? const [])
         .cast<Map<String, dynamic>>()
         .map(
@@ -600,16 +609,15 @@ class ApiClient {
             'addressLine': addressLine,
             'city': city,
             'deliveryMethod': deliveryMethod ?? session.deliveryMethod,
-            if (stripePaymentMethodId != null && stripePaymentMethodId.isNotEmpty)
+            if (stripePaymentMethodId != null &&
+                stripePaymentMethodId.isNotEmpty)
               'stripePaymentMethodId': stripePaymentMethodId,
-            if (checkoutIdempotencyKey != null && checkoutIdempotencyKey.isNotEmpty)
+            if (checkoutIdempotencyKey != null &&
+                checkoutIdempotencyKey.isNotEmpty)
               'checkoutIdempotencyKey': checkoutIdempotencyKey,
             'items': [
               for (final item in items)
-                {
-                  'productId': item.product.id,
-                  'quantity': item.quantity,
-                },
+                {'productId': item.product.id, 'quantity': item.quantity},
             ],
           }),
         )
@@ -623,7 +631,9 @@ class ApiClient {
     }
 
     session.setApiOnline(true);
-    return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
+    return customerOrderFromApi(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<List<CustomerOrder>> fetchOrders() async {
@@ -648,7 +658,9 @@ class ApiClient {
       throw Exception('Order HTTP ${response.statusCode}');
     }
     session.setApiOnline(true);
-    return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
+    return customerOrderFromApi(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<CustomerOrder> cancelOrder(String orderId) async {
@@ -667,7 +679,9 @@ class ApiClient {
       );
     }
     session.setApiOnline(true);
-    return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
+    return customerOrderFromApi(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<void> createReturnRequest({
@@ -717,7 +731,9 @@ class ApiClient {
 
   Future<List<OrderReturnRequest>> fetchReturnsInbox({String? status}) async {
     final uri = status != null && status.trim().isNotEmpty
-        ? _uri('/orders/returns').replace(queryParameters: {'status': status.trim()})
+        ? _uri(
+            '/orders/returns',
+          ).replace(queryParameters: {'status': status.trim()})
         : _uri('/orders/returns');
     final response = await http
         .get(uri, headers: session.authHeaders)
@@ -725,8 +741,7 @@ class ApiClient {
     if (response.statusCode != 200) {
       final body = _tryJson(response.body);
       throw Exception(
-        body?['message']?.toString() ??
-            'Returns HTTP ${response.statusCode}',
+        body?['message']?.toString() ?? 'Returns HTTP ${response.statusCode}',
       );
     }
     session.setApiOnline(true);
@@ -771,13 +786,11 @@ class ApiClient {
   }
 
   Future<({int unreadCount, List<CustomerNotification> items})>
-      fetchNotifications({int take = 50}) async {
+  fetchNotifications({int take = 50}) async {
     _requireAccessToken();
     final response = await http
         .get(
-          _uri('/notifications').replace(
-            queryParameters: {'take': '$take'},
-          ),
+          _uri('/notifications').replace(queryParameters: {'take': '$take'}),
           headers: session.authHeaders,
         )
         .timeout(const Duration(seconds: 8));
@@ -793,9 +806,7 @@ class ApiClient {
     final items = (data['items'] as List<dynamic>? ?? const [])
         .whereType<Map>()
         .map(
-          (raw) => customerNotificationFromApi(
-            Map<String, dynamic>.from(raw),
-          ),
+          (raw) => customerNotificationFromApi(Map<String, dynamic>.from(raw)),
         )
         .where((n) => n.id.isNotEmpty)
         .toList();
@@ -864,9 +875,7 @@ class ApiClient {
         .post(
           _uri('/orders/$orderId/items/$itemId/replacement'),
           headers: session.authHeaders,
-          body: jsonEncode({
-            if (quantity != null) 'quantity': quantity,
-          }),
+          body: jsonEncode({if (quantity != null) 'quantity': quantity}),
         )
         .timeout(const Duration(seconds: 12));
     if (response.statusCode != 200 && response.statusCode != 201) {
@@ -889,8 +898,9 @@ class ApiClient {
     String? trackingCode,
     String? pickupCode,
     bool collectPayment = false,
+    Map<String, String?>? courierDetails,
   }) async {
-    if (status == null && !collectPayment) {
+    if (status == null && !collectPayment && courierDetails == null) {
       throw Exception('status or collectPayment is required');
     }
     final response = await http
@@ -902,6 +912,14 @@ class ApiClient {
             if (trackingCode != null) 'trackingCode': trackingCode,
             if (pickupCode != null) 'pickupCode': pickupCode,
             if (collectPayment) 'collectPayment': true,
+            if (courierDetails != null)
+              'courierDetails': {
+                'driverName': courierDetails['driverName'],
+                'driverPhone': courierDetails['driverPhone'],
+                'plateNumber': courierDetails['plateNumber'],
+                'courierFee': courierDetails['courierFee'],
+                'trackingUrl': courierDetails['trackingUrl'],
+              },
           }),
         )
         .timeout(const Duration(seconds: 5));
@@ -913,7 +931,9 @@ class ApiClient {
       );
     }
     session.setApiOnline(true);
-    return customerOrderFromApi(jsonDecode(response.body) as Map<String, dynamic>);
+    return customerOrderFromApi(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<List<Map<String, dynamic>>> fetchAdminSuppliers() async {
@@ -992,7 +1012,10 @@ class ApiClient {
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
       final body = _tryJson(response.body);
-      throw Exception(body?['message']?.toString() ?? 'Delivery fees HTTP ${response.statusCode}');
+      throw Exception(
+        body?['message']?.toString() ??
+            'Delivery fees HTTP ${response.statusCode}',
+      );
     }
     session.setApiOnline(true);
     return jsonDecode(response.body) as Map<String, dynamic>;
@@ -1029,7 +1052,10 @@ class ApiClient {
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
       final body = _tryJson(response.body);
-      throw Exception(body?['message']?.toString() ?? 'Save delivery fees HTTP ${response.statusCode}');
+      throw Exception(
+        body?['message']?.toString() ??
+            'Save delivery fees HTTP ${response.statusCode}',
+      );
     }
     session.setApiOnline(true);
     return jsonDecode(response.body) as Map<String, dynamic>;
@@ -1119,7 +1145,10 @@ class ApiClient {
     return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<Product> uploadProductImages(String productId, List<String> paths) async {
+  Future<Product> uploadProductImages(
+    String productId,
+    List<String> paths,
+  ) async {
     _requireAccessToken();
     if (paths.isEmpty) {
       throw Exception('Select at least one image to upload');
@@ -1190,7 +1219,9 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> updateDefaultCommissionRate(double percent) async {
+  Future<Map<String, dynamic>> updateDefaultCommissionRate(
+    double percent,
+  ) async {
     final response = await http
         .patch(
           _uri('/commissions/settings/default-rate'),
@@ -1226,7 +1257,8 @@ class ApiClient {
     if (response.statusCode != 200) {
       final body = _tryJson(response.body);
       throw Exception(
-        body?['message']?.toString() ?? 'Exchange rates HTTP ${response.statusCode}',
+        body?['message']?.toString() ??
+            'Exchange rates HTTP ${response.statusCode}',
       );
     }
     final data = jsonDecode(response.body) as List<dynamic>;
@@ -1283,7 +1315,8 @@ class ApiClient {
     if (response.statusCode != 201 && response.statusCode != 200) {
       final body = _tryJson(response.body);
       throw Exception(
-        body?['message']?.toString() ?? 'Save rate failed (${response.statusCode})',
+        body?['message']?.toString() ??
+            'Save rate failed (${response.statusCode})',
       );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
@@ -1297,7 +1330,10 @@ class ApiClient {
         ? '?supplierId=${Uri.encodeComponent(supplierId)}'
         : '';
     final response = await http
-        .get(_uri('/commissions/agreements$query'), headers: session.authHeaders)
+        .get(
+          _uri('/commissions/agreements$query'),
+          headers: session.authHeaders,
+        )
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
       throw Exception('Agreements HTTP ${response.statusCode}');
@@ -1362,7 +1398,10 @@ class ApiClient {
   Future<Map<String, dynamic>> fetchSupplierCommissionSummary() async {
     _requireAccessToken();
     final response = await http
-        .get(_uri('/commissions/supplier/summary'), headers: session.authHeaders)
+        .get(
+          _uri('/commissions/supplier/summary'),
+          headers: session.authHeaders,
+        )
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
       final body = _tryJson(response.body);
@@ -1381,7 +1420,10 @@ class ApiClient {
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       final body = _tryJson(response.body);
-      throw Exception(body?['message']?.toString() ?? 'Payout status HTTP ${response.statusCode}');
+      throw Exception(
+        body?['message']?.toString() ??
+            'Payout status HTTP ${response.statusCode}',
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
@@ -1389,26 +1431,40 @@ class ApiClient {
   Future<String> startConnectOnboarding() async {
     _requireAccessToken();
     final response = await http
-        .post(_uri('/suppliers/me/connect'), headers: session.authHeaders, body: '{}')
+        .post(
+          _uri('/suppliers/me/connect'),
+          headers: session.authHeaders,
+          body: '{}',
+        )
         .timeout(const Duration(seconds: 20));
     if (response.statusCode != 200 && response.statusCode != 201) {
       final body = _tryJson(response.body);
-      throw Exception(body?['message']?.toString() ?? 'Payout setup HTTP ${response.statusCode}');
+      throw Exception(
+        body?['message']?.toString() ??
+            'Payout setup HTTP ${response.statusCode}',
+      );
     }
     final map = jsonDecode(response.body) as Map<String, dynamic>;
     final url = map['url'] as String?;
-    if (url == null || url.isEmpty) throw Exception('Payout setup did not return a link');
+    if (url == null || url.isEmpty)
+      throw Exception('Payout setup did not return a link');
     return url;
   }
 
   Future<Map<String, dynamic>> sendSettleablePayouts() async {
     _requireAccessToken();
     final response = await http
-        .post(_uri('/suppliers/me/connect/transfers'), headers: session.authHeaders, body: '{}')
+        .post(
+          _uri('/suppliers/me/connect/transfers'),
+          headers: session.authHeaders,
+          body: '{}',
+        )
         .timeout(const Duration(seconds: 20));
     if (response.statusCode != 200 && response.statusCode != 201) {
       final body = _tryJson(response.body);
-      throw Exception(body?['message']?.toString() ?? 'Payout HTTP ${response.statusCode}');
+      throw Exception(
+        body?['message']?.toString() ?? 'Payout HTTP ${response.statusCode}',
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
@@ -1483,7 +1539,9 @@ class ApiClient {
         .timeout(const Duration(seconds: 5));
     if (response.statusCode != 200 && response.statusCode != 201) {
       final body = _tryJson(response.body);
-      throw Exception(body?['message']?.toString() ?? 'Could not complete task');
+      throw Exception(
+        body?['message']?.toString() ?? 'Could not complete task',
+      );
     }
     return OnboardingProgress.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
@@ -1572,7 +1630,10 @@ class ApiClient {
     );
   }
 
-  Future<OnboardingProgress> postOnboarding(String path, [Map<String, dynamic>? body]) async {
+  Future<OnboardingProgress> postOnboarding(
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
     final response = await http
         .post(
           _uri('/onboarding$path'),
@@ -1582,7 +1643,9 @@ class ApiClient {
         .timeout(const Duration(seconds: 5));
     if (response.statusCode != 200 && response.statusCode != 201) {
       final parsed = _tryJson(response.body);
-      throw Exception(parsed?['message']?.toString() ?? 'Onboarding action failed');
+      throw Exception(
+        parsed?['message']?.toString() ?? 'Onboarding action failed',
+      );
     }
     return OnboardingProgress.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
@@ -1629,7 +1692,8 @@ class ApiClient {
             'orderId': orderId,
             'supplierId': supplierId,
             'rating': rating,
-            if (comment != null && comment.trim().isNotEmpty) 'comment': comment.trim(),
+            if (comment != null && comment.trim().isNotEmpty)
+              'comment': comment.trim(),
           }),
         )
         .timeout(const Duration(seconds: 8));
@@ -1646,18 +1710,19 @@ class ApiClient {
   Product _productFromJson(Map<String, dynamic> json) {
     final stockStatusRaw = json['stockStatus'] as String? ?? 'inStock';
     final rawImages = json['images'] as List<dynamic>? ?? const [];
-    final images = rawImages
-        .whereType<Map>()
-        .map(
-          (raw) => ProductImageRef(
-            id: raw['id']?.toString() ?? '',
-            url: resolveMediaUrl(raw['url']?.toString() ?? ''),
-            sortOrder: (raw['sortOrder'] as num?)?.toInt() ?? 0,
-          ),
-        )
-        .where((image) => image.id.isNotEmpty && image.url.isNotEmpty)
-        .toList()
-      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    final images =
+        rawImages
+            .whereType<Map>()
+            .map(
+              (raw) => ProductImageRef(
+                id: raw['id']?.toString() ?? '',
+                url: resolveMediaUrl(raw['url']?.toString() ?? ''),
+                sortOrder: (raw['sortOrder'] as num?)?.toInt() ?? 0,
+              ),
+            )
+            .where((image) => image.id.isNotEmpty && image.url.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     final rawCover = (json['imageUrl'] as String?)?.trim() ?? '';
     final cover = rawCover.isNotEmpty
         ? resolveMediaUrl(rawCover)
@@ -1678,8 +1743,8 @@ class ApiClient {
       images: images.isNotEmpty
           ? images
           : (cover.isNotEmpty
-              ? [ProductImageRef(id: 'cover-${json['id']}', url: cover)]
-              : const []),
+                ? [ProductImageRef(id: 'cover-${json['id']}', url: cover)]
+                : const []),
       category: json['category'] as String? ?? 'General',
       model: json['model'] as String? ?? 'Standard',
       color: json['color'] as String? ?? 'Default',

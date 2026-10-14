@@ -207,6 +207,8 @@ class WingerStrings {
       'refreshPayouts': 'Refresh payout status',
       'sendPayouts': 'Send settleable payouts',
       'payoutSent': 'Payout sent',
+      'payoutNone':
+          'No payout was sent. Cash orders stay in Winger.',
       'deliveryFees': 'Delivery fees',
       'deliveryFeesHint':
           'Amounts are in USD. Enter 0 to make that method free.',
@@ -237,7 +239,19 @@ class WingerStrings {
       'carrierHint':
           'Pickup does not use a carrier. Marking a courier shipment shipped books that courier and saves a tracking reference.',
       'bookCourier': 'Book courier',
+      'bookCourierConfirm':
+          'This books the courier and marks the shipment shipped. Add the driver from Courier details.',
       'courierBooked': 'Booked with {name} · {reference}',
+      'courierDetails': 'Courier details',
+      'driverName': 'Driver name',
+      'driverPhone': 'Driver phone',
+      'plateNumber': 'Plate number',
+      'courierFee': 'Courier fee',
+      'courierFeeHint':
+          'Shown on the customer\'s order. This does not change the order total.',
+      'trackingLink': 'Tracking link',
+      'openTracking': 'Track shipment',
+      'saveCourierDetails': 'Save details',
       'carrierSupplier': 'I deliver',
       'carrierCourier': 'A courier delivers',
       'courierName': 'Courier name',
@@ -431,7 +445,11 @@ class WingerStrings {
       'totalCommission': 'Total commission',
       'demoCommission': 'Demo commission',
       'demoCommissionNote':
-          'Card checkout is running in demo mode (no Stripe key), so these commissions are tracked but not treated as real money. Place a COD order to see real totals, or configure Stripe.',
+          'Card checkout is a demo charge because no Stripe key is set. These commissions are tracked and are not real money.',
+      'demoCommissionNoteTest':
+          'Demo commission is from demo checkouts and is not real money. Test card charges are Stripe test payments. Their commission is in pending, recognized, and settleable.',
+      'demoCommissionNoteLive':
+          'Demo commission is from demo checkouts and is not real money. Live card charges are in pending, recognized, and settleable.',
       'recognized': 'Recognized',
       'lines': 'Lines',
       'commissionSupplierHint':
@@ -759,6 +777,8 @@ class WingerStrings {
       'refreshPayouts': 'Actualizar estado de pagos',
       'sendPayouts': 'Enviar pagos listos',
       'payoutSent': 'Pago enviado',
+      'payoutNone':
+          'No se envió ningún pago. Los pedidos en efectivo se quedan en Winger.',
       'deliveryFees': 'Tarifas de entrega',
       'deliveryFeesHint':
           'Los importes están en USD. Escribe 0 para dejar ese método gratis.',
@@ -790,7 +810,19 @@ class WingerStrings {
       'carrierHint':
           'La recogida no usa transportista. Al marcar un envío de mensajero como enviado se reserva ese mensajero y se guarda una referencia.',
       'bookCourier': 'Reservar mensajero',
+      'bookCourierConfirm':
+          'Esto reserva el mensajero y marca el envío como enviado. Agrega el conductor en Datos del mensajero.',
       'courierBooked': 'Reservado con {name} · {reference}',
+      'courierDetails': 'Datos del mensajero',
+      'driverName': 'Nombre del conductor',
+      'driverPhone': 'Teléfono del conductor',
+      'plateNumber': 'Placa',
+      'courierFee': 'Tarifa del mensajero',
+      'courierFeeHint':
+          'Se muestra en el pedido del cliente. No cambia el total del pedido.',
+      'trackingLink': 'Enlace de seguimiento',
+      'openTracking': 'Seguir envío',
+      'saveCourierDetails': 'Guardar datos',
       'carrierSupplier': 'Yo entrego',
       'carrierCourier': 'Un mensajero entrega',
       'courierName': 'Nombre del mensajero',
@@ -984,7 +1016,11 @@ class WingerStrings {
       'totalCommission': 'Comisión total',
       'demoCommission': 'Comisión demo',
       'demoCommissionNote':
-          'El pago con tarjeta está en modo demo (sin clave Stripe). Esas comisiones se rastrean pero no son dinero real. Usa COD para totales reales, o configura Stripe.',
+          'El pago con tarjeta es un cobro demo porque no hay clave de Stripe. Esas comisiones se rastrean y no son dinero real.',
+      'demoCommissionNoteTest':
+          'La comisión demo es de cobros demo y no es dinero real. Los cobros de prueba con tarjeta son pagos de prueba de Stripe. Su comisión está en pendiente, reconocida y liquidable.',
+      'demoCommissionNoteLive':
+          'La comisión demo es de cobros demo y no es dinero real. Los cobros reales con tarjeta están en pendiente, reconocida y liquidable.',
       'recognized': 'Reconocida',
       'lines': 'Líneas',
       'commissionSupplierHint':
@@ -1313,6 +1349,8 @@ class WingerStrings {
       'refreshPayouts': 'Onyesha upya hali ya malipo',
       'sendPayouts': 'Tuma malipo yaliyo tayari',
       'payoutSent': 'Malipo yametumwa',
+      'payoutNone':
+          'Hakuna malipo yaliyotumwa. Oda za pesa taslimu hubaki kwenye Winger.',
       'deliveryFees': 'Ada za usafirishaji',
       'deliveryFeesHint': 'Kiasi ni kwa USD. Weka 0 ili njia hiyo iwe bure.',
       'standardDelivery': 'Usafirishaji wa kawaida',
@@ -1342,7 +1380,19 @@ class WingerStrings {
       'carrierHint':
           'Kuchukua mwenyewe hakutumii msafirishaji. Kuweka oda ya msafirishaji kuwa imesafirishwa huhifadhi msafirishaji huyo na nambari ya ufuatiliaji.',
       'bookCourier': 'Hifadhi msafirishaji',
+      'bookCourierConfirm':
+          'Hii inahifadhi msafirishaji na kuweka oda kuwa imesafirishwa. Ongeza dereva kwenye Maelezo ya msafirishaji.',
       'courierBooked': 'Imehifadhiwa na {name} · {reference}',
+      'courierDetails': 'Maelezo ya msafirishaji',
+      'driverName': 'Jina la dereva',
+      'driverPhone': 'Simu ya dereva',
+      'plateNumber': 'Nambari ya gari',
+      'courierFee': 'Ada ya msafirishaji',
+      'courierFeeHint':
+          'Inaonekana kwenye oda ya mteja. Haibadilishi jumla ya oda.',
+      'trackingLink': 'Kiungo cha ufuatiliaji',
+      'openTracking': 'Fuatilia oda',
+      'saveCourierDetails': 'Hifadhi maelezo',
       'carrierSupplier': 'Mimi nasafirisha',
       'carrierCourier': 'Msafirishaji anasafirisha',
       'courierName': 'Jina la msafirishaji',
@@ -1536,7 +1586,11 @@ class WingerStrings {
       'totalCommission': 'Jumla ya kamisheni',
       'demoCommission': 'Kamisheni ya demo',
       'demoCommissionNote':
-          'Malipo ya kadi yapo katika hali ya demo (hakuna funguo ya Stripe). Kamisheni hizi zinafuatiliwa lakini si pesa halisi. Tumia COD au weka Stripe.',
+          'Malipo ya kadi ni ya demo kwa sababu hakuna funguo ya Stripe. Kamisheni hizi zinafuatiliwa na si pesa halisi.',
+      'demoCommissionNoteTest':
+          'Kamisheni ya demo inatoka kwenye malipo ya demo na si pesa halisi. Malipo ya kadi ya majaribio ni malipo ya majaribio ya Stripe. Kamisheni yake iko katika inayosubiri, iliyotambuliwa, na inayolipwa.',
+      'demoCommissionNoteLive':
+          'Kamisheni ya demo inatoka kwenye malipo ya demo na si pesa halisi. Malipo halisi ya kadi yako katika inayosubiri, iliyotambuliwa, na inayolipwa.',
       'recognized': 'Imetambuliwa',
       'lines': 'Mistari',
       'commissionSupplierHint':

@@ -13,6 +13,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
+import { cardCheckoutMode } from '../orders/checkout-mode';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from './audit.service';
 import {
@@ -706,6 +707,7 @@ export class CommissionsService {
     return {
       defaultCommissionPercent: defaultRate,
       excludesDemo: true,
+      cardCheckout: cardCheckoutMode(process.env.STRIPE_SECRET_KEY),
       totals: {
         pendingCommission: platformPending,
         recognizedCommission: platformRecognized,

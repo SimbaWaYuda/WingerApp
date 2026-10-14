@@ -19,6 +19,7 @@ import '../../core/util/product_csv.dart';
 import '../../core/widgets/chip_scroll_row.dart';
 import '../../core/widgets/kpi_card.dart';
 import '../../core/widgets/product_photo.dart';
+import '../../core/widgets/courier_trip.dart';
 import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
@@ -515,6 +516,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
     String? trackingCode,
     String? pickupCode,
     bool collectPayment = false,
+    Map<String, String?>? courierDetails,
   }) async {
     final s = WingerStrings.of(context);
     final api = context.read<ApiClient>();
@@ -555,6 +557,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
         trackingCode: trackingCode,
         pickupCode: pickupCode,
         collectPayment: collectPayment,
+        courierDetails: courierDetails,
       );
       if (!mounted) return;
       _reload();
@@ -645,6 +648,130 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
           ? _defaultPickupCode(order, item)
           : pickupCode,
     );
+  }
+
+  Future<void> _bookCourier(CustomerOrder order, OrderItemRow item) async {
+    final s = WingerStrings.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.t('bookCourier')),
+        content: Text(
+          '${order.id} · ${item.productName}\n\n${s.t('bookCourierConfirm')}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.t('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.t('bookCourier')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _updateItem(order: order, item: item, status: OrderStatus.shipped);
+  }
+
+  Future<void> _openCourierDetails(
+    CustomerOrder order,
+    OrderItemRow item,
+  ) async {
+    final s = WingerStrings.of(context);
+    final driverCtrl = TextEditingController(text: item.driverName ?? '');
+    final phoneCtrl = TextEditingController(text: item.driverPhone ?? '');
+    final plateCtrl = TextEditingController(text: item.plateNumber ?? '');
+    final feeCtrl = TextEditingController(
+      text: item.courierFee == null ? '' : item.courierFee!.toStringAsFixed(2),
+    );
+    final linkCtrl = TextEditingController(text: item.trackingUrl ?? '');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(s.t('courierDetails')),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${order.id} · ${item.productName}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: driverCtrl,
+                    decoration: InputDecoration(labelText: s.t('driverName')),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: phoneCtrl,
+                    decoration: InputDecoration(labelText: s.t('driverPhone')),
+                    keyboardType: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: plateCtrl,
+                    decoration: InputDecoration(labelText: s.t('plateNumber')),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: feeCtrl,
+                    decoration: InputDecoration(
+                      labelText: s.t('courierFee'),
+                      helperText: s.t('courierFeeHint'),
+                      helperMaxLines: 2,
+                      prefixText: 'USD ',
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: linkCtrl,
+                    decoration: InputDecoration(labelText: s.t('trackingLink')),
+                    keyboardType: TextInputType.url,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(s.t('cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(s.t('saveCourierDetails')),
+            ),
+          ],
+        );
+      },
+    );
+
+    final details = {
+      'driverName': driverCtrl.text.trim(),
+      'driverPhone': phoneCtrl.text.trim(),
+      'plateNumber': plateCtrl.text.trim(),
+      'courierFee': feeCtrl.text.trim(),
+      'trackingUrl': linkCtrl.text.trim(),
+    };
+    driverCtrl.dispose();
+    phoneCtrl.dispose();
+    plateCtrl.dispose();
+    feeCtrl.dispose();
+    linkCtrl.dispose();
+    if (confirmed != true || !mounted) return;
+
+    await _updateItem(order: order, item: item, courierDetails: details);
   }
 
   @override
@@ -797,6 +924,13 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                 style: TextStyle(color: WingerColors.muted),
                               ),
                             ],
+                            CourierTripLines(
+                              driverName: item.driverName,
+                              driverPhone: item.driverPhone,
+                              plateNumber: item.plateNumber,
+                              fee: item.courierFee,
+                              trackingUrl: item.trackingUrl,
+                            ),
                             if (item.pickupCode != null) ...[
                               const SizedBox(height: 4),
                               Text(
@@ -853,6 +987,8 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                         item.status == OrderStatus.shipped ||
                                             item.status == OrderStatus.delivered
                                         ? null
+                                        : item.carrier == 'courier'
+                                        ? () => _bookCourier(order, item)
                                         : () => _updateItem(
                                             order: order,
                                             item: item,
@@ -877,6 +1013,14 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                           : s.t('markShipped'),
                                     ),
                                   ),
+                                  if (item.carrier == 'courier' &&
+                                      (item.status == OrderStatus.shipped ||
+                                          item.status == OrderStatus.delivered))
+                                    OutlinedButton(
+                                      onPressed: () =>
+                                          _openCourierDetails(order, item),
+                                      child: Text(s.t('courierDetails')),
+                                    ),
                                   FilledButton.tonal(
                                     onPressed:
                                         item.status == OrderStatus.delivered
@@ -1900,10 +2044,13 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
     try {
       final result = await context.read<ApiClient>().sendSettleablePayouts();
       if (!mounted) return;
-      final sent = result['transferred'] ?? 0;
+      final sent = (result['transferred'] as num?)?.toInt() ?? 0;
+      final s = WingerStrings.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${WingerStrings.of(context).t('payoutSent')} ($sent)'),
+          content: Text(
+            sent > 0 ? '${s.t('payoutSent')} ($sent)' : s.t('payoutNone'),
+          ),
         ),
       );
       setState(() {

@@ -15,6 +15,7 @@ import '../../core/repositories/catalog_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
 import '../../core/widgets/chip_scroll_row.dart';
+import '../../core/widgets/courier_trip.dart';
 import '../../core/widgets/product_card.dart';
 import '../../core/widgets/product_photo.dart';
 import '../../core/widgets/role_shell.dart';
@@ -4462,6 +4463,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                           ),
                         if (leg.pickupCode != null)
                           Text('${s.t('pickupCode')}: ${leg.pickupCode}'),
+                        CourierTripLines(
+                          driverName: leg.driverName,
+                          driverPhone: leg.driverPhone,
+                          plateNumber: leg.plateNumber,
+                          fee: leg.courierFee,
+                          trackingUrl: leg.trackingUrl,
+                        ),
                         if (leg.trackingCode == null && leg.pickupCode == null)
                           Text(
                             s.t('fulfillment'),

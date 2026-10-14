@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
+import { cardCheckoutMode } from './checkout-mode';
 
 export type ChargeResult = {
   mode: 'demo' | 'test' | 'live';
@@ -51,11 +52,11 @@ export class StripeService {
 
   constructor() {
     const key = process.env.STRIPE_SECRET_KEY?.trim() ?? '';
-    if (key.startsWith('sk_test_') || key.startsWith('sk_live_')) {
+    this.checkoutMode = cardCheckoutMode(key);
+    if (this.checkoutMode !== 'demo') {
       this.stripe = new Stripe(key, {
         apiVersion: '2025-02-24.acacia',
       });
-      this.checkoutMode = key.startsWith('sk_live_') ? 'live' : 'test';
     } else {
       this.stripe = null;
       this.checkoutMode = 'demo';
@@ -285,6 +286,27 @@ export class StripeService {
       { idempotencyKey: params.idempotencyKey },
     );
     return { id: transfer.id };
+  }
+
+  async chargeBalanceForPaymentIntent(paymentIntentId: string): Promise<{
+    chargeId: string;
+    currency: string;
+    amountMinor: number;
+  } | null> {
+    this.assertConnectTest();
+    const intent = await this.stripe!.paymentIntents.retrieve(paymentIntentId, {
+      expand: ['latest_charge.balance_transaction'],
+    });
+    const charge = intent.latest_charge;
+    if (!charge || typeof charge === 'string') return null;
+    const balance = charge.balance_transaction;
+    if (!balance || typeof balance === 'string') return null;
+    if (!balance.currency || !(balance.amount > 0)) return null;
+    return {
+      chargeId: charge.id,
+      currency: balance.currency,
+      amountMinor: balance.amount,
+    };
   }
 
   async chargeIdForPaymentIntent(paymentIntentId: string): Promise<string | null> {

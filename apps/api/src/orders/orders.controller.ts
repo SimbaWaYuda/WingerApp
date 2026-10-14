@@ -160,7 +160,7 @@ export class OrdersController {
     ) {
       throw new BadRequestException('Invalid order item status');
     }
-    if (body.status == null && !body.collectPayment) {
+    if (body.status == null && !body.collectPayment && body.courierDetails == null) {
       throw new BadRequestException('status or collectPayment is required');
     }
     return this.ordersService.updateItemStatus(orderId, itemId, body, user);
