@@ -44,16 +44,29 @@ String _customerTitle(WingerStrings s, String path) {
       path.startsWith('/customer/addresses')) {
     return s.t('account');
   }
-  if (path.startsWith('/customer/cart') || path.startsWith('/customer/checkout')) {
+  if (path.startsWith('/customer/cart') ||
+      path.startsWith('/customer/checkout')) {
     return s.t('cart');
   }
   return s.t('home');
 }
 
 List<ShellDestination> customerDestinations({int unreadNotifications = 0}) => [
-  const ShellDestination(labelKey: 'home', icon: Icons.home_outlined, path: '/customer'),
-  const ShellDestination(labelKey: 'search', icon: Icons.search, path: '/customer/search'),
-  const ShellDestination(labelKey: 'orders', icon: Icons.receipt_long_outlined, path: '/customer/orders'),
+  const ShellDestination(
+    labelKey: 'home',
+    icon: Icons.home_outlined,
+    path: '/customer',
+  ),
+  const ShellDestination(
+    labelKey: 'search',
+    icon: Icons.search,
+    path: '/customer/search',
+  ),
+  const ShellDestination(
+    labelKey: 'orders',
+    icon: Icons.receipt_long_outlined,
+    path: '/customer/orders',
+  ),
   ShellDestination(
     labelKey: 'account',
     icon: Icons.person_outline,
@@ -115,7 +128,9 @@ class _CustomerShellState extends State<CustomerShell> {
     return RoleShell(
       title: _customerTitle(s, location),
       roleLabel: 'Customer',
-      destinations: customerDestinations(unreadNotifications: _unreadNotifications),
+      destinations: customerDestinations(
+        unreadNotifications: _unreadNotifications,
+      ),
       bottomBar: showTray
           ? _CompareTray(
               count: session.compareIds.length,
@@ -128,7 +143,10 @@ class _CustomerShellState extends State<CustomerShell> {
   }
 }
 
-Future<void> _showAddedToCartChoices(BuildContext context, {String? productName}) async {
+Future<void> _showAddedToCartChoices(
+  BuildContext context, {
+  String? productName,
+}) async {
   final s = WingerStrings.of(context);
   final choice = await showDialog<String>(
     context: context,
@@ -246,7 +264,11 @@ class _CurrencyFilter extends StatelessWidget {
               } catch (error) {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+                  SnackBar(
+                    content: Text(
+                      error.toString().replaceFirst('Exception: ', ''),
+                    ),
+                  ),
                 );
               }
             },
@@ -255,7 +277,10 @@ class _CurrencyFilter extends StatelessWidget {
             Expanded(
               child: Text(
                 session.fxError!,
-                style: const TextStyle(color: WingerColors.dangerInk, fontSize: 12),
+                style: const TextStyle(
+                  color: WingerColors.dangerInk,
+                  fontSize: 12,
+                ),
               ),
             )
           else
@@ -305,7 +330,10 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
 
   List<Product> _byIds(List<Product> all, List<String> ids) {
     final map = {for (final p in all) p.id: p};
-    return [for (final id in ids) if (map[id] != null) map[id]!];
+    return [
+      for (final id in ids)
+        if (map[id] != null) map[id]!,
+    ];
   }
 
   Widget _productStrip({
@@ -340,7 +368,8 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
             padding: const EdgeInsets.all(20),
             children: [
               Text(
-                snapshot.error?.toString().replaceFirst('Exception: ', '') ?? s.t('noProducts'),
+                snapshot.error?.toString().replaceFirst('Exception: ', '') ??
+                    s.t('noProducts'),
                 style: const TextStyle(color: WingerColors.dangerInk),
               ),
             ],
@@ -348,7 +377,8 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
         }
         final products = snapshot.data![0] as List<Product>;
         final categories = snapshot.data![1] as List<CatalogCategory>;
-        final featured = [...products]..sort((a, b) => b.rating.compareTo(a.rating));
+        final featured = [...products]
+          ..sort((a, b) => b.rating.compareTo(a.rating));
         final deals = products
             .where((p) => p.previousPrice != null && p.previousPrice! > p.price)
             .toList();
@@ -364,7 +394,10 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
               padding: EdgeInsets.all(wide ? 32 : 20),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [WingerColors.brand, WingerColors.brand.withValues(alpha: 0.85)],
+                  colors: [
+                    WingerColors.brand,
+                    WingerColors.brand.withValues(alpha: 0.85),
+                  ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -376,17 +409,17 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
                   Text(
                     'Winger',
                     style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                        ),
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     s.t('heroTitle'),
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Colors.white.withValues(alpha: 0.92),
-                          fontWeight: FontWeight.w600,
-                        ),
+                      color: Colors.white.withValues(alpha: 0.92),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   FilledButton(
@@ -434,7 +467,9 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
               const SizedBox(height: 20),
               Text(
                 s.t('categories'),
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 10),
               ChipScrollRow(
@@ -442,7 +477,9 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
                 children: [
                   for (final category in categories)
                     ActionChip(
-                      label: Text('${category.name} (${category.productCount})'),
+                      label: Text(
+                        '${category.name} (${category.productCount})',
+                      ),
                       backgroundColor: WingerColors.brandMuted,
                       visualDensity: VisualDensity.compact,
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -456,81 +493,109 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
             if (products.isEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 24),
-                child: Text(s.t('noProducts'), style: TextStyle(color: WingerColors.muted)),
+                child: Text(
+                  s.t('noProducts'),
+                  style: TextStyle(color: WingerColors.muted),
+                ),
               )
             else ...[
-            if (deals.isNotEmpty) ...[
-              const SizedBox(height: 24),
-              Text(
-                s.t('currentOffers'),
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 10),
-              _productStrip(products: deals.take(8).toList(), wide: wide, session: session),
-            ],
-            const SizedBox(height: 24),
-            Row(
-              children: [
+              if (deals.isNotEmpty) ...[
+                const SizedBox(height: 24),
                 Text(
-                  s.t('featuredProducts'),
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                  s.t('currentOffers'),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                 ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () => context.go('/customer/compare'),
-                  child: Text('${s.t('compare')} (${session.compareIds.length})'),
+                const SizedBox(height: 10),
+                _productStrip(
+                  products: deals.take(8).toList(),
+                  wide: wide,
+                  session: session,
                 ),
               ],
-            ),
-            const SizedBox(height: 10),
-            _productStrip(products: featured.take(8).toList(), wide: wide, session: session),
-            const SizedBox(height: 24),
-            Text(
-              s.t('products'),
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 12),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: products.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: wide ? 4 : 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: wide ? 0.68 : 0.64,
-              ),
-              itemBuilder: (context, index) {
-                final product = products[index];
-                return ProductCard(
-                  product: product,
-                  wishlisted: session.isWishlisted(product.id),
-                  compareSelected: session.compareIds.contains(product.id),
-                  onWishlist: () => unawaited(session.toggleWishlist(product.id)),
-                  onCompare: () => session.toggleCompare(product.id),
-                  onAddToCart: () => unawaited(session.addToCart(product)),
-                  onTap: () => context.go('/customer/product/${product.id}'),
-                );
-              },
-            ),
-            if (recent.isNotEmpty) ...[
               const SizedBox(height: 24),
-              Text(
-                s.t('recentlyViewed'),
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              Row(
+                children: [
+                  Text(
+                    s.t('featuredProducts'),
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => context.go('/customer/compare'),
+                    child: Text(
+                      '${s.t('compare')} (${session.compareIds.length})',
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
-              _productStrip(products: recent, wide: wide, session: session),
-            ],
-            if (wishlisted.isNotEmpty) ...[
+              _productStrip(
+                products: featured.take(8).toList(),
+                wide: wide,
+                session: session,
+              ),
               const SizedBox(height: 24),
               Text(
-                s.t('wishlist'),
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                s.t('products'),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 10),
-              _productStrip(products: wishlisted, wide: wide, session: session),
-            ],
+              const SizedBox(height: 12),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: products.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: wide ? 4 : 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: wide ? 0.68 : 0.64,
+                ),
+                itemBuilder: (context, index) {
+                  final product = products[index];
+                  return ProductCard(
+                    product: product,
+                    wishlisted: session.isWishlisted(product.id),
+                    compareSelected: session.compareIds.contains(product.id),
+                    onWishlist: () =>
+                        unawaited(session.toggleWishlist(product.id)),
+                    onCompare: () => session.toggleCompare(product.id),
+                    onAddToCart: () => unawaited(session.addToCart(product)),
+                    onTap: () => context.go('/customer/product/${product.id}'),
+                  );
+                },
+              ),
+              if (recent.isNotEmpty) ...[
+                const SizedBox(height: 24),
+                Text(
+                  s.t('recentlyViewed'),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 10),
+                _productStrip(products: recent, wide: wide, session: session),
+              ],
+              if (wishlisted.isNotEmpty) ...[
+                const SizedBox(height: 24),
+                Text(
+                  s.t('wishlist'),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 10),
+                _productStrip(
+                  products: wishlisted,
+                  wide: wide,
+                  session: session,
+                ),
+              ],
             ],
           ],
         );
@@ -600,7 +665,10 @@ class _HomeProductCarouselState extends State<_HomeProductCarousel> {
 
   Future<void> _scrollBy(double delta) async {
     if (!_scroll.hasClients) return;
-    final target = (_scroll.offset + delta).clamp(0.0, _scroll.position.maxScrollExtent);
+    final target = (_scroll.offset + delta).clamp(
+      0.0,
+      _scroll.position.maxScrollExtent,
+    );
     await _scroll.animateTo(
       target,
       duration: const Duration(milliseconds: 280),
@@ -649,7 +717,8 @@ class _HomeProductCarouselState extends State<_HomeProductCarousel> {
                   product: product,
                   wishlisted: session.isWishlisted(product.id),
                   compareSelected: session.compareIds.contains(product.id),
-                  onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                  onWishlist: () =>
+                      unawaited(session.toggleWishlist(product.id)),
                   onCompare: () => session.toggleCompare(product.id),
                   onAddToCart: () => unawaited(session.addToCart(product)),
                   onTap: () => context.go('/customer/product/${product.id}'),
@@ -701,7 +770,9 @@ class _CustomMilesDialogState extends State<_CustomMilesDialog> {
     _ctrl = TextEditingController(
       text: initial == null
           ? ''
-          : (initial == initial.roundToDouble() ? initial.round().toString() : initial.toString()),
+          : (initial == initial.roundToDouble()
+                ? initial.round().toString()
+                : initial.toString()),
     );
   }
 
@@ -736,7 +807,10 @@ class _CustomMilesDialogState extends State<_CustomMilesDialog> {
         onSubmitted: (_) => _apply(),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('cancel'))),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(s.t('cancel')),
+        ),
         FilledButton(onPressed: _apply, child: Text(s.t('apply'))),
       ],
     );
@@ -770,10 +844,12 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   String? _color;
   String? _size;
   double? _minRating;
+
   /// null = any; otherwise [min, max] with null max meaning open-ended.
   (double?, double?)? _priceRange;
   String _sort = 'relevance';
   bool _inStockOnly = false;
+
   /// Maximum supplier distance in miles. Null means any distance.
   double? _maxMiles;
   static const _presetMiles = <double>[10, 15, 20, 25, 50];
@@ -826,10 +902,14 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
 
   String? _priceLabel(WingerStrings s) {
     if (_priceRange == null) return null;
-    if (_priceRange!.$1 == null && _priceRange!.$2 == 100) return s.t('priceUnder100');
-    if (_priceRange!.$1 == 100 && _priceRange!.$2 == 250) return s.t('price100to250');
-    if (_priceRange!.$1 == 250 && _priceRange!.$2 == 500) return s.t('price250to500');
-    if (_priceRange!.$1 == 500 && _priceRange!.$2 == null) return s.t('priceOver500');
+    if (_priceRange!.$1 == null && _priceRange!.$2 == 100)
+      return s.t('priceUnder100');
+    if (_priceRange!.$1 == 100 && _priceRange!.$2 == 250)
+      return s.t('price100to250');
+    if (_priceRange!.$1 == 250 && _priceRange!.$2 == 500)
+      return s.t('price250to500');
+    if (_priceRange!.$1 == 500 && _priceRange!.$2 == null)
+      return s.t('priceOver500');
     return s.t('price');
   }
 
@@ -942,7 +1022,9 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   }
 
   String _milesText(double miles) {
-    return miles == miles.roundToDouble() ? miles.round().toString() : miles.toStringAsFixed(1);
+    return miles == miles.roundToDouble()
+        ? miles.round().toString()
+        : miles.toStringAsFixed(1);
   }
 
   String _distanceLabel(WingerStrings s) {
@@ -985,22 +1067,22 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     final city = context.read<AppSession>().city;
     setState(() {
       _future = context.read<CatalogRepository>().browseProducts(
-            query: _queryCtrl.text,
-            category: _category,
-            brand: _brand,
-            supplierId: _supplierId,
-            color: _color,
-            size: _size,
-            minPrice: _priceRange?.$1,
-            maxPrice: _priceRange?.$2,
-            minRating: _minRating,
-            inStock: _inStockOnly,
-            sort: _sort,
-            page: _page,
-            pageSize: 24,
-            maxMiles: _maxMiles,
-            originCity: city,
-          );
+        query: _queryCtrl.text,
+        category: _category,
+        brand: _brand,
+        supplierId: _supplierId,
+        color: _color,
+        size: _size,
+        minPrice: _priceRange?.$1,
+        maxPrice: _priceRange?.$2,
+        minRating: _minRating,
+        inStock: _inStockOnly,
+        sort: _sort,
+        page: _page,
+        pageSize: 24,
+        maxMiles: _maxMiles,
+        originCity: city,
+      );
     });
   }
 
@@ -1010,13 +1092,15 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     _reload();
   }
 
-  List<({String key, String label, (double?, double?)? range})> _priceOptions(WingerStrings s) => [
-        (key: 'any', label: s.t('anyPrice'), range: null),
-        (key: 'u100', label: s.t('priceUnder100'), range: (null, 100.0)),
-        (key: '100250', label: s.t('price100to250'), range: (100.0, 250.0)),
-        (key: '250500', label: s.t('price250to500'), range: (250.0, 500.0)),
-        (key: 'o500', label: s.t('priceOver500'), range: (500.0, null)),
-      ];
+  List<({String key, String label, (double?, double?)? range})> _priceOptions(
+    WingerStrings s,
+  ) => [
+    (key: 'any', label: s.t('anyPrice'), range: null),
+    (key: 'u100', label: s.t('priceUnder100'), range: (null, 100.0)),
+    (key: '100250', label: s.t('price100to250'), range: (100.0, 250.0)),
+    (key: '250500', label: s.t('price250to500'), range: (250.0, 500.0)),
+    (key: 'o500', label: s.t('priceOver500'), range: (500.0, null)),
+  ];
 
   bool _priceSelected((double?, double?)? range) {
     if (range == null) return _priceRange == null;
@@ -1099,7 +1183,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         children: [
           Row(
             children: [
-              Text(s.t('activeFilters'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(
+                s.t('activeFilters'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               const Spacer(),
               TextButton(
                 onPressed: _clearFilters,
@@ -1152,7 +1239,9 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         for (final miles in _presetMiles)
           DropdownMenuItem(
             value: miles.toString(),
-            child: Text(s.t('withinMiles').replaceAll('{n}', _milesText(miles))),
+            child: Text(
+              s.t('withinMiles').replaceAll('{n}', _milesText(miles)),
+            ),
           ),
         DropdownMenuItem(value: '__custom__', child: Text(customLabel)),
       ],
@@ -1167,7 +1256,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     return ListView(
       padding: const EdgeInsets.only(right: 8),
       children: [
-        Text(s.t('categories'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        Text(
+          s.t('categories'),
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
         const SizedBox(height: 8),
         FutureBuilder<List<CatalogCategory>>(
           future: _categoriesFuture,
@@ -1192,7 +1284,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         ),
         ExpansionTile(
           initiallyExpanded: _brand != null,
-          title: Text(s.t('brands'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          title: Text(
+            s.t('brands'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
           children: [
             FutureBuilder<List<CatalogCategory>>(
               future: _brandsFuture,
@@ -1219,7 +1314,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         ),
         ExpansionTile(
           initiallyExpanded: _color != null,
-          title: Text(s.t('color'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          title: Text(
+            s.t('color'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
           children: [
             FutureBuilder<List<CatalogCategory>>(
               future: _colorsFuture,
@@ -1246,7 +1344,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         ),
         ExpansionTile(
           initiallyExpanded: _size != null,
-          title: Text(s.t('size'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          title: Text(
+            s.t('size'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
           children: [
             FutureBuilder<List<CatalogCategory>>(
               future: _sizesFuture,
@@ -1273,7 +1374,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         ),
         ExpansionTile(
           initiallyExpanded: _priceRange != null,
-          title: Text(s.t('price'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          title: Text(
+            s.t('price'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
           children: [
             for (final option in _priceOptions(s))
               _sidebarOption(
@@ -1285,7 +1389,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         ),
         ExpansionTile(
           initiallyExpanded: _supplierId != null,
-          title: Text(s.t('suppliers'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          title: Text(
+            s.t('suppliers'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
           children: [
             FutureBuilder<List<CatalogSupplier>>(
               future: _suppliersFuture,
@@ -1318,7 +1425,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         ),
         ExpansionTile(
           initiallyExpanded: _minRating != null,
-          title: Text(s.t('rating'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          title: Text(
+            s.t('rating'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
           children: [
             _sidebarOption(
               label: s.t('anyRating'),
@@ -1360,141 +1470,163 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
       ]),
       builder: (context, snapshot) {
         final data = snapshot.data ?? const [];
-        final categories = data.isNotEmpty ? data[0] as List<CatalogCategory> : const <CatalogCategory>[];
-        final brands = data.length > 1 ? data[1] as List<CatalogCategory> : const <CatalogCategory>[];
-        final colors = data.length > 2 ? data[2] as List<CatalogCategory> : const <CatalogCategory>[];
-        final sizes = data.length > 3 ? data[3] as List<CatalogCategory> : const <CatalogCategory>[];
-        final suppliers = data.length > 4 ? data[4] as List<CatalogSupplier> : const <CatalogSupplier>[];
+        final categories = data.isNotEmpty
+            ? data[0] as List<CatalogCategory>
+            : const <CatalogCategory>[];
+        final brands = data.length > 1
+            ? data[1] as List<CatalogCategory>
+            : const <CatalogCategory>[];
+        final colors = data.length > 2
+            ? data[2] as List<CatalogCategory>
+            : const <CatalogCategory>[];
+        final sizes = data.length > 3
+            ? data[3] as List<CatalogCategory>
+            : const <CatalogCategory>[];
+        final suppliers = data.length > 4
+            ? data[4] as List<CatalogSupplier>
+            : const <CatalogSupplier>[];
 
         final pills = <Widget>[
-            _dropdownPill(
-              label: _category == null ? s.t('categories') : '${s.t('categories')}: $_category',
-              active: _category != null,
-              onSelected: (value) => _applyFilter(() {
-                _category = value == '__all__' ? null : value;
-              }),
-              items: [
-                PopupMenuItem(value: '__all__', child: Text(s.t('allCategories'))),
-                for (final category in categories)
-                  PopupMenuItem(value: category.name, child: Text(category.name)),
-              ],
-            ),
-            _dropdownPill(
-              label: _brand ?? s.t('brands'),
-              active: _brand != null,
-              onSelected: (value) => _applyFilter(() {
-                _brand = value == '__all__' ? null : value;
-              }),
-              items: [
-                PopupMenuItem(value: '__all__', child: Text(s.t('allBrands'))),
-                for (final brand in brands)
-                  PopupMenuItem(value: brand.name, child: Text(brand.name)),
-              ],
-            ),
-            _dropdownPill(
-              label: _color ?? s.t('color'),
-              active: _color != null,
-              onSelected: (value) => _applyFilter(() {
-                _color = value == '__all__' ? null : value;
-              }),
-              items: [
-                PopupMenuItem(value: '__all__', child: Text(s.t('allColors'))),
-                for (final color in colors)
-                  PopupMenuItem(value: color.name, child: Text(color.name)),
-              ],
-            ),
-            _dropdownPill(
-              label: _size ?? s.t('size'),
-              active: _size != null,
-              onSelected: (value) => _applyFilter(() {
-                _size = value == '__all__' ? null : value;
-              }),
-              items: [
-                PopupMenuItem(value: '__all__', child: Text(s.t('allSizes'))),
-                for (final size in sizes)
-                  PopupMenuItem(value: size.name, child: Text(size.name)),
-              ],
-            ),
-            _dropdownPill(
-              label: _distanceLabel(s),
-              active: _maxMiles != null,
-              onSelected: _selectDistance,
-              items: [
-                PopupMenuItem(value: '__all__', child: Text(s.t('anyDistance'))),
-                for (final miles in _presetMiles)
-                  PopupMenuItem(
-                    value: miles.toString(),
-                    child: Text(s.t('withinMiles').replaceAll('{n}', _milesText(miles))),
-                  ),
-                PopupMenuItem(value: '__custom__', child: Text(s.t('customDistance'))),
-              ],
-            ),
-            _dropdownPill(
-              label: _priceLabel(s) ?? s.t('price'),
-              active: _priceRange != null,
-              onSelected: (value) {
-                final match = _priceOptions(s).where((o) => o.key == value);
-                if (match.isEmpty) return;
-                _applyFilter(() => _priceRange = match.first.range);
-              },
-              items: [
-                for (final option in _priceOptions(s))
-                  PopupMenuItem(value: option.key, child: Text(option.label)),
-              ],
-            ),
-            _dropdownPill(
-              label: _supplierName ?? s.t('suppliers'),
-              active: _supplierId != null,
-              onSelected: (value) {
-                if (value == '__all__') {
-                  _applyFilter(() {
-                    _supplierId = null;
-                    _supplierName = null;
-                  });
-                  return;
-                }
-                final match = suppliers.where((supplier) => supplier.id == value);
-                if (match.isEmpty) return;
-                _applyFilter(() {
-                  _supplierId = match.first.id;
-                  _supplierName = match.first.name;
-                });
-              },
-              items: [
-                PopupMenuItem(value: '__all__', child: Text(s.t('allSuppliers'))),
-                for (final supplier in suppliers)
-                  PopupMenuItem(value: supplier.id, child: Text(supplier.name)),
-              ],
-            ),
-            _dropdownPill(
-              label: _minRating == null
-                  ? s.t('rating')
-                  : (_minRating == 4.5 ? s.t('rating45plus') : s.t('rating4plus')),
-              active: _minRating != null,
-              onSelected: (value) => _applyFilter(() {
-                _minRating = value == '__all__'
-                    ? null
-                    : value == '4.5'
-                        ? 4.5
-                        : 4.0;
-              }),
-              items: [
-                PopupMenuItem(value: '__all__', child: Text(s.t('anyRating'))),
-                PopupMenuItem(value: '4', child: Text(s.t('rating4plus'))),
-                PopupMenuItem(value: '4.5', child: Text(s.t('rating45plus'))),
-              ],
-            ),
-            FilterChip(
-              label: Text(s.t('inStockOnly')),
-              selected: _inStockOnly,
-              selectedColor: WingerColors.brand,
-              checkmarkColor: Colors.white,
-              labelStyle: TextStyle(
-                color: _inStockOnly ? Colors.white : WingerColors.ink,
-                fontWeight: FontWeight.w700,
+          _dropdownPill(
+            label: _category == null
+                ? s.t('categories')
+                : '${s.t('categories')}: $_category',
+            active: _category != null,
+            onSelected: (value) => _applyFilter(() {
+              _category = value == '__all__' ? null : value;
+            }),
+            items: [
+              PopupMenuItem(
+                value: '__all__',
+                child: Text(s.t('allCategories')),
               ),
-              onSelected: (value) => _applyFilter(() => _inStockOnly = value),
+              for (final category in categories)
+                PopupMenuItem(value: category.name, child: Text(category.name)),
+            ],
+          ),
+          _dropdownPill(
+            label: _brand ?? s.t('brands'),
+            active: _brand != null,
+            onSelected: (value) => _applyFilter(() {
+              _brand = value == '__all__' ? null : value;
+            }),
+            items: [
+              PopupMenuItem(value: '__all__', child: Text(s.t('allBrands'))),
+              for (final brand in brands)
+                PopupMenuItem(value: brand.name, child: Text(brand.name)),
+            ],
+          ),
+          _dropdownPill(
+            label: _color ?? s.t('color'),
+            active: _color != null,
+            onSelected: (value) => _applyFilter(() {
+              _color = value == '__all__' ? null : value;
+            }),
+            items: [
+              PopupMenuItem(value: '__all__', child: Text(s.t('allColors'))),
+              for (final color in colors)
+                PopupMenuItem(value: color.name, child: Text(color.name)),
+            ],
+          ),
+          _dropdownPill(
+            label: _size ?? s.t('size'),
+            active: _size != null,
+            onSelected: (value) => _applyFilter(() {
+              _size = value == '__all__' ? null : value;
+            }),
+            items: [
+              PopupMenuItem(value: '__all__', child: Text(s.t('allSizes'))),
+              for (final size in sizes)
+                PopupMenuItem(value: size.name, child: Text(size.name)),
+            ],
+          ),
+          _dropdownPill(
+            label: _distanceLabel(s),
+            active: _maxMiles != null,
+            onSelected: _selectDistance,
+            items: [
+              PopupMenuItem(value: '__all__', child: Text(s.t('anyDistance'))),
+              for (final miles in _presetMiles)
+                PopupMenuItem(
+                  value: miles.toString(),
+                  child: Text(
+                    s.t('withinMiles').replaceAll('{n}', _milesText(miles)),
+                  ),
+                ),
+              PopupMenuItem(
+                value: '__custom__',
+                child: Text(s.t('customDistance')),
+              ),
+            ],
+          ),
+          _dropdownPill(
+            label: _priceLabel(s) ?? s.t('price'),
+            active: _priceRange != null,
+            onSelected: (value) {
+              final match = _priceOptions(s).where((o) => o.key == value);
+              if (match.isEmpty) return;
+              _applyFilter(() => _priceRange = match.first.range);
+            },
+            items: [
+              for (final option in _priceOptions(s))
+                PopupMenuItem(value: option.key, child: Text(option.label)),
+            ],
+          ),
+          _dropdownPill(
+            label: _supplierName ?? s.t('suppliers'),
+            active: _supplierId != null,
+            onSelected: (value) {
+              if (value == '__all__') {
+                _applyFilter(() {
+                  _supplierId = null;
+                  _supplierName = null;
+                });
+                return;
+              }
+              final match = suppliers.where((supplier) => supplier.id == value);
+              if (match.isEmpty) return;
+              _applyFilter(() {
+                _supplierId = match.first.id;
+                _supplierName = match.first.name;
+              });
+            },
+            items: [
+              PopupMenuItem(value: '__all__', child: Text(s.t('allSuppliers'))),
+              for (final supplier in suppliers)
+                PopupMenuItem(value: supplier.id, child: Text(supplier.name)),
+            ],
+          ),
+          _dropdownPill(
+            label: _minRating == null
+                ? s.t('rating')
+                : (_minRating == 4.5
+                      ? s.t('rating45plus')
+                      : s.t('rating4plus')),
+            active: _minRating != null,
+            onSelected: (value) => _applyFilter(() {
+              _minRating = value == '__all__'
+                  ? null
+                  : value == '4.5'
+                  ? 4.5
+                  : 4.0;
+            }),
+            items: [
+              PopupMenuItem(value: '__all__', child: Text(s.t('anyRating'))),
+              PopupMenuItem(value: '4', child: Text(s.t('rating4plus'))),
+              PopupMenuItem(value: '4.5', child: Text(s.t('rating45plus'))),
+            ],
+          ),
+          FilterChip(
+            label: Text(s.t('inStockOnly')),
+            selected: _inStockOnly,
+            selectedColor: WingerColors.brand,
+            checkmarkColor: Colors.white,
+            labelStyle: TextStyle(
+              color: _inStockOnly ? Colors.white : WingerColors.ink,
+              fontWeight: FontWeight.w700,
             ),
+            onSelected: (value) => _applyFilter(() => _inStockOnly = value),
+          ),
         ];
         return ChipScrollRow(height: 44, children: pills);
       },
@@ -1508,9 +1640,18 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
           value: _sort,
           underline: const SizedBox.shrink(),
           items: [
-            DropdownMenuItem(value: 'relevance', child: Text(s.t('sortRelevance'))),
-            DropdownMenuItem(value: 'price_asc', child: Text(s.t('sortPriceAsc'))),
-            DropdownMenuItem(value: 'price_desc', child: Text(s.t('sortPriceDesc'))),
+            DropdownMenuItem(
+              value: 'relevance',
+              child: Text(s.t('sortRelevance')),
+            ),
+            DropdownMenuItem(
+              value: 'price_asc',
+              child: Text(s.t('sortPriceAsc')),
+            ),
+            DropdownMenuItem(
+              value: 'price_desc',
+              child: Text(s.t('sortPriceDesc')),
+            ),
             DropdownMenuItem(value: 'rating', child: Text(s.t('sortRating'))),
             DropdownMenuItem(value: 'newest', child: Text(s.t('sortNewest'))),
           ],
@@ -1523,7 +1664,11 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     );
   }
 
-  Widget _buildResults(WingerStrings s, AppSession session, {required bool wideGrid}) {
+  Widget _buildResults(
+    WingerStrings s,
+    AppSession session, {
+    required bool wideGrid,
+  }) {
     final future = _future;
     if (future == null) {
       return const Center(child: CircularProgressIndicator());
@@ -1544,10 +1689,16 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             padding: const EdgeInsets.symmetric(vertical: 32),
             child: Column(
               children: [
-                const Icon(Icons.search_off, size: 48, color: WingerColors.muted),
+                const Icon(
+                  Icons.search_off,
+                  size: 48,
+                  color: WingerColors.muted,
+                ),
                 const SizedBox(height: 12),
                 Text(
-                  page?.distanceReady == false ? s.t('distanceNeedsCity') : s.t('noResults'),
+                  page?.distanceReady == false
+                      ? s.t('distanceNeedsCity')
+                      : s.t('noResults'),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: WingerColors.muted),
                 ),
@@ -1565,7 +1716,10 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
           children: [
             Text(
               '${page!.total} ${s.t('products').toLowerCase()}',
-              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: WingerColors.muted,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 12),
             GridView.builder(
@@ -1584,7 +1738,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                   product: product,
                   wishlisted: session.isWishlisted(product.id),
                   compareSelected: session.compareIds.contains(product.id),
-                  onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                  onWishlist: () =>
+                      unawaited(session.toggleWishlist(product.id)),
                   onCompare: () => session.toggleCompare(product.id),
                   onAddToCart: () => unawaited(session.addToCart(product)),
                   onTap: () => context.go('/customer/product/${product.id}'),
@@ -1640,7 +1795,9 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             Expanded(
               child: Text(
                 s.t('search'),
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
             IconButton(
@@ -1657,7 +1814,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         const SizedBox(height: 12),
         TextField(
           controller: _queryCtrl,
-          autofocus: widget.initialQuery == null && widget.initialCategory == null,
+          autofocus:
+              widget.initialQuery == null && widget.initialCategory == null,
           decoration: InputDecoration(
             hintText: s.t('searchHint'),
             prefixIcon: const Icon(Icons.search),
@@ -1761,10 +1919,18 @@ class WishlistScreen extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(s.t('wishlist'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              s.t('wishlist'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 12),
             if (items.isEmpty)
-              Text(s.t('wishlistEmpty'), style: TextStyle(color: WingerColors.muted))
+              Text(
+                s.t('wishlistEmpty'),
+                style: TextStyle(color: WingerColors.muted),
+              )
             else
               GridView.builder(
                 shrinkWrap: true,
@@ -1781,7 +1947,8 @@ class WishlistScreen extends StatelessWidget {
                   return ProductCard(
                     product: product,
                     wishlisted: true,
-                    onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                    onWishlist: () =>
+                        unawaited(session.toggleWishlist(product.id)),
                     onAddToCart: () => unawaited(session.addToCart(product)),
                     onTap: () => context.go('/customer/product/${product.id}'),
                   );
@@ -1843,7 +2010,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           // Prefer same model from other suppliers first (price compare).
           for (final item in byModel) {
             if (item.id == product.id) continue;
-            if (item.model.toLowerCase() != product.model.toLowerCase()) continue;
+            if (item.model.toLowerCase() != product.model.toLowerCase())
+              continue;
             if (seen.add(item.id)) related.add(item);
           }
           for (final item in byCategory.items) {
@@ -1899,7 +2067,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _delivery ??= _deliveryFromSession(context.read<AppSession>().deliveryMethod);
+    _delivery ??= _deliveryFromSession(
+      context.read<AppSession>().deliveryMethod,
+    );
   }
 
   _DeliveryOption _deliveryFromSession(String method) {
@@ -1951,7 +2121,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
               Text(
                 s.t('productNotFound'),
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
             ],
           );
@@ -1976,7 +2148,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 Builder(
                   builder: (context) {
                     final screen = MediaQuery.sizeOf(context);
-                    final galleryHeight = (screen.height * 0.36).clamp(220.0, 340.0);
+                    final galleryHeight = (screen.height * 0.36).clamp(
+                      220.0,
+                      340.0,
+                    );
                     return Align(
                       alignment: Alignment.centerLeft,
                       child: ConstrainedBox(
@@ -1995,7 +2170,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                 PageView.builder(
                                   controller: _galleryPageCtrl,
                                   itemCount: gallery.length,
-                                  onPageChanged: (index) => setState(() => _galleryIndex = index),
+                                  onPageChanged: (index) =>
+                                      setState(() => _galleryIndex = index),
                                   itemBuilder: (context, index) {
                                     return ColoredBox(
                                       color: WingerColors.brandMuted,
@@ -2016,7 +2192,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                         foregroundColor: Colors.white,
                                       ),
                                       onPressed: safeIndex > 0
-                                          ? () => _goGallery(safeIndex - 1, gallery.length)
+                                          ? () => _goGallery(
+                                              safeIndex - 1,
+                                              gallery.length,
+                                            )
                                           : null,
                                       icon: const Icon(Icons.chevron_left),
                                     ),
@@ -2029,7 +2208,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                         foregroundColor: Colors.white,
                                       ),
                                       onPressed: safeIndex < gallery.length - 1
-                                          ? () => _goGallery(safeIndex + 1, gallery.length)
+                                          ? () => _goGallery(
+                                              safeIndex + 1,
+                                              gallery.length,
+                                            )
                                           : null,
                                       icon: const Icon(Icons.chevron_right),
                                     ),
@@ -2039,7 +2221,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   right: 12,
                                   bottom: 12,
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 6,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: Colors.black54,
                                       borderRadius: BorderRadius.circular(20),
@@ -2047,8 +2232,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                     child: Text(
                                       s
                                           .t('imageOf')
-                                          .replaceAll('{current}', '${safeIndex + 1}')
-                                          .replaceAll('{total}', '${gallery.length}'),
+                                          .replaceAll(
+                                            '{current}',
+                                            '${safeIndex + 1}',
+                                          )
+                                          .replaceAll(
+                                            '{total}',
+                                            '${gallery.length}',
+                                          ),
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.w700,
@@ -2082,7 +2273,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(
-                                color: selectedThumb ? WingerColors.brand : WingerColors.border,
+                                color: selectedThumb
+                                    ? WingerColors.brand
+                                    : WingerColors.border,
                                 width: selectedThumb ? 2 : 1,
                               ),
                             ),
@@ -2104,12 +2297,30 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   ),
                 ],
                 const SizedBox(height: 16),
-                Text(product.brand, style: const TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600)),
-                Text(product.name, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+                Text(
+                  product.brand,
+                  style: const TextStyle(
+                    color: WingerColors.muted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  product.name,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                Text(session.formatMoney(product.price),
-                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: WingerColors.brand)),
-                if (product.previousPrice != null && product.previousPrice! > product.price) ...[
+                Text(
+                  session.formatMoney(product.price),
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    color: WingerColors.brand,
+                  ),
+                ),
+                if (product.previousPrice != null &&
+                    product.previousPrice! > product.price) ...[
                   const SizedBox(height: 4),
                   Text(
                     session.formatMoney(product.previousPrice!),
@@ -2122,15 +2333,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 const SizedBox(height: 8),
                 Text(
                   '★ ${product.rating.toStringAsFixed(1)} · ${product.category}',
-                  style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: WingerColors.muted,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   product.stockStatus == StockStatus.outOfStock
                       ? s.t('outOfStock')
                       : product.stockStatus == StockStatus.lowStock
-                          ? '${s.t('lowStock')} · ${product.stock}'
-                          : '${s.t('inStock')} · ${product.stock}',
+                      ? '${s.t('lowStock')} · ${product.stock}'
+                      : '${s.t('inStock')} · ${product.stock}',
                   style: TextStyle(
                     color: product.stockStatus == StockStatus.outOfStock
                         ? WingerColors.dangerInk
@@ -2144,9 +2358,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   builder: (context, supplierSnap) {
                     final profile = supplierSnap.data;
                     final name = profile?.name ?? product.supplierName;
-                    final verified = profile?.verified ?? product.supplierVerified;
+                    final verified =
+                        profile?.verified ?? product.supplierVerified;
                     final avg = profile?.ratingAvg ?? product.supplierRatingAvg;
-                    final count = profile?.ratingCount ?? product.supplierRatingCount;
+                    final count =
+                        profile?.ratingCount ?? product.supplierRatingCount;
                     final bio = profile?.businessBio;
                     final notes = profile?.deliveryNotes;
                     final productCount = profile?.productCount;
@@ -2156,15 +2372,31 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(s.t('soldBy'), style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600)),
+                            Text(
+                              s.t('soldBy'),
+                              style: TextStyle(
+                                color: WingerColors.muted,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                             const SizedBox(height: 4),
                             Row(
                               children: [
                                 Expanded(
-                                  child: Text(name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                                  child: Text(
+                                    name,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 16,
+                                    ),
+                                  ),
                                 ),
                                 if (verified)
-                                  const Icon(Icons.verified, size: 18, color: WingerColors.brand),
+                                  const Icon(
+                                    Icons.verified,
+                                    size: 18,
+                                    color: WingerColors.brand,
+                                  ),
                               ],
                             ),
                             const SizedBox(height: 4),
@@ -2172,7 +2404,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                               count > 0
                                   ? '${s.t('supplierRating')}: ★ ${avg.toStringAsFixed(1)} ($count)'
                                   : s.t('noSupplierRatingsYet'),
-                              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                color: WingerColors.muted,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                             if (productCount != null) ...[
                               const SizedBox(height: 2),
@@ -2187,7 +2422,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             ],
                             if (notes != null && notes.isNotEmpty) ...[
                               const SizedBox(height: 6),
-                              Text(notes, style: TextStyle(color: WingerColors.muted, fontSize: 13)),
+                              Text(
+                                notes,
+                                style: TextStyle(
+                                  color: WingerColors.muted,
+                                  fontSize: 13,
+                                ),
+                              ),
                             ],
                             const SizedBox(height: 10),
                             TextButton(
@@ -2207,7 +2448,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 Text(product.description),
                 if (product.visibleSpecs.isNotEmpty) ...[
                   const SizedBox(height: 20),
-                  Text(s.t('specifications'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                  Text(
+                    s.t('specifications'),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   for (final spec in product.visibleSpecs)
                     _SpecRow(
@@ -2255,10 +2502,21 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   children: [
                     Text('${s.t('qty')}:'),
                     const SizedBox(width: 12),
-                    IconButton(onPressed: qty > 1 ? () => setState(() => qty--) : null, icon: const Icon(Icons.remove_circle_outline)),
-                    Text('$qty', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
                     IconButton(
-                      onPressed: qty < product.stock ? () => setState(() => qty++) : null,
+                      onPressed: qty > 1 ? () => setState(() => qty--) : null,
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                    Text(
+                      '$qty',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: qty < product.stock
+                          ? () => setState(() => qty++)
+                          : null,
                       icon: const Icon(Icons.add_circle_outline),
                     ),
                   ],
@@ -2266,17 +2524,28 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 if (product.stock > 0 && product.stock <= 5)
                   Text(
                     s.t('stockWarning').replaceAll('{n}', '${product.stock}'),
-                    style: TextStyle(color: WingerColors.attentionInk, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: WingerColors.attentionInk,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 const SizedBox(height: 12),
                 FilledButton(
                   onPressed: product.stock <= 0
                       ? null
                       : () async {
-                          session.setDeliveryMethod(_deliveryToSession(selected));
-                          await session.addToCart(product, quantity: qty.clamp(1, product.stock));
+                          session.setDeliveryMethod(
+                            _deliveryToSession(selected),
+                          );
+                          await session.addToCart(
+                            product,
+                            quantity: qty.clamp(1, product.stock),
+                          );
                           if (!context.mounted) return;
-                          await _showAddedToCartChoices(context, productName: product.name);
+                          await _showAddedToCartChoices(
+                            context,
+                            productName: product.name,
+                          );
                         },
                   child: Text(s.t('addToCart')),
                 ),
@@ -2285,9 +2554,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: () => unawaited(session.toggleWishlist(product.id)),
+                        onPressed: () =>
+                            unawaited(session.toggleWishlist(product.id)),
                         icon: Icon(
-                          session.isWishlisted(product.id) ? Icons.favorite : Icons.favorite_border,
+                          session.isWishlisted(product.id)
+                              ? Icons.favorite
+                              : Icons.favorite_border,
                         ),
                         label: Text(s.t('wishlist')),
                       ),
@@ -2333,13 +2605,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     final otherSuppliers = related
                         .where(
                           (item) =>
-                              item.model.toLowerCase() == product.model.toLowerCase() &&
-                              item.brand.toLowerCase() == product.brand.toLowerCase() &&
+                              item.model.toLowerCase() ==
+                                  product.model.toLowerCase() &&
+                              item.brand.toLowerCase() ==
+                                  product.brand.toLowerCase() &&
                               item.supplierId != product.supplierId,
                         )
                         .toList();
                     final moreRelated = related
-                        .where((item) => !otherSuppliers.any((o) => o.id == item.id))
+                        .where(
+                          (item) => !otherSuppliers.any((o) => o.id == item.id),
+                        )
                         .toList();
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2348,7 +2624,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           const SizedBox(height: 24),
                           Text(
                             s.t('otherSuppliers'),
-                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
+                            ),
                           ),
                           const SizedBox(height: 10),
                           for (final offer in otherSuppliers)
@@ -2365,13 +2644,16 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                 ),
                                 title: Text(
                                   offer.supplierName,
-                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
                                 subtitle: Text(
                                   '${session.formatMoney(offer.price)} · ★ ${offer.rating.toStringAsFixed(1)} · ${offer.stock} in stock',
                                 ),
                                 trailing: const Icon(Icons.chevron_right),
-                                onTap: () => context.go('/customer/product/${offer.id}'),
+                                onTap: () =>
+                                    context.go('/customer/product/${offer.id}'),
                               ),
                             ),
                           const SizedBox(height: 8),
@@ -2391,7 +2673,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           const SizedBox(height: 24),
                           Text(
                             s.t('relatedProducts'),
-                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
+                            ),
                           ),
                           const SizedBox(height: 10),
                           SizedBox(
@@ -2399,7 +2684,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             child: ListView.separated(
                               scrollDirection: Axis.horizontal,
                               itemCount: moreRelated.length,
-                              separatorBuilder: (_, __) => const SizedBox(width: 12),
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(width: 12),
                               itemBuilder: (context, index) {
                                 final item = moreRelated[index];
                                 return SizedBox(
@@ -2407,9 +2693,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   child: ProductCard(
                                     product: item,
                                     wishlisted: session.isWishlisted(item.id),
-                                    onWishlist: () => unawaited(session.toggleWishlist(item.id)),
-                                    onAddToCart: () => unawaited(session.addToCart(item)),
-                                    onTap: () => context.go('/customer/product/${item.id}'),
+                                    onWishlist: () => unawaited(
+                                      session.toggleWishlist(item.id),
+                                    ),
+                                    onAddToCart: () =>
+                                        unawaited(session.addToCart(item)),
+                                    onTap: () => context.go(
+                                      '/customer/product/${item.id}',
+                                    ),
                                   ),
                                 );
                               },
@@ -2443,9 +2734,20 @@ class _SpecRow extends StatelessWidget {
         children: [
           SizedBox(
             width: 110,
-            child: Text(label, style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600)),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: WingerColors.muted,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-          Expanded(child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600))),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
         ],
       ),
     );
@@ -2493,7 +2795,12 @@ class _CompareScreenState extends State<CompareScreen> {
           children: [
             Row(
               children: [
-                Text(s.t('compare'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+                Text(
+                  s.t('compare'),
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
                 const Spacer(),
                 if (session.compareIds.isNotEmpty)
                   TextButton(
@@ -2504,7 +2811,10 @@ class _CompareScreenState extends State<CompareScreen> {
             ),
             const SizedBox(height: 12),
             if (session.compareIds.isEmpty)
-              Text(s.t('searchHint'), style: TextStyle(color: WingerColors.muted))
+              Text(
+                s.t('searchHint'),
+                style: TextStyle(color: WingerColors.muted),
+              )
             else if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())
             else ...[
@@ -2540,57 +2850,95 @@ class _CompareScreenState extends State<CompareScreen> {
                             '${p.name}\n${p.supplierName}',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w700, height: 1.2),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              height: 1.2,
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ],
                   rows: [
-                    DataRow(cells: [
-                      const DataCell(Text('Price')),
-                      ...products.map((p) => DataCell(Text(session.formatMoney(p.price)))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Supplier')),
-                      ...products.map((p) => DataCell(Text(p.supplierName))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Verified')),
-                      ...products.map((p) => DataCell(Text(p.supplierVerified ? 'Yes' : 'No'))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Rating')),
-                      ...products.map((p) => DataCell(Text(p.rating.toStringAsFixed(1)))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Stock')),
-                      ...products.map((p) => DataCell(Text('${p.stock} (${p.stockStatus.name})'))),
-                    ]),
-                    DataRow(cells: [
-                      DataCell(Text(s.t('fulfillMethod'))),
-                      ...products.map((_) => DataCell(Text(session.deliveryMethodLabel))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Model')),
-                      ...products.map((p) => DataCell(Text(p.model))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Color')),
-                      ...products.map((p) => DataCell(Text(p.color))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Size')),
-                      ...products.map((p) => DataCell(Text(p.size))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Battery')),
-                      ...products.map((p) => DataCell(Text(p.battery))),
-                    ]),
-                    DataRow(cells: [
-                      const DataCell(Text('Weight')),
-                      ...products.map((p) => DataCell(Text(p.weight))),
-                    ]),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Price')),
+                        ...products.map(
+                          (p) => DataCell(Text(session.formatMoney(p.price))),
+                        ),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Supplier')),
+                        ...products.map((p) => DataCell(Text(p.supplierName))),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Verified')),
+                        ...products.map(
+                          (p) =>
+                              DataCell(Text(p.supplierVerified ? 'Yes' : 'No')),
+                        ),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Rating')),
+                        ...products.map(
+                          (p) => DataCell(Text(p.rating.toStringAsFixed(1))),
+                        ),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Stock')),
+                        ...products.map(
+                          (p) => DataCell(
+                            Text('${p.stock} (${p.stockStatus.name})'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        DataCell(Text(s.t('fulfillMethod'))),
+                        ...products.map(
+                          (_) => DataCell(Text(session.deliveryMethodLabel)),
+                        ),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Model')),
+                        ...products.map((p) => DataCell(Text(p.model))),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Color')),
+                        ...products.map((p) => DataCell(Text(p.color))),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Size')),
+                        ...products.map((p) => DataCell(Text(p.size))),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Battery')),
+                        ...products.map((p) => DataCell(Text(p.battery))),
+                      ],
+                    ),
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Weight')),
+                        ...products.map((p) => DataCell(Text(p.weight))),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -2665,7 +3013,12 @@ class _CartScreenState extends State<CartScreen> {
       children: [
         Row(
           children: [
-            Text(s.t('cart'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              s.t('cart'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
             const Spacer(),
             IconButton(
               onPressed: _refreshing ? null : _refresh,
@@ -2686,7 +3039,10 @@ class _CartScreenState extends State<CartScreen> {
         ),
         if (_refreshing) ...[
           const SizedBox(height: 8),
-          Text(s.t('refreshingCart'), style: TextStyle(color: WingerColors.muted)),
+          Text(
+            s.t('refreshingCart'),
+            style: TextStyle(color: WingerColors.muted),
+          ),
         ],
         const SizedBox(height: 12),
         if (grouped.isEmpty)
@@ -2702,13 +3058,19 @@ class _CartScreenState extends State<CartScreen> {
               ),
               child: Text(
                 s.t('unavailableItem'),
-                style: TextStyle(color: WingerColors.attentionInk, fontWeight: FontWeight.w700),
+                style: TextStyle(
+                  color: WingerColors.attentionInk,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             const SizedBox(height: 12),
           ],
           for (final entry in grouped.entries) ...[
-            Text(entry.key, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            Text(
+              entry.key,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
             const SizedBox(height: 8),
             for (final item in entry.value)
               Card(
@@ -2724,13 +3086,19 @@ class _CartScreenState extends State<CartScreen> {
                         fit: BoxFit.cover,
                       ),
                     ),
-                    title: Text(item.product.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    title: Text(
+                      item.product.name,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
                     subtitle: Text(
-                      item.quantity > item.product.stock || item.product.stock <= 0
+                      item.quantity > item.product.stock ||
+                              item.product.stock <= 0
                           ? '${s.t('unavailableItem')}\n${session.formatMoney(item.product.price)} × ${item.quantity}'
                           : '${session.formatMoney(item.product.price)} × ${item.quantity} = ${session.formatMoney(item.lineTotal)}',
                       style: TextStyle(
-                        color: item.quantity > item.product.stock || item.product.stock <= 0
+                        color:
+                            item.quantity > item.product.stock ||
+                                item.product.stock <= 0
                             ? WingerColors.dangerInk
                             : null,
                       ),
@@ -2741,7 +3109,10 @@ class _CartScreenState extends State<CartScreen> {
                       children: [
                         IconButton(
                           onPressed: () => unawaited(
-                            session.updateQuantity(item.product.id, item.quantity - 1),
+                            session.updateQuantity(
+                              item.product.id,
+                              item.quantity - 1,
+                            ),
                           ),
                           icon: const Icon(Icons.remove),
                         ),
@@ -2750,16 +3121,18 @@ class _CartScreenState extends State<CartScreen> {
                           onPressed: item.quantity >= item.product.stock
                               ? null
                               : () => unawaited(
-                                    session.updateQuantity(
-                                      item.product.id,
-                                      item.quantity + 1,
-                                    ),
+                                  session.updateQuantity(
+                                    item.product.id,
+                                    item.quantity + 1,
                                   ),
+                                ),
                           icon: const Icon(Icons.add),
                         ),
                         IconButton(
                           tooltip: s.t('remove'),
-                          onPressed: () => unawaited(session.removeFromCart(item.product.id)),
+                          onPressed: () => unawaited(
+                            session.removeFromCart(item.product.id),
+                          ),
                           icon: const Icon(Icons.delete_outline),
                         ),
                       ],
@@ -2851,9 +3224,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final modeLine = switch (session.stripeCheckoutMode) {
       'test' => s.t('cardStripeTest'),
       'live' => s.t('cardStripeLive'),
-      _ => session.stripePublishableKey != null
-          ? s.t('cardStripeNeedsSecret')
-          : s.t('cardDemoCharge'),
+      _ =>
+        session.stripePublishableKey != null
+            ? s.t('cardStripeNeedsSecret')
+            : s.t('cardDemoCharge'),
     };
     return '$estimate$modeLine\n'
         'You will pay $payAmount\n'
@@ -2917,12 +3291,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
-    final steps = [s.t('review'), s.t('address'), s.t('delivery'), s.t('payment'), s.t('confirmation')];
+    final steps = [
+      s.t('review'),
+      s.t('address'),
+      s.t('delivery'),
+      s.t('payment'),
+      s.t('confirmation'),
+    ];
 
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(s.t('checkout'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        Text(
+          s.t('checkout'),
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
         const SizedBox(height: 16),
         Wrap(
           spacing: 8,
@@ -2930,7 +3315,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             for (var i = 0; i < steps.length; i++)
               ActionChip(
                 label: Text(steps[i]),
-                backgroundColor: i == step ? WingerColors.brand : WingerColors.brandMuted,
+                backgroundColor: i == step
+                    ? WingerColors.brand
+                    : WingerColors.brandMuted,
                 labelStyle: TextStyle(
                   color: i == step ? Colors.white : WingerColors.ink,
                   fontWeight: FontWeight.w700,
@@ -2964,7 +3351,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               for (final entry in session.cartBySupplier.entries) ...[
                 Text(
                   entry.key,
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 for (final item in entry.value)
@@ -3024,15 +3414,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     const SizedBox(height: 4),
                     Text(
                       '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)}',
-                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                      ),
                     ),
                   ],
                 ),
               ),
             ],
-          ]
-          else if (step == 1) ...[
-            Text(s.t('deliveryAddress'), style: const TextStyle(fontWeight: FontWeight.w700)),
+          ] else if (step == 1) ...[
+            Text(
+              s.t('deliveryAddress'),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _address,
@@ -3051,8 +3446,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               '${s.t('deliveryTo')}: ${session.displayName}',
               style: TextStyle(color: WingerColors.muted),
             ),
-          ]
-          else if (step == 2) ...[
+          ] else if (step == 2) ...[
             Text(
               'Deliver to ${session.city} · ${session.addressLine} · ${session.displayName}',
             ),
@@ -3083,16 +3477,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            Text(s.t('shipments'), style: const TextStyle(fontWeight: FontWeight.w700)),
+            Text(
+              s.t('shipments'),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 8),
             for (final shipment in session.cartShipments)
               Card(
                 child: ListTile(
-                  title: Text(shipment.supplierName, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  title: Text(
+                    shipment.supplierName,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                   subtitle: Text(
                     [
                       shipment.estimate,
-                      ?_carrierLine(s, carrier: shipment.carrier, courierName: shipment.courierName),
+                      ?_carrierLine(
+                        s,
+                        carrier: shipment.carrier,
+                        courierName: shipment.courierName,
+                      ),
                       '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, shipment.fee)}'
                           '${session.deliveryMethod == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
                     ].join('\n'),
@@ -3110,8 +3514,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)}',
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
-          ]
-          else ...[
+          ] else ...[
             Text(
               s.t('paymentMethod'),
               style: const TextStyle(fontWeight: FontWeight.w700),
@@ -3139,19 +3542,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Text(
               _payMethod == _CheckoutPayMethod.payOnDelivery
                   ? '${s.t('payOnDeliveryHint')}\n'
-                      '${session.showPaymentEstimate ? 'Estimated ${session.formatMoney(session.cartGrandTotal)}\n' : ''}'
-                      'You will pay ${session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal)}'
-                      ' when the order arrives.\n'
-                      '${session.addressLine}, ${session.city}'
+                        '${session.showPaymentEstimate ? 'Estimated ${session.formatMoney(session.cartGrandTotal)}\n' : ''}'
+                        'You will pay ${session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal)}'
+                        ' when the order arrives.\n'
+                        '${session.addressLine}, ${session.city}'
                   : session.apiOnline && session.accessToken != null
-                      ? _cardCheckoutNote(s, session)
-                      : '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)} — '
-                          'order saved locally until online',
+                  ? _cardCheckoutNote(s, session)
+                  : '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)} — '
+                        'order saved locally until online',
             ),
             if (_payMethod == _CheckoutPayMethod.card &&
-                (session.stripeCheckoutMode == 'test' || session.stripeCheckoutMode == 'live')) ...[
+                (session.stripeCheckoutMode == 'test' ||
+                    session.stripeCheckoutMode == 'live')) ...[
               const SizedBox(height: 16),
-              if (usesHostedStripeCard && (session.stripePublishableKey ?? '').isNotEmpty) ...[
+              if (usesHostedStripeCard &&
+                  (session.stripePublishableKey ?? '').isNotEmpty) ...[
                 SizedBox(
                   height: 120,
                   child: ClipRRect(
@@ -3167,7 +3572,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 const SizedBox(height: 8),
                 Text(
                   s.t('cardHostedNote'),
-                  style: const TextStyle(color: WingerColors.muted, fontSize: 12),
+                  style: const TextStyle(
+                    color: WingerColors.muted,
+                    fontSize: 12,
+                  ),
                 ),
               ] else ...[
                 TextField(
@@ -3204,14 +3612,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 const SizedBox(height: 8),
                 Text(
                   s.t('cardTestHint'),
-                  style: const TextStyle(color: WingerColors.muted, fontSize: 12),
+                  style: const TextStyle(
+                    color: WingerColors.muted,
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ],
           ],
           if (_payError != null) ...[
             const SizedBox(height: 12),
-            Text(_payError!, style: const TextStyle(color: WingerColors.dangerInk)),
+            Text(
+              _payError!,
+              style: const TextStyle(color: WingerColors.dangerInk),
+            ),
           ],
           const SizedBox(height: 20),
           Row(
@@ -3221,9 +3635,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   onPressed: _paying
                       ? null
                       : () => setState(() {
-                            _payError = null;
-                            step--;
-                          }),
+                          _payError = null;
+                          step--;
+                        }),
                   child: Text(s.t('back')),
                 ),
                 const SizedBox(width: 12),
@@ -3256,19 +3670,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           try {
                             final method =
                                 _payMethod == _CheckoutPayMethod.payOnDelivery
-                                    ? 'pay_on_delivery'
-                                    : 'card';
+                                ? 'pay_on_delivery'
+                                : 'card';
                             if (method == 'pay_on_delivery' &&
                                 session.deliveryMethod != 'pickup' &&
                                 (session.addressLine.trim().isEmpty ||
                                     session.city.trim().isEmpty)) {
                               throw Exception(s.t('codAddressRequired'));
                             }
-                            if (session.apiOnline && session.accessToken != null) {
+                            if (session.apiOnline &&
+                                session.accessToken != null) {
                               await session.refreshCartFromServer();
                             }
                             String? stripePaymentMethodId;
-                            final needsCard = method == 'card' &&
+                            final needsCard =
+                                method == 'card' &&
                                 (session.stripeCheckoutMode == 'test' ||
                                     session.stripeCheckoutMode == 'live');
                             if (needsCard) {
@@ -3277,7 +3693,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 throw Exception(s.t('cardInvalid'));
                               }
                               if (usesHostedStripeCard) {
-                                stripePaymentMethodId = await _stripeCard.createPaymentMethod();
+                                stripePaymentMethodId = await _stripeCard
+                                    .createPaymentMethod();
                               } else {
                                 final ParsedCard card;
                                 try {
@@ -3289,10 +3706,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 } on FormatException {
                                   throw Exception(s.t('cardInvalid'));
                                 }
-                                stripePaymentMethodId = await createStripePaymentMethod(
-                                  card: card,
-                                  publishableKey: key,
-                                );
+                                stripePaymentMethodId =
+                                    await createStripePaymentMethod(
+                                      card: card,
+                                      publishableKey: key,
+                                    );
                                 _cardNumber.clear();
                                 _cardCvc.clear();
                               }
@@ -3321,9 +3739,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                               _checkoutAttemptKey = null;
                             }
                             setState(
-                              () => _payError = error
-                                  .toString()
-                                  .replaceFirst('Exception: ', ''),
+                              () => _payError = error.toString().replaceFirst(
+                                'Exception: ',
+                                '',
+                              ),
                             );
                           } finally {
                             if (mounted) setState(() => _paying = false);
@@ -3341,8 +3760,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       : Text(
                           step == 3
                               ? (_payMethod == _CheckoutPayMethod.payOnDelivery
-                                  ? s.t('placeOrderCod')
-                                  : s.t('payment'))
+                                    ? s.t('placeOrderCod')
+                                    : s.t('payment'))
                               : s.t('continueRole'),
                         ),
                 ),
@@ -3350,33 +3769,44 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ],
           ),
         ] else ...[
-          const Icon(Icons.check_circle, color: WingerColors.successInk, size: 64),
+          const Icon(
+            Icons.check_circle,
+            color: WingerColors.successInk,
+            size: 64,
+          ),
           const SizedBox(height: 12),
-          Text(s.t('thanksOrder'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+          Text(
+            s.t('thanksOrder'),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          ),
           Text(
             session.lastOrder == null
                 ? s.t('orderConfirmed')
                 : '${s.t('orderConfirmed')} · ${session.lastOrder!.id}',
           ),
           if (session.lastOrder != null)
-          Text(
-            session.lastOrder!.isCodPending
-                ? s.t('codPendingBanner').replaceAll(
-                      '{amount}',
-                      session.lastOrder!.lockedAmountLabel(),
-                    )
-                : session.lastOrder!.paymentMode == 'cod'
-                    ? '${s.t('payOnDelivery')}: ${session.lastOrder!.paymentStatus}'
-                    : 'Payment: ${session.lastOrder!.paymentStatus} (${session.lastOrder!.paymentMode})',
-            style: TextStyle(
-              color: session.lastOrder?.isCodPending == true
-                  ? WingerColors.attentionInk
-                  : WingerColors.muted,
-              fontWeight: session.lastOrder?.isCodPending == true
-                  ? FontWeight.w600
-                  : FontWeight.w400,
+            Text(
+              session.lastOrder!.isCodPending
+                  ? s
+                        .t('codPendingBanner')
+                        .replaceAll(
+                          '{amount}',
+                          session.lastOrder!.lockedAmountLabel(),
+                        )
+                  : session.lastOrder!.paymentMode == 'cod'
+                  ? '${s.t('payOnDelivery')}: ${session.lastOrder!.paymentStatus}'
+                  : 'Payment: ${session.lastOrder!.paymentStatus} (${session.lastOrder!.paymentMode})',
+              style: TextStyle(
+                color: session.lastOrder?.isCodPending == true
+                    ? WingerColors.attentionInk
+                    : WingerColors.muted,
+                fontWeight: session.lastOrder?.isCodPending == true
+                    ? FontWeight.w600
+                    : FontWeight.w400,
+              ),
             ),
-          ),
           const SizedBox(height: 16),
           FilledButton(
             onPressed: () => context.go('/customer/orders'),
@@ -3435,7 +3865,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              Text(s.t('orders'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+              Text(
+                s.t('orders'),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
               const SizedBox(height: 12),
               Text(
                 snapshot.error.toString().replaceFirst('Exception: ', ''),
@@ -3448,9 +3883,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              Text(s.t('orders'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+              Text(
+                s.t('orders'),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
               const SizedBox(height: 12),
-              Text(s.t('noOrdersYet'), style: TextStyle(color: WingerColors.muted)),
+              Text(
+                s.t('noOrdersYet'),
+                style: TextStyle(color: WingerColors.muted),
+              ),
             ],
           );
         }
@@ -3458,7 +3901,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(s.t('orders'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              s.t('orders'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 12),
             for (final order in orders) ...[
               Card(
@@ -3472,7 +3920,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       children: [
                         Row(
                           children: [
-                            Text(order.id, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                            Text(
+                              order.id,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 18,
+                              ),
+                            ),
                             const SizedBox(width: 12),
                             StatusBadge(status: order.status),
                           ],
@@ -3490,13 +3944,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         Text(
                           order.isCodPending
                               ? s
-                                  .t(order.status == OrderStatus.delivered
-                                      ? 'codDeliveredDue'
-                                      : 'codPendingBanner')
-                                  .replaceAll(
-                                    '{amount}',
-                                    order.lockedAmountLabel(),
-                                  )
+                                    .t(
+                                      order.status == OrderStatus.delivered
+                                          ? 'codDeliveredDue'
+                                          : 'codPendingBanner',
+                                    )
+                                    .replaceAll(
+                                      '{amount}',
+                                      order.lockedAmountLabel(),
+                                    )
                               : '${order.paymentStatus} · ${order.paymentMode}',
                           style: TextStyle(
                             color: order.isCodPending
@@ -3540,7 +3996,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         const SizedBox(height: 4),
                         Text(
                           '${s.t('placedOn')}: ${order.placedAt.toLocal().toString().split('.').first}',
-                          style: TextStyle(color: WingerColors.muted, fontSize: 12),
+                          style: TextStyle(
+                            color: WingerColors.muted,
+                            fontSize: 12,
+                          ),
                         ),
                         const SizedBox(height: 12),
                         for (final leg in order.shipments.take(2))
@@ -3551,7 +4010,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                 Expanded(
                                   child: Text(
                                     '${leg.supplierName} · ${leg.productName}',
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                                 StatusBadge(status: leg.status),
@@ -3561,7 +4022,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         if (order.shipments.length > 2)
                           Text(
                             '+${order.shipments.length - 2} more',
-                            style: TextStyle(color: WingerColors.muted, fontSize: 12),
+                            style: TextStyle(
+                              color: WingerColors.muted,
+                              fontSize: 12,
+                            ),
                           ),
                         const SizedBox(height: 4),
                         Align(
@@ -3653,16 +4117,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _returning = true);
     try {
       await context.read<ApiClient>().createReturnRequest(
-            orderId: order.id,
-            orderItemId: draft.orderItemId,
-            reason: draft.reason,
-            notes: draft.notes,
-            quantity: draft.quantity,
-          );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.t('returnSubmitted'))),
+        orderId: order.id,
+        orderItemId: draft.orderItemId,
+        reason: draft.reason,
+        notes: draft.notes,
+        quantity: draft.quantity,
       );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('returnSubmitted'))));
       final next = _load();
       setState(() {
         _future = next;
@@ -3670,14 +4134,19 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
       );
     } finally {
       if (mounted) setState(() => _returning = false);
     }
   }
 
-  Future<void> _rateSupplier(CustomerOrder order, RateableSupplier supplier) async {
+  Future<void> _rateSupplier(
+    CustomerOrder order,
+    RateableSupplier supplier,
+  ) async {
     final s = WingerStrings.of(context);
     var stars = 5;
     final commentCtrl = TextEditingController();
@@ -3692,9 +4161,15 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(supplier.supplierName, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text(
+                    supplier.supplierName,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                   const SizedBox(height: 8),
-                  Text(s.t('rateSupplierHint'), style: TextStyle(color: WingerColors.muted)),
+                  Text(
+                    s.t('rateSupplierHint'),
+                    style: TextStyle(color: WingerColors.muted),
+                  ),
                   const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -3712,12 +4187,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   TextField(
                     controller: commentCtrl,
                     maxLines: 3,
-                    decoration: InputDecoration(labelText: s.t('optionalComment')),
+                    decoration: InputDecoration(
+                      labelText: s.t('optionalComment'),
+                    ),
                   ),
                 ],
               ),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(s.t('back')),
+                ),
                 FilledButton(
                   onPressed: () => Navigator.pop(ctx, true),
                   child: Text(s.t('submitRating')),
@@ -3734,20 +4214,22 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _rating = true);
     try {
       await context.read<ApiClient>().submitSupplierReview(
-            orderId: order.id,
-            supplierId: supplier.supplierId,
-            rating: stars,
-            comment: comment,
-          );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.t('ratingSubmitted'))),
+        orderId: order.id,
+        supplierId: supplier.supplierId,
+        rating: stars,
+        comment: comment,
       );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('ratingSubmitted'))));
       setState(() => _future = _load());
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
       );
     } finally {
       if (mounted) setState(() => _rating = false);
@@ -3766,8 +4248,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               : s.t('cancelOrderConfirm'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.t('back'))),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.t('cancelOrder'))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.t('back')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.t('cancelOrder')),
+          ),
         ],
       ),
     );
@@ -3776,14 +4264,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     try {
       await context.read<ApiClient>().cancelOrder(order.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.t('orderCancelled'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('orderCancelled'))));
       setState(() => _future = _load());
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
       );
     } finally {
       if (mounted) setState(() => _cancelling = false);
@@ -3831,7 +4321,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               icon: const Icon(Icons.arrow_back),
               label: Text(s.t('orders')),
             ),
-            Text(s.t('orderDetails'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              s.t('orderDetails'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 12),
             Card(
               child: Padding(
@@ -3841,7 +4336,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   children: [
                     Row(
                       children: [
-                        Text(order.id, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
+                        Text(
+                          order.id,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 20,
+                          ),
+                        ),
                         const SizedBox(width: 12),
                         StatusBadge(status: order.status),
                       ],
@@ -3851,23 +4352,30 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     Text(
                       order.isCodPending
                           ? s
-                              .t(order.status == OrderStatus.delivered
-                                  ? 'codDeliveredDue'
-                                  : 'codPendingBanner')
-                              .replaceAll(
-                                '{amount}',
-                                order.lockedAmountLabel(),
-                              )
+                                .t(
+                                  order.status == OrderStatus.delivered
+                                      ? 'codDeliveredDue'
+                                      : 'codPendingBanner',
+                                )
+                                .replaceAll(
+                                  '{amount}',
+                                  order.lockedAmountLabel(),
+                                )
                           : '${order.paymentStatus} · ${order.paymentMode}${order.paymentMethod != null ? ' · ${order.paymentMethod}' : ''}',
                       style: TextStyle(
                         color: order.isCodPending
                             ? WingerColors.attentionInk
                             : null,
-                        fontWeight:
-                            order.isCodPending ? FontWeight.w600 : null,
+                        fontWeight: order.isCodPending ? FontWeight.w600 : null,
                       ),
                     ),
-                    Text(order.lockedAmountLabel(), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                    Text(
+                      order.lockedAmountLabel(),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                      ),
+                    ),
                     if (order.isReplacementOrder) ...[
                       const SizedBox(height: 8),
                       Text(
@@ -3901,7 +4409,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ],
                     if (order.addressLine != null || order.city != null) ...[
                       const SizedBox(height: 8),
-                      Text(s.t('deliveryAddress'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                      Text(
+                        s.t('deliveryAddress'),
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
                       Text('${order.addressLine ?? ''} · ${order.city ?? ''}'),
                     ],
                   ],
@@ -3909,10 +4420,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Text(s.t('shipments'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+            Text(
+              s.t('shipments'),
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+            ),
             const SizedBox(height: 8),
             for (final entry in shipmentsBySupplier.entries) ...[
-              Text(entry.key, style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(
+                entry.key,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               if (_carrierLine(
                     s,
                     carrier: entry.value.first.carrier,
@@ -3929,11 +4446,27 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (leg.trackingCode != null)
-                          Text('${s.t('trackingCode')}: ${leg.trackingCode}'),
+                          Text(
+                            leg.trackingCode!.startsWith('CR-')
+                                ? s
+                                      .t('courierBooked')
+                                      .replaceAll(
+                                        '{name}',
+                                        leg.courierName ?? 'Courier',
+                                      )
+                                      .replaceAll(
+                                        '{reference}',
+                                        leg.trackingCode!,
+                                      )
+                                : '${s.t('trackingCode')}: ${leg.trackingCode}',
+                          ),
                         if (leg.pickupCode != null)
                           Text('${s.t('pickupCode')}: ${leg.pickupCode}'),
                         if (leg.trackingCode == null && leg.pickupCode == null)
-                          Text(s.t('fulfillment'), style: TextStyle(color: WingerColors.muted)),
+                          Text(
+                            s.t('fulfillment'),
+                            style: TextStyle(color: WingerColors.muted),
+                          ),
                       ],
                     ),
                     trailing: StatusBadge(status: leg.status),
@@ -3941,7 +4474,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 ),
               const SizedBox(height: 12),
             ],
-            Text(s.t('supportHint'), style: TextStyle(color: WingerColors.muted)),
+            Text(
+              s.t('supportHint'),
+              style: TextStyle(color: WingerColors.muted),
+            ),
             if (order.canRequestReturn) ...[
               const SizedBox(height: 12),
               FilledButton.icon(
@@ -3950,7 +4486,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ? const SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
                       )
                     : const Icon(Icons.assignment_return_outlined),
                 label: Text(s.t('requestReturn')),
@@ -3958,7 +4497,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ],
             if (order.returnRequests.isNotEmpty) ...[
               const SizedBox(height: 16),
-              Text(s.t('returnRequests'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(
+                s.t('returnRequests'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
               const SizedBox(height: 8),
               for (final request in order.returnRequests)
                 Card(
@@ -3978,15 +4523,25 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ],
             if (order.canRateSuppliers.isNotEmpty) ...[
               const SizedBox(height: 16),
-              Text(s.t('rateSupplier'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(
+                s.t('rateSupplier'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
               const SizedBox(height: 8),
               for (final supplier in order.canRateSuppliers)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: FilledButton.tonalIcon(
-                    onPressed: _rating ? null : () => _rateSupplier(order, supplier),
+                    onPressed: _rating
+                        ? null
+                        : () => _rateSupplier(order, supplier),
                     icon: const Icon(Icons.star_outline),
-                    label: Text('${s.t('rateSupplier')}: ${supplier.supplierName}'),
+                    label: Text(
+                      '${s.t('rateSupplier')}: ${supplier.supplierName}',
+                    ),
                   ),
                 ),
             ],
@@ -4100,14 +4655,28 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(s.t('account'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        Text(
+          s.t('account'),
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
         Text(session.email, style: const TextStyle(color: WingerColors.muted)),
         const SizedBox(height: 20),
-        Text(s.t('obCustomerProfile'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        Text(
+          s.t('obCustomerProfile'),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+        ),
         const SizedBox(height: 8),
-        TextField(controller: _name, decoration: InputDecoration(labelText: s.t('obName'))),
+        TextField(
+          controller: _name,
+          decoration: InputDecoration(labelText: s.t('obName')),
+        ),
         const SizedBox(height: 8),
-        TextField(controller: _phone, decoration: InputDecoration(labelText: s.t('obPhone'))),
+        TextField(
+          controller: _phone,
+          decoration: InputDecoration(labelText: s.t('obPhone')),
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _address,
@@ -4117,14 +4686,20 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        TextField(controller: _city, decoration: InputDecoration(labelText: s.t('obCity'))),
+        TextField(
+          controller: _city,
+          decoration: InputDecoration(labelText: s.t('obCity')),
+        ),
         if (_error != null) ...[
           const SizedBox(height: 8),
           Text(_error!, style: const TextStyle(color: WingerColors.dangerInk)),
         ],
         if (_message != null) ...[
           const SizedBox(height: 8),
-          Text(_message!, style: const TextStyle(color: WingerColors.successInk)),
+          Text(
+            _message!,
+            style: const TextStyle(color: WingerColors.successInk),
+          ),
         ],
         const SizedBox(height: 12),
         FilledButton(
@@ -4133,7 +4708,10 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : Text(s.t('obSaveProfile')),
         ),
@@ -4279,10 +4857,15 @@ class _AddressesScreenState extends State<AddressesScreen> {
         ),
         Text(
           s.t('addresses'),
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 8),
-        Text(s.t('deliveryAddress'), style: TextStyle(color: WingerColors.muted)),
+        Text(
+          s.t('deliveryAddress'),
+          style: TextStyle(color: WingerColors.muted),
+        ),
         const SizedBox(height: 16),
         TextField(
           controller: _address,
@@ -4302,7 +4885,10 @@ class _AddressesScreenState extends State<AddressesScreen> {
         ],
         if (_message != null) ...[
           const SizedBox(height: 8),
-          Text(_message!, style: const TextStyle(color: WingerColors.successInk)),
+          Text(
+            _message!,
+            style: const TextStyle(color: WingerColors.successInk),
+          ),
         ],
         const SizedBox(height: 16),
         FilledButton(
@@ -4311,7 +4897,10 @@ class _AddressesScreenState extends State<AddressesScreen> {
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : Text(s.t('saveAddress')),
         ),
@@ -4408,10 +4997,9 @@ class _CustomerNotificationsScreenState
               Expanded(
                 child: Text(
                   s.t('notifications'),
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w800),
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
               if (_unreadCount > 0)
@@ -4443,13 +5031,16 @@ class _CustomerNotificationsScreenState
                   item.isUnread
                       ? Icons.notifications_active
                       : Icons.notifications_none,
-                  color: item.isUnread ? WingerColors.brand : WingerColors.muted,
+                  color: item.isUnread
+                      ? WingerColors.brand
+                      : WingerColors.muted,
                 ),
                 title: Text(
                   item.title,
                   style: TextStyle(
-                    fontWeight:
-                        item.isUnread ? FontWeight.w800 : FontWeight.w600,
+                    fontWeight: item.isUnread
+                        ? FontWeight.w800
+                        : FontWeight.w600,
                   ),
                 ),
                 subtitle: Column(
@@ -4502,11 +5093,16 @@ class RecentlyViewedScreen extends StatelessWidget {
           children: [
             Text(
               s.t('recentlyViewed'),
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 12),
             if (items.isEmpty)
-              Text(s.t('recentlyViewedEmpty'), style: TextStyle(color: WingerColors.muted))
+              Text(
+                s.t('recentlyViewedEmpty'),
+                style: TextStyle(color: WingerColors.muted),
+              )
             else
               GridView.builder(
                 shrinkWrap: true,
@@ -4523,7 +5119,8 @@ class RecentlyViewedScreen extends StatelessWidget {
                   return ProductCard(
                     product: product,
                     wishlisted: session.isWishlisted(product.id),
-                    onWishlist: () => unawaited(session.toggleWishlist(product.id)),
+                    onWishlist: () =>
+                        unawaited(session.toggleWishlist(product.id)),
                     onAddToCart: () => unawaited(session.addToCart(product)),
                     onTap: () => context.go('/customer/product/${product.id}'),
                   );
@@ -4597,9 +5194,15 @@ class _RequestReturnDialogState extends State<_RequestReturnDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(s.t('requestReturnHint'), style: const TextStyle(color: WingerColors.muted)),
+              Text(
+                s.t('requestReturnHint'),
+                style: const TextStyle(color: WingerColors.muted),
+              ),
               const SizedBox(height: 12),
-              Text(s.t('returnItem'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(
+                s.t('returnItem'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 isExpanded: true,
@@ -4624,7 +5227,10 @@ class _RequestReturnDialogState extends State<_RequestReturnDialog> {
                 },
               ),
               const SizedBox(height: 12),
-              Text(s.t('returnReason'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(
+                s.t('returnReason'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 isExpanded: true,

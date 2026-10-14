@@ -30,7 +30,8 @@ class WingerStrings {
       'password': 'Password',
       'continueRole': 'Continue',
       'back': 'Back',
-      'languageHint': 'Language follows your account. Choose English, Español or Kiswahili.',
+      'languageHint':
+          'Language follows your account. Choose English, Español or Kiswahili.',
       'home': 'Home',
       'search': 'Search',
       'compare': 'Compare',
@@ -83,18 +84,23 @@ class WingerStrings {
       'tax': 'Tax',
       'orderDetails': 'Order details',
       'cancelOrder': 'Cancel order',
-      'cancelOrderConfirm': 'Cancel this order? Stock will be restored if nothing has shipped yet.',
+      'cancelOrderConfirm':
+          'Cancel this order? Stock will be restored if nothing has shipped yet.',
       'cancelOrderConfirmCod':
           'Cancel this unpaid pay-on-delivery order? Nothing has been charged. Stock will be restored.',
       'dueOnDelivery': 'Due on delivery',
-      'codPendingBanner': 'Pay on delivery — pay {amount} when your order arrives.',
-      'codDeliveredDue': 'Delivered — {amount} is still due. Pay the supplier in cash or mobile money.',
-      'codAddressRequired': 'Add a delivery address and city before placing a pay-on-delivery order.',
+      'codPendingBanner':
+          'Pay on delivery — pay {amount} when your order arrives.',
+      'codDeliveredDue':
+          'Delivered — {amount} is still due. Pay the supplier in cash or mobile money.',
+      'codAddressRequired':
+          'Add a delivery address and city before placing a pay-on-delivery order.',
       'collectPaymentConfirm':
           'Collect {amount} from {customer} for {order}? This marks the order as PAID.',
       'paymentCollected': 'Payment collected — marked PAID',
       'markedDelivered': 'Marked delivered',
-      'markedDeliveredCodPending': 'Marked delivered — payment still due until collected or full order delivered',
+      'markedDeliveredCodPending':
+          'Marked delivered — payment still due until collected or full order delivered',
       'markedShipped': 'Marked shipped',
       'orderCancelled': 'Order cancelled',
       'placedOn': 'Placed',
@@ -117,11 +123,13 @@ class WingerStrings {
       'returnReasonOther': 'Other',
       'returnNotes': 'Additional notes',
       'submitReturn': 'Submit return request',
-      'returnSubmitted': 'Return request submitted — your supplier will review it',
+      'returnSubmitted':
+          'Return request submitted — your supplier will review it',
       'returnRequests': 'Return requests',
       'returnStatus': 'Status',
       'returns': 'Returns',
-      'returnsInboxHint': 'Open = needs your review. Closed = approved/rejected/finished (create replacements from Closed). Refunds stay manual for now.',
+      'returnsInboxHint':
+          'Open = needs your review. Closed = approved/rejected/finished (create replacements from Closed). Refunds stay manual for now.',
       'returnsAdminOverviewHint':
           'Platform returns and refund queue. Open needs review; Pending refunds are approved returns waiting for ISSUED.',
       'returnsSupplierOverviewHint':
@@ -140,7 +148,8 @@ class WingerStrings {
       'returnsOpenEmpty': 'No returns waiting for review.',
       'returnsClosedEmpty': 'No approved or closed returns yet.',
       'returnApprove': 'Approve',
-      'returnApproveConfirm': 'Approve this return? Stock will be restored and refund marked pending until you issue it or create a replacement.',
+      'returnApproveConfirm':
+          'Approve this return? Stock will be restored and refund marked pending until you issue it or create a replacement.',
       'returnReject': 'Reject',
       'returnMarkReview': 'Mark in review',
       'returnClose': 'Close',
@@ -193,33 +202,42 @@ class WingerStrings {
       'payments': 'Payments',
       'connectPayouts': 'Connect Stripe payouts',
       'payoutsConnected': 'Stripe payouts are connected',
-      'payoutsHint': 'Test mode. After delivery, the supplier receives the item total minus commission. Tax and delivery stay on the platform.',
+      'payoutsHint':
+          'Test mode. After delivery, the supplier receives the item total minus commission. Tax and delivery stay on the platform.',
       'refreshPayouts': 'Refresh payout status',
       'sendPayouts': 'Send settleable payouts',
       'payoutSent': 'Payout sent',
       'deliveryFees': 'Delivery fees',
-      'deliveryFeesHint': 'Amounts are in USD. Enter 0 to make that method free.',
+      'deliveryFeesHint':
+          'Amounts are in USD. Enter 0 to make that method free.',
       'standardDelivery': 'Standard delivery',
       'expressDelivery': 'Express delivery',
       'pickupDelivery': 'Pickup',
       'freeDeliveryThreshold': 'Free standard delivery from',
-      'freeDeliveryThresholdHint': 'Leave blank to always charge the standard fee. When this supplier’s items reach this amount, standard delivery is free.',
+      'freeDeliveryThresholdHint':
+          'Leave blank to always charge the standard fee. When this supplier’s items reach this amount, standard delivery is free.',
       'saveDeliveryFees': 'Save delivery fees',
       'deliveryFeesSaved': 'Delivery fees saved.',
       'freeDelivery': 'Free',
       'taxRate': 'Tax rate',
-      'taxRateHint': 'Used when the delivery city and the product have no rate of their own. 0 means no tax.',
+      'taxRateHint':
+          'Used when the delivery city and the product have no rate of their own. 0 means no tax.',
       'taxOnDelivery': 'Also tax the delivery fee',
       'taxSection': 'Tax',
       'taxByCity': 'Tax by city',
-      'taxByCityHint': 'When the customer’s city matches, that rate replaces the supplier rate. A rate on the product replaces both.',
+      'taxByCityHint':
+          'When the customer’s city matches, that rate replaces the supplier rate. A rate on the product replaces both.',
       'taxCity': 'City',
       'addTaxCity': 'Add city',
       'taxCityRequired': 'Each city needs a name and a rate from 0 to 100.',
       'productTaxRate': 'Product tax rate',
-      'productTaxHint': 'Leave blank to use the city rate, or the supplier rate when the city has none. 0 means this product is tax free.',
+      'productTaxHint':
+          'Leave blank to use the city rate, or the supplier rate when the city has none. 0 means this product is tax free.',
       'carrierSection': 'Who delivers',
-      'carrierHint': 'Pickup does not use a carrier. Checkout records the courier name. Live courier booking is not connected yet.',
+      'carrierHint':
+          'Pickup does not use a carrier. Marking a courier shipment shipped books that courier and saves a tracking reference.',
+      'bookCourier': 'Book courier',
+      'courierBooked': 'Booked with {name} · {reference}',
       'carrierSupplier': 'I deliver',
       'carrierCourier': 'A courier delivers',
       'courierName': 'Courier name',
@@ -267,7 +285,8 @@ class WingerStrings {
       'customDistanceTitle': 'Distance in miles',
       'customDistanceHint': 'Miles',
       'apply': 'Apply',
-      'distanceNeedsCity': 'Set your city on your account to filter by distance.',
+      'distanceNeedsCity':
+          'Set your city on your account to filter by distance.',
       'addToCart': 'Add to cart',
       'addedToCart': 'Added to cart',
       'continueShopping': 'Continue shopping',
@@ -306,9 +325,11 @@ class WingerStrings {
       'csvTemplateSaved': 'CSV template saved',
       'bulkImportHint':
           'Bulk import up to 100 products from a CSV (name + price required). Matching model or name updates an existing product. Use the table icon for a template.',
-      'importCsvConfirm': 'Import {n} products from this CSV? Existing rows match by model, then name.',
+      'importCsvConfirm':
+          'Import {n} products from this CSV? Existing rows match by model, then name.',
       'importCsvSkipped': 'Skipped {n} invalid row(s):',
-      'importCsvResult': 'Created {created} · updated {updated} · {fail} failed',
+      'importCsvResult':
+          'Created {created} · updated {updated} · {fail} failed',
       'openReturns': 'Open returns',
       'returnsNeedsReview': 'Needs review',
       'returnsAttentionBanner':
@@ -331,7 +352,8 @@ class WingerStrings {
       'description': 'Description',
       'productCreated': 'Product created',
       'productUpdated': 'Product updated',
-      'productFormInvalid': 'Enter a name, non-negative price, and stock quantity.',
+      'productFormInvalid':
+          'Enter a name, non-negative price, and stock quantity.',
       'supplierProductsHint':
           'Create and edit your catalogue. Receive stock updates even when briefly offline.',
       'noSupplierProducts': 'No products yet — add your first SKU.',
@@ -368,7 +390,8 @@ class WingerStrings {
       'cardTestHint':
           'Test card 4242 4242 4242 4242, any future expiry, any CVC. 4000 0000 0000 0002 is declined.',
       'cardInvalid': 'Enter a valid card number, a future expiry, and a CVC.',
-      'cardHostedNote': 'The card is entered in Stripe. Winger does not receive the card number.',
+      'cardHostedNote':
+          'The card is entered in Stripe. Winger does not receive the card number.',
       'payOnDelivery': 'Pay on delivery',
       'payOnDeliveryHint':
           'No charge now — pay cash or mobile money when your order arrives.',
@@ -399,16 +422,20 @@ class WingerStrings {
       'markReady': 'Mark ready',
       'cancel': 'Cancel',
       'commission': 'Commission',
-      'commissionAdminHint': 'Default rate applies when no active supplier agreement exists. Tax is recorded separately and is not commissionable.',
+      'commissionAdminHint':
+          'Default rate applies when no active supplier agreement exists. Tax is recorded separately and is not commissionable.',
       'commissionBySupplier': 'Commission by supplier',
-      'commissionBySupplierHint': 'Real totals exclude demo checkouts. Demo amounts are shown separately and are not settleable.',
+      'commissionBySupplierHint':
+          'Real totals exclude demo checkouts. Demo amounts are shown separately and are not settleable.',
       'recognizedCommission': 'Recognized commission',
       'totalCommission': 'Total commission',
       'demoCommission': 'Demo commission',
-      'demoCommissionNote': 'Card checkout is running in demo mode (no Stripe key), so these commissions are tracked but not treated as real money. Place a COD order to see real totals, or configure Stripe.',
+      'demoCommissionNote':
+          'Card checkout is running in demo mode (no Stripe key), so these commissions are tracked but not treated as real money. Place a COD order to see real totals, or configure Stripe.',
       'recognized': 'Recognized',
       'lines': 'Lines',
-      'commissionSupplierHint': 'Commission snapshots use your active agreement rate (or the platform default). Demo payments are never settleable.',
+      'commissionSupplierHint':
+          'Commission snapshots use your active agreement rate (or the platform default). Demo payments are never settleable.',
       'defaultCommission': 'Default commission rate',
       'commissionRate': 'Rate',
       'commissionDefaultSaved': 'Default commission rate saved',
@@ -422,8 +449,10 @@ class WingerStrings {
       'approve': 'Approve',
       'reject': 'Reject',
       'acceptAgreement': 'Accept & activate',
-      'awaitingSupplierAccept': 'Approved — waiting for that supplier to accept and activate.',
-      'awaitingYourAccept': 'Admin approved this rate. Accept to activate it for your account.',
+      'awaitingSupplierAccept':
+          'Approved — waiting for that supplier to accept and activate.',
+      'awaitingYourAccept':
+          'Admin approved this rate. Accept to activate it for your account.',
       'supplierAccount': 'Supplier account',
       'activeRate': 'Active rate',
       'settleableCommission': 'Settleable commission',
@@ -443,7 +472,8 @@ class WingerStrings {
       'noPlatformAlerts': 'No open alerts.',
       'alertHigh': 'High',
       'obChecklistTitle': 'Getting started',
-      'obChecklistSubtitle': '{n} steps left — progress is saved to your account',
+      'obChecklistSubtitle':
+          '{n} steps left — progress is saved to your account',
       'obContinueSetup': 'Continue setup',
       'obRefresh': 'Refresh',
       'obSkipLater': 'Skip for later',
@@ -465,7 +495,8 @@ class WingerStrings {
       'obSetupPayout': 'Set up payouts',
       'obSaveDelivery': 'Save delivery settings',
       'obCustomerJourney': 'Customer onboarding',
-      'obCustomerJourneyBody': 'Profile, preferences, browse, compare, cart, checkout and tracking.',
+      'obCustomerJourneyBody':
+          'Profile, preferences, browse, compare, cart, checkout and tracking.',
       'obCustomerProfile': 'Profile',
       'obCustomerProfileBody': 'Add your name, phone and city.',
       'obCustomerPrefs': 'Preferences',
@@ -481,7 +512,8 @@ class WingerStrings {
       'obCustomerTracking': 'Track orders',
       'obCustomerTrackingBody': 'Open your orders list.',
       'obSupplierJourney': 'Supplier onboarding',
-      'obSupplierJourneyBody': 'Business profile, verification, payouts, catalogue, inventory, delivery and fulfillment.',
+      'obSupplierJourneyBody':
+          'Business profile, verification, payouts, catalogue, inventory, delivery and fulfillment.',
       'obSupplierBusiness': 'Business profile',
       'obSupplierBusinessBody': 'Describe your supplier business.',
       'obSupplierVerification': 'Verification',
@@ -497,7 +529,8 @@ class WingerStrings {
       'obSupplierFulfillment': 'Order fulfillment',
       'obSupplierFulfillmentBody': 'Mark an order as shipped.',
       'obAdminJourney': 'Admin onboarding',
-      'obAdminJourneyBody': 'Platform setup, permissions, approvals, catalogue, orders, delivery, payments and commissions.',
+      'obAdminJourneyBody':
+          'Platform setup, permissions, approvals, catalogue, orders, delivery, payments and commissions.',
       'obAdminPlatform': 'Platform setup',
       'obAdminPlatformBody': 'Set currency and timezone.',
       'obAdminPermissions': 'Permissions',
@@ -515,7 +548,8 @@ class WingerStrings {
       'obAdminCommissions': 'Commissions',
       'obAdminCommissionsBody': 'Configure commission defaults.',
       'signupTitle': 'Create your account',
-      'signupBody': 'Choose a role, then enroll. Suppliers get a unique business id.',
+      'signupBody':
+          'Choose a role, then enroll. Suppliers get a unique business id.',
       'signupSide': 'One account to shop, sell, or operate the marketplace.',
       'haveAccount': 'Sign in',
       'createAccount': 'Create account',
@@ -523,7 +557,8 @@ class WingerStrings {
       'businessName': 'Business name',
       'businessNameHint': 'Shown on your supplier profile',
       'preferredSupplierId': 'Preferred supplier id (optional)',
-      'preferredSupplierIdHint': 'Leave blank for a system id, e.g. s-acme-tech',
+      'preferredSupplierIdHint':
+          'Leave blank for a system id, e.g. s-acme-tech',
       'addressLine': 'Street / area',
       'deliveryAddress': 'Delivery address',
     },
@@ -531,7 +566,8 @@ class WingerStrings {
       'appName': 'Winger',
       'tagline': 'Un marketplace',
       'welcome': 'Bienvenido a Winger',
-      'apiOffline': 'La API no está disponible. Conéctate e inténtalo de nuevo.',
+      'apiOffline':
+          'La API no está disponible. Conéctate e inténtalo de nuevo.',
       'oneLogin': 'Un acceso. Todos los lados del marketplace.',
       'oneLoginBody':
           'Compra, vende y opera con un catálogo compartido, pagos seguros y entregas claras.',
@@ -545,7 +581,8 @@ class WingerStrings {
       'password': 'Contraseña',
       'continueRole': 'Continuar',
       'back': 'Atrás',
-      'languageHint': 'El idioma sigue tu cuenta. Elige English, Español o Kiswahili.',
+      'languageHint':
+          'El idioma sigue tu cuenta. Elige English, Español o Kiswahili.',
       'home': 'Inicio',
       'search': 'Buscar',
       'compare': 'Comparar',
@@ -598,23 +635,29 @@ class WingerStrings {
       'tax': 'Impuesto',
       'orderDetails': 'Detalles del pedido',
       'cancelOrder': 'Cancelar pedido',
-      'cancelOrderConfirm': '¿Cancelar este pedido? Se restaurará el stock si aún no se ha enviado.',
+      'cancelOrderConfirm':
+          '¿Cancelar este pedido? Se restaurará el stock si aún no se ha enviado.',
       'cancelOrderConfirmCod':
           '¿Cancelar este pedido contra entrega sin pagar? No se ha cobrado. Se restaurará el stock.',
       'dueOnDelivery': 'A pagar al entregar',
-      'codPendingBanner': 'Pagar al entregar — paga {amount} cuando llegue el pedido.',
-      'codDeliveredDue': 'Entregado — {amount} sigue pendiente. Paga al proveedor en efectivo o dinero móvil.',
-      'codAddressRequired': 'Añade dirección y ciudad antes de pedir contra entrega.',
+      'codPendingBanner':
+          'Pagar al entregar — paga {amount} cuando llegue el pedido.',
+      'codDeliveredDue':
+          'Entregado — {amount} sigue pendiente. Paga al proveedor en efectivo o dinero móvil.',
+      'codAddressRequired':
+          'Añade dirección y ciudad antes de pedir contra entrega.',
       'collectPaymentConfirm':
           '¿Cobrar {amount} a {customer} por {order}? Esto marca el pedido como PAGADO.',
       'paymentCollected': 'Pago cobrado — marcado PAGADO',
       'markedDelivered': 'Marcado entregado',
-      'markedDeliveredCodPending': 'Entregado — el pago sigue pendiente hasta cobrar o entregar todo',
+      'markedDeliveredCodPending':
+          'Entregado — el pago sigue pendiente hasta cobrar o entregar todo',
       'markedShipped': 'Marcado enviado',
       'orderCancelled': 'Pedido cancelado',
       'placedOn': 'Realizado',
       'shipments': 'Envíos',
-      'supportHint': 'Solicita una devolución desde el detalle del pedido tras la entrega.',
+      'supportHint':
+          'Solicita una devolución desde el detalle del pedido tras la entrega.',
       'requestReturn': 'Solicitar devolución',
       'requestReturnTitle': 'Solicitar una devolución',
       'requestReturnHint':
@@ -636,14 +679,16 @@ class WingerStrings {
       'returnRequests': 'Solicitudes de devolución',
       'returnStatus': 'Estado',
       'returns': 'Devoluciones',
-      'returnsInboxHint': 'Abiertas = pendientes de revisión. Cerradas = aprobadas/rechazadas/finalizadas (crea reemplazos desde Cerradas). Los reembolsos siguen siendo manuales.',
+      'returnsInboxHint':
+          'Abiertas = pendientes de revisión. Cerradas = aprobadas/rechazadas/finalizadas (crea reemplazos desde Cerradas). Los reembolsos siguen siendo manuales.',
       'returnsAdminOverviewHint':
           'Cola de devoluciones y reembolsos. Abiertas necesitan revisión; reembolsos pendientes esperan marcarse como emitidos.',
       'returnsSupplierOverviewHint':
           'Solo tus devoluciones y reembolsos. Abiertas necesitan revisión; reembolsos pendientes esperan marcarse como emitidos.',
       'returnsBySupplier': 'Atención por proveedor',
       'refundsPending': 'Reembolsos pendientes',
-      'refundsPendingEmpty': 'No hay devoluciones aprobadas en espera de reembolso.',
+      'refundsPendingEmpty':
+          'No hay devoluciones aprobadas en espera de reembolso.',
       'refundsIssued': 'Reembolsos emitidos',
       'returnsRejected': 'Rechazadas',
       'needsReview': 'Necesita revisión',
@@ -655,7 +700,8 @@ class WingerStrings {
       'returnsOpenEmpty': 'No hay devoluciones pendientes de revisión.',
       'returnsClosedEmpty': 'Aún no hay devoluciones aprobadas o cerradas.',
       'returnApprove': 'Aprobar',
-      'returnApproveConfirm': '¿Aprobar esta devolución? Se restaurará el stock y el reembolso quedará pendiente hasta emitirlo o crear un reemplazo.',
+      'returnApproveConfirm':
+          '¿Aprobar esta devolución? Se restaurará el stock y el reembolso quedará pendiente hasta emitirlo o crear un reemplazo.',
       'returnReject': 'Rechazar',
       'returnMarkReview': 'En revisión',
       'returnClose': 'Cerrar',
@@ -708,33 +754,43 @@ class WingerStrings {
       'payments': 'Pagos',
       'connectPayouts': 'Conectar pagos de Stripe',
       'payoutsConnected': 'Los pagos de Stripe están conectados',
-      'payoutsHint': 'Modo de prueba. Tras la entrega, el proveedor recibe el total del artículo menos la comisión. El impuesto y la entrega se quedan en la plataforma.',
+      'payoutsHint':
+          'Modo de prueba. Tras la entrega, el proveedor recibe el total del artículo menos la comisión. El impuesto y la entrega se quedan en la plataforma.',
       'refreshPayouts': 'Actualizar estado de pagos',
       'sendPayouts': 'Enviar pagos listos',
       'payoutSent': 'Pago enviado',
       'deliveryFees': 'Tarifas de entrega',
-      'deliveryFeesHint': 'Los importes están en USD. Escribe 0 para dejar ese método gratis.',
+      'deliveryFeesHint':
+          'Los importes están en USD. Escribe 0 para dejar ese método gratis.',
       'standardDelivery': 'Entrega estándar',
       'expressDelivery': 'Entrega exprés',
       'pickupDelivery': 'Recogida',
       'freeDeliveryThreshold': 'Entrega estándar gratis desde',
-      'freeDeliveryThresholdHint': 'Déjalo vacío para cobrar siempre la tarifa estándar. Al llegar a este importe de este proveedor, la entrega estándar es gratis.',
+      'freeDeliveryThresholdHint':
+          'Déjalo vacío para cobrar siempre la tarifa estándar. Al llegar a este importe de este proveedor, la entrega estándar es gratis.',
       'saveDeliveryFees': 'Guardar tarifas',
       'deliveryFeesSaved': 'Tarifas de entrega guardadas.',
       'freeDelivery': 'Gratis',
       'taxRate': 'Tasa de impuesto',
-      'taxRateHint': 'Se usa cuando la ciudad de entrega y el producto no tienen una tasa propia. 0 significa sin impuesto.',
+      'taxRateHint':
+          'Se usa cuando la ciudad de entrega y el producto no tienen una tasa propia. 0 significa sin impuesto.',
       'taxOnDelivery': 'Aplicar el impuesto también a la entrega',
       'taxSection': 'Impuesto',
       'taxByCity': 'Impuesto por ciudad',
-      'taxByCityHint': 'Si la ciudad del cliente coincide, esa tasa reemplaza la del proveedor. Una tasa en el producto reemplaza ambas.',
+      'taxByCityHint':
+          'Si la ciudad del cliente coincide, esa tasa reemplaza la del proveedor. Una tasa en el producto reemplaza ambas.',
       'taxCity': 'Ciudad',
       'addTaxCity': 'Añadir ciudad',
-      'taxCityRequired': 'Cada ciudad necesita un nombre y una tasa de 0 a 100.',
+      'taxCityRequired':
+          'Cada ciudad necesita un nombre y una tasa de 0 a 100.',
       'productTaxRate': 'Impuesto del producto',
-      'productTaxHint': 'Déjalo vacío para usar la tasa de la ciudad, o la del proveedor si la ciudad no tiene. 0 significa que este producto no paga impuesto.',
+      'productTaxHint':
+          'Déjalo vacío para usar la tasa de la ciudad, o la del proveedor si la ciudad no tiene. 0 significa que este producto no paga impuesto.',
       'carrierSection': 'Quién entrega',
-      'carrierHint': 'La recogida no usa transportista. El pedido guarda el nombre del mensajero. La reserva en vivo aún no está conectada.',
+      'carrierHint':
+          'La recogida no usa transportista. Al marcar un envío de mensajero como enviado se reserva ese mensajero y se guarda una referencia.',
+      'bookCourier': 'Reservar mensajero',
+      'courierBooked': 'Reservado con {name} · {reference}',
       'carrierSupplier': 'Yo entrego',
       'carrierCourier': 'Un mensajero entrega',
       'courierName': 'Nombre del mensajero',
@@ -782,7 +838,8 @@ class WingerStrings {
       'customDistanceTitle': 'Distancia en millas',
       'customDistanceHint': 'Millas',
       'apply': 'Aplicar',
-      'distanceNeedsCity': 'Indica tu ciudad en la cuenta para filtrar por distancia.',
+      'distanceNeedsCity':
+          'Indica tu ciudad en la cuenta para filtrar por distancia.',
       'addToCart': 'Añadir al carrito',
       'addedToCart': 'Añadido al carrito',
       'continueShopping': 'Seguir comprando',
@@ -821,9 +878,11 @@ class WingerStrings {
       'csvTemplateSaved': 'Plantilla CSV guardada',
       'bulkImportHint':
           'Importa hasta 100 productos desde CSV (nombre + precio obligatorios). Modelo o nombre coincidente actualiza un producto existente. Usa el icono de tabla para la plantilla.',
-      'importCsvConfirm': '¿Importar {n} productos de este CSV? Se actualizan por modelo o nombre.',
+      'importCsvConfirm':
+          '¿Importar {n} productos de este CSV? Se actualizan por modelo o nombre.',
       'importCsvSkipped': 'Se omitieron {n} fila(s) inválida(s):',
-      'importCsvResult': 'Creados {created} · actualizados {updated} · {fail} fallidos',
+      'importCsvResult':
+          'Creados {created} · actualizados {updated} · {fail} fallidos',
       'openReturns': 'Devoluciones abiertas',
       'returnsNeedsReview': 'Requieren revisión',
       'returnsAttentionBanner':
@@ -882,8 +941,10 @@ class WingerStrings {
       'cardCvc': 'CVC',
       'cardTestHint':
           'Tarjeta de prueba 4242 4242 4242 4242, cualquier vencimiento futuro y cualquier CVC. 4000 0000 0000 0002 es rechazada.',
-      'cardInvalid': 'Escribe un número válido, un vencimiento futuro y un CVC.',
-      'cardHostedNote': 'La tarjeta se escribe en Stripe. Winger no recibe el número.',
+      'cardInvalid':
+          'Escribe un número válido, un vencimiento futuro y un CVC.',
+      'cardHostedNote':
+          'La tarjeta se escribe en Stripe. Winger no recibe el número.',
       'payOnDelivery': 'Pagar al entregar',
       'payOnDeliveryHint':
           'Sin cargo ahora — paga en efectivo o móvil al recibir el pedido.',
@@ -914,16 +975,20 @@ class WingerStrings {
       'markReady': 'Marcar listo',
       'cancel': 'Cancelar',
       'commission': 'Comisión',
-      'commissionAdminHint': 'La tarifa por defecto aplica sin acuerdo activo. El impuesto se registra aparte y no es comisionable.',
+      'commissionAdminHint':
+          'La tarifa por defecto aplica sin acuerdo activo. El impuesto se registra aparte y no es comisionable.',
       'commissionBySupplier': 'Comisión por proveedor',
-      'commissionBySupplierHint': 'Los totales reales excluyen demo. Los montos demo se muestran aparte y no son liquidables.',
+      'commissionBySupplierHint':
+          'Los totales reales excluyen demo. Los montos demo se muestran aparte y no son liquidables.',
       'recognizedCommission': 'Comisión reconocida',
       'totalCommission': 'Comisión total',
       'demoCommission': 'Comisión demo',
-      'demoCommissionNote': 'El pago con tarjeta está en modo demo (sin clave Stripe). Esas comisiones se rastrean pero no son dinero real. Usa COD para totales reales, o configura Stripe.',
+      'demoCommissionNote':
+          'El pago con tarjeta está en modo demo (sin clave Stripe). Esas comisiones se rastrean pero no son dinero real. Usa COD para totales reales, o configura Stripe.',
       'recognized': 'Reconocida',
       'lines': 'Líneas',
-      'commissionSupplierHint': 'Las comisiones usan tu acuerdo activo (o el valor por defecto). Los pagos demo no son liquidables.',
+      'commissionSupplierHint':
+          'Las comisiones usan tu acuerdo activo (o el valor por defecto). Los pagos demo no son liquidables.',
       'defaultCommission': 'Comisión por defecto',
       'commissionRate': 'Tarifa',
       'commissionDefaultSaved': 'Tarifa por defecto guardada',
@@ -937,8 +1002,10 @@ class WingerStrings {
       'approve': 'Aprobar',
       'reject': 'Rechazar',
       'acceptAgreement': 'Aceptar y activar',
-      'awaitingSupplierAccept': 'Aprobado — espera a que ese proveedor acepte y active.',
-      'awaitingYourAccept': 'El admin aprobó esta tarifa. Acéptala para activarla en tu cuenta.',
+      'awaitingSupplierAccept':
+          'Aprobado — espera a que ese proveedor acepte y active.',
+      'awaitingYourAccept':
+          'El admin aprobó esta tarifa. Acéptala para activarla en tu cuenta.',
       'supplierAccount': 'Cuenta de proveedor',
       'activeRate': 'Tarifa activa',
       'settleableCommission': 'Comisión liquidable',
@@ -946,7 +1013,8 @@ class WingerStrings {
       'settleable': 'Liquidable',
       'pending': 'Pendiente',
       'commissionLines': 'Líneas de comisión',
-      'noCommissionLines': 'Aún no hay líneas de comisión (solo pedidos nuevos).',
+      'noCommissionLines':
+          'Aún no hay líneas de comisión (solo pedidos nuevos).',
       'save': 'Guardar',
       'signInAgain': 'Iniciar sesión de nuevo',
       'apiLoginRequired':
@@ -958,7 +1026,8 @@ class WingerStrings {
       'noPlatformAlerts': 'No hay alertas abiertas.',
       'alertHigh': 'Alta',
       'obChecklistTitle': 'Primeros pasos',
-      'obChecklistSubtitle': 'Quedan {n} pasos — el progreso se guarda en tu cuenta',
+      'obChecklistSubtitle':
+          'Quedan {n} pasos — el progreso se guarda en tu cuenta',
       'obContinueSetup': 'Continuar configuración',
       'obRefresh': 'Actualizar',
       'obSkipLater': 'Saltar por ahora',
@@ -980,7 +1049,8 @@ class WingerStrings {
       'obSetupPayout': 'Configurar pagos',
       'obSaveDelivery': 'Guardar entrega',
       'obCustomerJourney': 'Onboarding de cliente',
-      'obCustomerJourneyBody': 'Perfil, preferencias, explorar, comparar, carrito, pago y seguimiento.',
+      'obCustomerJourneyBody':
+          'Perfil, preferencias, explorar, comparar, carrito, pago y seguimiento.',
       'obCustomerProfile': 'Perfil',
       'obCustomerProfileBody': 'Añade nombre, teléfono y ciudad.',
       'obCustomerPrefs': 'Preferencias',
@@ -996,7 +1066,8 @@ class WingerStrings {
       'obCustomerTracking': 'Seguir pedidos',
       'obCustomerTrackingBody': 'Abre tu lista de pedidos.',
       'obSupplierJourney': 'Onboarding de proveedor',
-      'obSupplierJourneyBody': 'Perfil, verificación, pagos, catálogo, inventario, entrega y cumplimiento.',
+      'obSupplierJourneyBody':
+          'Perfil, verificación, pagos, catálogo, inventario, entrega y cumplimiento.',
       'obSupplierBusiness': 'Perfil del negocio',
       'obSupplierBusinessBody': 'Describe tu negocio de proveedor.',
       'obSupplierVerification': 'Verificación',
@@ -1012,7 +1083,8 @@ class WingerStrings {
       'obSupplierFulfillment': 'Cumplimiento de pedidos',
       'obSupplierFulfillmentBody': 'Marca un pedido como enviado.',
       'obAdminJourney': 'Onboarding de administrador',
-      'obAdminJourneyBody': 'Plataforma, permisos, aprobaciones, catálogo, pedidos, entrega, pagos y comisiones.',
+      'obAdminJourneyBody':
+          'Plataforma, permisos, aprobaciones, catálogo, pedidos, entrega, pagos y comisiones.',
       'obAdminPlatform': 'Configuración de plataforma',
       'obAdminPlatformBody': 'Define moneda y zona horaria.',
       'obAdminPermissions': 'Permisos',
@@ -1030,7 +1102,8 @@ class WingerStrings {
       'obAdminCommissions': 'Comisiones',
       'obAdminCommissionsBody': 'Configura comisiones por defecto.',
       'signupTitle': 'Crea tu cuenta',
-      'signupBody': 'Elige un rol y regístrate. Los proveedores reciben un id único.',
+      'signupBody':
+          'Elige un rol y regístrate. Los proveedores reciben un id único.',
       'signupSide': 'Una cuenta para comprar, vender u operar el marketplace.',
       'haveAccount': 'Iniciar sesión',
       'createAccount': 'Crear cuenta',
@@ -1038,7 +1111,8 @@ class WingerStrings {
       'businessName': 'Nombre del negocio',
       'businessNameHint': 'Se muestra en tu perfil de proveedor',
       'preferredSupplierId': 'Id de proveedor preferido (opcional)',
-      'preferredSupplierIdHint': 'Déjalo vacío para un id del sistema, ej. s-acme-tech',
+      'preferredSupplierIdHint':
+          'Déjalo vacío para un id del sistema, ej. s-acme-tech',
       'addressLine': 'Calle / zona',
       'deliveryAddress': 'Dirección de entrega',
     },
@@ -1060,7 +1134,8 @@ class WingerStrings {
       'password': 'Nenosiri',
       'continueRole': 'Endelea',
       'back': 'Rudi',
-      'languageHint': 'Lugha inafuata akaunti yako. Chagua English, Español au Kiswahili.',
+      'languageHint':
+          'Lugha inafuata akaunti yako. Chagua English, Español au Kiswahili.',
       'home': 'Nyumbani',
       'search': 'Tafuta',
       'compare': 'Linganisha',
@@ -1113,23 +1188,29 @@ class WingerStrings {
       'tax': 'Kodi',
       'orderDetails': 'Maelezo ya oda',
       'cancelOrder': 'Ghairi oda',
-      'cancelOrderConfirm': 'Ghairi oda hii? Stock itarejeshwa ikiwa bado haijasafirishwa.',
+      'cancelOrderConfirm':
+          'Ghairi oda hii? Stock itarejeshwa ikiwa bado haijasafirishwa.',
       'cancelOrderConfirmCod':
           'Ghairi oda hii ya kulipa unapopokea ambayo bado haijalipwa? Hakuna malipo yaliyokusanywa. Stock itarejeshwa.',
       'dueOnDelivery': 'Yanayolipwa unapopokea',
-      'codPendingBanner': 'Lipa unapopokea — lipa {amount} oda yako itakapofika.',
-      'codDeliveredDue': 'Imewasilishwa — {amount} bado haijalipwa. Mlipe muuzaji kwa pesa taslimu au pesa kwa simu.',
-      'codAddressRequired': 'Ongeza anwani na jiji kabla ya kuweka oda ya kulipa unapopokea.',
+      'codPendingBanner':
+          'Lipa unapopokea — lipa {amount} oda yako itakapofika.',
+      'codDeliveredDue':
+          'Imewasilishwa — {amount} bado haijalipwa. Mlipe muuzaji kwa pesa taslimu au pesa kwa simu.',
+      'codAddressRequired':
+          'Ongeza anwani na jiji kabla ya kuweka oda ya kulipa unapopokea.',
       'collectPaymentConfirm':
           'Pokea {amount} kutoka kwa {customer} kwa {order}? Hii itaweka oda kama IMELIPWA.',
       'paymentCollected': 'Malipo yamepokewa — yamewekwa IMELIPWA',
       'markedDelivered': 'Imewekwa imefikishwa',
-      'markedDeliveredCodPending': 'Imefikishwa — malipo bado yanadaiwa hadi yakusanywe au oda yote ifikishwe',
+      'markedDeliveredCodPending':
+          'Imefikishwa — malipo bado yanadaiwa hadi yakusanywe au oda yote ifikishwe',
       'markedShipped': 'Imewekwa imesafirishwa',
       'orderCancelled': 'Oda imeghairiwa',
       'placedOn': 'Iliwekwa',
       'shipments': 'Usafirishaji',
-      'supportHint': 'Omba marejesho kutoka maelezo ya oda baada ya kuwasilishwa.',
+      'supportHint':
+          'Omba marejesho kutoka maelezo ya oda baada ya kuwasilishwa.',
       'requestReturn': 'Omba marejesho',
       'requestReturnTitle': 'Omba marejesho',
       'requestReturnHint':
@@ -1151,14 +1232,16 @@ class WingerStrings {
       'returnRequests': 'Maombi ya marejesho',
       'returnStatus': 'Hali',
       'returns': 'Marejesho',
-      'returnsInboxHint': 'Wazi = zinahitaji ukaguzi. Zilizofungwa = zimeidhinishwa/zimekataliwa/zimekamilika (unda badala kutoka Zilizofungwa). Marejesho ya pesa bado ni ya mkono.',
+      'returnsInboxHint':
+          'Wazi = zinahitaji ukaguzi. Zilizofungwa = zimeidhinishwa/zimekataliwa/zimekamilika (unda badala kutoka Zilizofungwa). Marejesho ya pesa bado ni ya mkono.',
       'returnsAdminOverviewHint':
           'Foleni ya marejesho na malipo. Wazi zinahitaji ukaguzi; malipo yanayosubiri yanasubiri kuwekwa ISSUED.',
       'returnsSupplierOverviewHint':
           'Foleni yako pekee ya marejesho na malipo. Wazi zinahitaji ukaguzi; malipo yanayosubiri yanasubiri kuwekwa ISSUED.',
       'returnsBySupplier': 'Umakini kwa msambazaji',
       'refundsPending': 'Marejesho yanayosubiri',
-      'refundsPendingEmpty': 'Hakuna marejesho yaliyoidhinishwa yanayosubiri malipo.',
+      'refundsPendingEmpty':
+          'Hakuna marejesho yaliyoidhinishwa yanayosubiri malipo.',
       'refundsIssued': 'Marejesho yaliyotolewa',
       'returnsRejected': 'Yaliyokataliwa',
       'needsReview': 'Yanahitaji ukaguzi',
@@ -1168,9 +1251,11 @@ class WingerStrings {
       'returnsOpen': 'Wazi',
       'returnsClosed': 'Yaliyofungwa',
       'returnsOpenEmpty': 'Hakuna marejesho yanayosubiri ukaguzi.',
-      'returnsClosedEmpty': 'Bado hakuna marejesho yaliyoidhinishwa au yaliyofungwa.',
+      'returnsClosedEmpty':
+          'Bado hakuna marejesho yaliyoidhinishwa au yaliyofungwa.',
       'returnApprove': 'Kubali',
-      'returnApproveConfirm': 'Kubali marejesho haya? Stock itarejeshwa na marejesho ya pesa yatasubiri hadi uyatume au uunde badala.',
+      'returnApproveConfirm':
+          'Kubali marejesho haya? Stock itarejeshwa na marejesho ya pesa yatasubiri hadi uyatume au uunde badala.',
       'returnReject': 'Kataa',
       'returnMarkReview': 'Weka katika ukaguzi',
       'returnClose': 'Funga',
@@ -1223,7 +1308,8 @@ class WingerStrings {
       'payments': 'Malipo',
       'connectPayouts': 'Unganisha malipo ya Stripe',
       'payoutsConnected': 'Malipo ya Stripe yameunganishwa',
-      'payoutsHint': 'Hali ya majaribio. Baada ya kufikishwa, muuzaji hupokea jumla ya bidhaa ukiondoa kamisheni. Kodi na usafirishaji hubaki kwenye jukwaa.',
+      'payoutsHint':
+          'Hali ya majaribio. Baada ya kufikishwa, muuzaji hupokea jumla ya bidhaa ukiondoa kamisheni. Kodi na usafirishaji hubaki kwenye jukwaa.',
       'refreshPayouts': 'Onyesha upya hali ya malipo',
       'sendPayouts': 'Tuma malipo yaliyo tayari',
       'payoutSent': 'Malipo yametumwa',
@@ -1233,23 +1319,30 @@ class WingerStrings {
       'expressDelivery': 'Usafirishaji wa haraka',
       'pickupDelivery': 'Kuchukua mwenyewe',
       'freeDeliveryThreshold': 'Usafirishaji wa kawaida bure kuanzia',
-      'freeDeliveryThresholdHint': 'Acha wazi ili ada ya kawaida itozwe kila wakati. Bidhaa za muuzaji huyu zikifikia kiasi hiki, usafirishaji wa kawaida unakuwa bure.',
+      'freeDeliveryThresholdHint':
+          'Acha wazi ili ada ya kawaida itozwe kila wakati. Bidhaa za muuzaji huyu zikifikia kiasi hiki, usafirishaji wa kawaida unakuwa bure.',
       'saveDeliveryFees': 'Hifadhi ada',
       'deliveryFeesSaved': 'Ada za usafirishaji zimehifadhiwa.',
       'freeDelivery': 'Bure',
       'taxRate': 'Kiwango cha kodi',
-      'taxRateHint': 'Inatumika wakati jiji la kufikishia na bidhaa hazina kiwango chake. 0 inamaanisha hakuna kodi.',
+      'taxRateHint':
+          'Inatumika wakati jiji la kufikishia na bidhaa hazina kiwango chake. 0 inamaanisha hakuna kodi.',
       'taxOnDelivery': 'Toza kodi pia kwenye ada ya usafirishaji',
       'taxSection': 'Kodi',
       'taxByCity': 'Kodi kwa jiji',
-      'taxByCityHint': 'Jiji la mteja likilingana, kiwango hicho kinachukua nafasi ya kiwango cha muuzaji. Kiwango kwenye bidhaa kinachukua nafasi ya vyote viwili.',
+      'taxByCityHint':
+          'Jiji la mteja likilingana, kiwango hicho kinachukua nafasi ya kiwango cha muuzaji. Kiwango kwenye bidhaa kinachukua nafasi ya vyote viwili.',
       'taxCity': 'Jiji',
       'addTaxCity': 'Ongeza jiji',
       'taxCityRequired': 'Kila jiji linahitaji jina na kiwango cha 0 hadi 100.',
       'productTaxRate': 'Kodi ya bidhaa',
-      'productTaxHint': 'Acha wazi kutumia kiwango cha jiji, au cha muuzaji ikiwa jiji halina. 0 inamaanisha bidhaa hii haina kodi.',
+      'productTaxHint':
+          'Acha wazi kutumia kiwango cha jiji, au cha muuzaji ikiwa jiji halina. 0 inamaanisha bidhaa hii haina kodi.',
       'carrierSection': 'Nani anasafirisha',
-      'carrierHint': 'Kuchukua mwenyewe hakutumii msafirishaji. Oda inahifadhi jina la msafirishaji. Uhifadhi wa moja kwa moja bado haujaunganishwa.',
+      'carrierHint':
+          'Kuchukua mwenyewe hakutumii msafirishaji. Kuweka oda ya msafirishaji kuwa imesafirishwa huhifadhi msafirishaji huyo na nambari ya ufuatiliaji.',
+      'bookCourier': 'Hifadhi msafirishaji',
+      'courierBooked': 'Imehifadhiwa na {name} · {reference}',
       'carrierSupplier': 'Mimi nasafirisha',
       'carrierCourier': 'Msafirishaji anasafirisha',
       'courierName': 'Jina la msafirishaji',
@@ -1297,7 +1390,8 @@ class WingerStrings {
       'customDistanceTitle': 'Umbali kwa maili',
       'customDistanceHint': 'Maili',
       'apply': 'Tumia',
-      'distanceNeedsCity': 'Weka jiji lako kwenye akaunti ili kuchuja kwa umbali.',
+      'distanceNeedsCity':
+          'Weka jiji lako kwenye akaunti ili kuchuja kwa umbali.',
       'addToCart': 'Ongeza kwenye kikapu',
       'addedToCart': 'Imeongezwa kwenye kikapu',
       'continueShopping': 'Endelea kununua',
@@ -1336,9 +1430,11 @@ class WingerStrings {
       'csvTemplateSaved': 'Kiolezo cha CSV kimehifadhiwa',
       'bulkImportHint':
           'Ingiza hadi bidhaa 100 kutoka CSV (jina + bei zinahitajika). Model au jina linalofanana linasasisha bidhaa iliyopo. Tumia ikoni ya jedwali kwa kiolezo.',
-      'importCsvConfirm': 'Ingiza bidhaa {n} kutoka CSV hii? Zitasasishwa kwa model au jina.',
+      'importCsvConfirm':
+          'Ingiza bidhaa {n} kutoka CSV hii? Zitasasishwa kwa model au jina.',
       'importCsvSkipped': 'Safu {n} batili zimerukwa:',
-      'importCsvResult': 'Zimeundwa {created} · zimesasishwa {updated} · {fail} zimeshindikana',
+      'importCsvResult':
+          'Zimeundwa {created} · zimesasishwa {updated} · {fail} zimeshindikana',
       'openReturns': 'Marejesho yaliyo wazi',
       'returnsNeedsReview': 'Yanahitaji ukaguzi',
       'returnsAttentionBanner':
@@ -1353,7 +1449,8 @@ class WingerStrings {
       'replacementOrderCreated': 'Oda ya badala {id}',
       'replacementOrderHint':
           'Hii ni usafirishaji wa badala bila malipo. Ifuatilie kama oda ya kawaida.',
-      'replacementMissingOrder': 'Kitambulisho cha oda hakipo kwa marejesho haya',
+      'replacementMissingOrder':
+          'Kitambulisho cha oda hakipo kwa marejesho haya',
       'edit': 'Hariri',
       'productName': 'Jina la bidhaa',
       'brand': 'Chapa',
@@ -1398,7 +1495,8 @@ class WingerStrings {
       'cardTestHint':
           'Kadi ya majaribio 4242 4242 4242 4242, muda wowote ujao, na CVC yoyote. 4000 0000 0000 0002 inakataliwa.',
       'cardInvalid': 'Weka nambari sahihi, muda ujao, na CVC.',
-      'cardHostedNote': 'Kadi inaandikwa kwa Stripe. Winger haipokei nambari ya kadi.',
+      'cardHostedNote':
+          'Kadi inaandikwa kwa Stripe. Winger haipokei nambari ya kadi.',
       'payOnDelivery': 'Lipa unapopokea',
       'payOnDeliveryHint':
           'Hakuna malipo sasa — lipa pesa taslimu au mobile money unapopokea.',
@@ -1429,16 +1527,20 @@ class WingerStrings {
       'markReady': 'Weka tayari',
       'cancel': 'Ghairi',
       'commission': 'Kamisheni',
-      'commissionAdminHint': 'Kiwango cha chaguo-msingi kinatumika bila makubaliano. Kodi hurekodiwa tofauti na haiko katika kamisheni.',
+      'commissionAdminHint':
+          'Kiwango cha chaguo-msingi kinatumika bila makubaliano. Kodi hurekodiwa tofauti na haiko katika kamisheni.',
       'commissionBySupplier': 'Kamisheni kwa msambazaji',
-      'commissionBySupplierHint': 'Jumla halisi hazijumuishi demo. Kiasi cha demo kinaonyeshwa tofauti na hakilipwi.',
+      'commissionBySupplierHint':
+          'Jumla halisi hazijumuishi demo. Kiasi cha demo kinaonyeshwa tofauti na hakilipwi.',
       'recognizedCommission': 'Kamisheni iliyotambuliwa',
       'totalCommission': 'Jumla ya kamisheni',
       'demoCommission': 'Kamisheni ya demo',
-      'demoCommissionNote': 'Malipo ya kadi yapo katika hali ya demo (hakuna funguo ya Stripe). Kamisheni hizi zinafuatiliwa lakini si pesa halisi. Tumia COD au weka Stripe.',
+      'demoCommissionNote':
+          'Malipo ya kadi yapo katika hali ya demo (hakuna funguo ya Stripe). Kamisheni hizi zinafuatiliwa lakini si pesa halisi. Tumia COD au weka Stripe.',
       'recognized': 'Imetambuliwa',
       'lines': 'Mistari',
-      'commissionSupplierHint': 'Kamisheni hutumia makubaliano yako (au chaguo-msingi). Malipo ya demo hayalipwi.',
+      'commissionSupplierHint':
+          'Kamisheni hutumia makubaliano yako (au chaguo-msingi). Malipo ya demo hayalipwi.',
       'defaultCommission': 'Kiwango cha chaguo-msingi cha kamisheni',
       'commissionRate': 'Kiwango',
       'commissionDefaultSaved': 'Kiwango cha chaguo-msingi kimehifadhiwa',
@@ -1452,8 +1554,10 @@ class WingerStrings {
       'approve': 'Idhinisha',
       'reject': 'Kataa',
       'acceptAgreement': 'Kubali na washa',
-      'awaitingSupplierAccept': 'Imeidhinishwa — subiri msambazaji huyo akubali na kuwasha.',
-      'awaitingYourAccept': 'Admin ameidhinisha kiwango hiki. Kubali ili kiwashe kwa akaunti yako.',
+      'awaitingSupplierAccept':
+          'Imeidhinishwa — subiri msambazaji huyo akubali na kuwasha.',
+      'awaitingYourAccept':
+          'Admin ameidhinisha kiwango hiki. Kubali ili kiwashe kwa akaunti yako.',
       'supplierAccount': 'Akaunti ya msambazaji',
       'activeRate': 'Kiwango kinachotumika',
       'settleableCommission': 'Kamisheni inayolipika',
@@ -1473,7 +1577,8 @@ class WingerStrings {
       'noPlatformAlerts': 'Hakuna tahadhari wazi.',
       'alertHigh': 'Juu',
       'obChecklistTitle': 'Kuanza',
-      'obChecklistSubtitle': 'Hatua {n} zimesalia — maendeleo yanahifadhiwa kwenye akaunti',
+      'obChecklistSubtitle':
+          'Hatua {n} zimesalia — maendeleo yanahifadhiwa kwenye akaunti',
       'obContinueSetup': 'Endelea usanidi',
       'obRefresh': 'Onyesha upya',
       'obSkipLater': 'Ruka kwa sasa',
@@ -1495,7 +1600,8 @@ class WingerStrings {
       'obSetupPayout': 'Sanidi malipo',
       'obSaveDelivery': 'Hifadhi uwasilishaji',
       'obCustomerJourney': 'Onboarding ya mteja',
-      'obCustomerJourneyBody': 'Wasifu, mapendeleo, kuvinjari, kulinganisha, kikapu, malipo na ufuatiliaji.',
+      'obCustomerJourneyBody':
+          'Wasifu, mapendeleo, kuvinjari, kulinganisha, kikapu, malipo na ufuatiliaji.',
       'obCustomerProfile': 'Wasifu',
       'obCustomerProfileBody': 'Ongeza jina, simu na jiji.',
       'obCustomerPrefs': 'Mapendeleo',
@@ -1511,7 +1617,8 @@ class WingerStrings {
       'obCustomerTracking': 'Fuatilia oda',
       'obCustomerTrackingBody': 'Fungua orodha ya oda zako.',
       'obSupplierJourney': 'Onboarding ya msambazaji',
-      'obSupplierJourneyBody': 'Wasifu, uthibitisho, malipo, katalogi, hifadhi, uwasilishaji na utimilifu.',
+      'obSupplierJourneyBody':
+          'Wasifu, uthibitisho, malipo, katalogi, hifadhi, uwasilishaji na utimilifu.',
       'obSupplierBusiness': 'Wasifu wa biashara',
       'obSupplierBusinessBody': 'Eleza biashara yako ya usambazaji.',
       'obSupplierVerification': 'Uthibitisho',
@@ -1527,7 +1634,8 @@ class WingerStrings {
       'obSupplierFulfillment': 'Utimilifu wa oda',
       'obSupplierFulfillmentBody': 'Weka oda kama imesafirishwa.',
       'obAdminJourney': 'Onboarding ya msimamizi',
-      'obAdminJourneyBody': 'Jukwaa, ruhusa, idhini, katalogi, oda, uwasilishaji, malipo na kamisheni.',
+      'obAdminJourneyBody':
+          'Jukwaa, ruhusa, idhini, katalogi, oda, uwasilishaji, malipo na kamisheni.',
       'obAdminPlatform': 'Usanidi wa jukwaa',
       'obAdminPlatformBody': 'Weka sarafu na saa za eneo.',
       'obAdminPermissions': 'Ruhusa',
@@ -1545,7 +1653,8 @@ class WingerStrings {
       'obAdminCommissions': 'Kamisheni',
       'obAdminCommissionsBody': 'Sanidi kamisheni chaguo-msingi.',
       'signupTitle': 'Unda akaunti yako',
-      'signupBody': 'Chagua jukumu kisha jiandikishe. Wasambazaji hupata kitambulisho cha kipekee.',
+      'signupBody':
+          'Chagua jukumu kisha jiandikishe. Wasambazaji hupata kitambulisho cha kipekee.',
       'signupSide': 'Akaunti moja kununua, kuuza au kuendesha soko.',
       'haveAccount': 'Ingia',
       'createAccount': 'Unda akaunti',
@@ -1553,7 +1662,8 @@ class WingerStrings {
       'businessName': 'Jina la biashara',
       'businessNameHint': 'Inaonekana kwenye wasifu wako wa msambazaji',
       'preferredSupplierId': 'Kitambulisho unachopendelea (si lazima)',
-      'preferredSupplierIdHint': 'Acha tupu kwa kitambulisho cha mfumo, mf. s-acme-tech',
+      'preferredSupplierIdHint':
+          'Acha tupu kwa kitambulisho cha mfumo, mf. s-acme-tech',
       'addressLine': 'Mtaa / eneo',
       'deliveryAddress': 'Anwani ya uwasilishaji',
     },
@@ -1587,5 +1697,6 @@ class WingerStringsDelegate extends LocalizationsDelegate<WingerStrings> {
   Future<WingerStrings> load(Locale locale) async => WingerStrings(locale);
 
   @override
-  bool shouldReload(covariant LocalizationsDelegate<WingerStrings> old) => false;
+  bool shouldReload(covariant LocalizationsDelegate<WingerStrings> old) =>
+      false;
 }

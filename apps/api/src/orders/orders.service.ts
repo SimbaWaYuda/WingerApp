@@ -27,6 +27,7 @@ import {
   computeFulfillmentFees,
   normalizeDeliveryMethod,
 } from './delivery-fees';
+import { nextCourierReference } from './courier-booking';
 import { PayoutsService } from './payouts.service';
 import { cardRefundAmount, ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
 
@@ -87,6 +88,7 @@ const orderWithItems = {
   items: {
     include: {
       commission: true,
+      courierBooking: true,
       replacesOrderItem: {
         select: {
           id: true,
@@ -1694,6 +1696,10 @@ export class OrdersService {
         where: { orderId: order.id },
         data: { status: OrderStatus.CANCELLED },
       });
+      await tx.courierBooking.updateMany({
+        where: { orderItem: { orderId: order.id }, status: 'booked' },
+        data: { status: 'cancelled' },
+      });
       await tx.order.update({
         where: { id: order.id },
         data: {
@@ -1784,6 +1790,9 @@ export class OrdersService {
         pickupCode: dto.pickupCode,
       },
     });
+    if (nextItemStatus === OrderStatus.SHIPPED && item.carrier === 'courier') {
+      await this.bookCourier(item.id);
+    }
 
     const items = await this.prisma.orderItem.findMany({
       where: { orderId: item.orderId },
@@ -1815,7 +1824,7 @@ export class OrdersService {
           ...(user.role === UserRole.SUPPLIER && user.supplierId
             ? { where: { supplierId: user.supplierId } }
             : {}),
-          include: { commission: true },
+          include: { commission: true, courierBooking: true },
         },
       },
     });
@@ -2289,6 +2298,41 @@ export class OrdersService {
     throw new ForbiddenException('Cannot view this order');
   }
 
+  /** Books a courier when a courier line is marked shipped. Pickup and supplier delivery skip this. */
+  private async bookCourier(orderItemId: string) {
+    const item = await this.prisma.orderItem.findUnique({
+      where: { id: orderItemId },
+      include: { order: true, courierBooking: true },
+    });
+    if (!item || item.carrier !== 'courier') return;
+
+    if (item.courierBooking) {
+      if (item.trackingCode !== item.courierBooking.reference) {
+        await this.prisma.orderItem.update({
+          where: { id: item.id },
+          data: { trackingCode: item.courierBooking.reference },
+        });
+      }
+      return;
+    }
+
+    const reference = nextCourierReference(await this.prisma.courierBooking.count());
+    await this.prisma.courierBooking.create({
+      data: {
+        orderItemId: item.id,
+        courierName: item.courierName?.trim() || 'Courier',
+        reference,
+        status: 'booked',
+        dropoffCity: item.order.city,
+        dropoffAddress: item.order.addressLine,
+      },
+    });
+    await this.prisma.orderItem.update({
+      where: { id: item.id },
+      data: { trackingCode: reference },
+    });
+  }
+
   private toResponse(
     order: {
       id: string;
@@ -2323,6 +2367,11 @@ export class OrdersService {
         pickupCode: string | null;
         carrier?: string | null;
         courierName?: string | null;
+        courierBooking?: {
+          reference: string;
+          status: string;
+          courierName: string;
+        } | null;
         replacesOrderItemId?: string | null;
         replacesOrderItem?: {
           id: string;
@@ -2407,6 +2456,13 @@ export class OrdersService {
         pickupCode: item.pickupCode,
         carrier: item.carrier ?? null,
         courierName: item.courierName ?? null,
+        courierBooking: item.courierBooking
+          ? {
+              reference: item.courierBooking.reference,
+              status: item.courierBooking.status,
+              courierName: item.courierBooking.courierName,
+            }
+          : null,
         replacesOrderItemId: item.replacesOrderItemId ?? null,
         replacesOrderId: item.replacesOrderItem?.order.displayId ?? null,
         replacedByOrderId: item.replacedBy?.order.displayId ?? null,

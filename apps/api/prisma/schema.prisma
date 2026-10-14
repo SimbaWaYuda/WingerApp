@@ -427,10 +427,27 @@ model OrderItem {
   replacedBy          OrderItem? @relation("ItemReplacement")
   returnRequests ReturnRequest[]
   commission   OrderItemCommission?
+  courierBooking CourierBooking?
 
   @@index([orderId])
   @@index([supplierId])
   @@index([productId])
+}
+
+/// One booking for a courier shipment. Created when the supplier marks it shipped.
+model CourierBooking {
+  id             String    @id @default(cuid())
+  orderItemId    String    @unique
+  orderItem      OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  courierName    String
+  reference      String    @unique
+  /// booked or cancelled
+  status         String    @default("booked")
+  dropoffCity    String?
+  dropoffAddress String?
+  bookedAt       DateTime  @default(now())
+
+  @@index([status])
 }
 
 /// Immutable rate/base/amount snapshot per order line (status may advance).

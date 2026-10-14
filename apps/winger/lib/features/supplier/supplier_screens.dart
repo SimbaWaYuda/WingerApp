@@ -782,7 +782,18 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                             if (item.trackingCode != null) ...[
                               const SizedBox(height: 4),
                               Text(
-                                '${s.t('trackingCode')}: ${item.trackingCode}',
+                                item.trackingCode!.startsWith('CR-')
+                                    ? s
+                                          .t('courierBooked')
+                                          .replaceAll(
+                                            '{name}',
+                                            item.courierName ?? 'Courier',
+                                          )
+                                          .replaceAll(
+                                            '{reference}',
+                                            item.trackingCode!,
+                                          )
+                                    : '${s.t('trackingCode')}: ${item.trackingCode}',
                                 style: TextStyle(color: WingerColors.muted),
                               ),
                             ],
@@ -860,7 +871,11 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                                         item,
                                                       )),
                                           ),
-                                    child: Text(s.t('markShipped')),
+                                    child: Text(
+                                      item.carrier == 'courier'
+                                          ? s.t('bookCourier')
+                                          : s.t('markShipped'),
+                                    ),
                                   ),
                                   FilledButton.tonal(
                                     onPressed:
@@ -1658,7 +1673,9 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
               ),
               TextField(
                 controller: _taxCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: InputDecoration(
                   labelText: s.t('productTaxRate'),
                   suffixText: '%',
@@ -2377,12 +2394,14 @@ class _SupplierDeliveryFeesScreenState
         _cityTaxes
           ..clear()
           ..addAll(
-            (fees['taxCities'] as List<dynamic>? ?? const []).whereType<Map>().map(
-              (row) => _CityTaxEditors(
-                city: row['city']?.toString() ?? '',
-                rate: _moneyText(row['taxRatePercent'] as num?),
-              ),
-            ),
+            (fees['taxCities'] as List<dynamic>? ?? const [])
+                .whereType<Map>()
+                .map(
+                  (row) => _CityTaxEditors(
+                    city: row['city']?.toString() ?? '',
+                    rate: _moneyText(row['taxRatePercent'] as num?),
+                  ),
+                ),
           );
         _carrier = fees['carrier'] == 'courier' ? 'courier' : 'supplier';
         _courierCtrl.text = fees['courierName'] as String? ?? '';
@@ -2618,7 +2637,9 @@ class _SupplierDeliveryFeesScreenState
                   flex: 2,
                   child: TextField(
                     controller: _cityTaxes[i].rateCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: InputDecoration(
                       labelText: s.t('taxRate'),
                       suffixText: '%',

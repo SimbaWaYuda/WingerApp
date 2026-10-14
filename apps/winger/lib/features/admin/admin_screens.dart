@@ -14,18 +14,42 @@ import '../../core/widgets/status_badge.dart';
 import '../onboarding/onboarding_checklist.dart';
 
 List<ShellDestination> adminDestinations({int returnsAttention = 0}) => [
-  const ShellDestination(labelKey: 'dashboard', icon: Icons.dashboard_outlined, path: '/admin'),
-  const ShellDestination(labelKey: 'suppliers', icon: Icons.storefront_outlined, path: '/admin/suppliers'),
-  const ShellDestination(labelKey: 'orders', icon: Icons.receipt_long_outlined, path: '/admin/orders'),
+  const ShellDestination(
+    labelKey: 'dashboard',
+    icon: Icons.dashboard_outlined,
+    path: '/admin',
+  ),
+  const ShellDestination(
+    labelKey: 'suppliers',
+    icon: Icons.storefront_outlined,
+    path: '/admin/suppliers',
+  ),
+  const ShellDestination(
+    labelKey: 'orders',
+    icon: Icons.receipt_long_outlined,
+    path: '/admin/orders',
+  ),
   ShellDestination(
     labelKey: 'returns',
     icon: Icons.assignment_return_outlined,
     path: '/admin/returns',
     badgeCount: returnsAttention,
   ),
-  const ShellDestination(labelKey: 'commission', icon: Icons.percent_outlined, path: '/admin/commissions'),
-  const ShellDestination(labelKey: 'delivery', icon: Icons.local_shipping_outlined, path: '/admin/delivery'),
-  const ShellDestination(labelKey: 'currencies', icon: Icons.currency_exchange, path: '/admin/currencies'),
+  const ShellDestination(
+    labelKey: 'commission',
+    icon: Icons.percent_outlined,
+    path: '/admin/commissions',
+  ),
+  const ShellDestination(
+    labelKey: 'delivery',
+    icon: Icons.local_shipping_outlined,
+    path: '/admin/delivery',
+  ),
+  const ShellDestination(
+    labelKey: 'currencies',
+    icon: Icons.currency_exchange,
+    path: '/admin/currencies',
+  ),
 ];
 
 class AdminShell extends StatefulWidget {
@@ -73,7 +97,9 @@ class _AdminShellState extends State<AdminShell> {
     final location = GoRouterState.of(context).uri.path;
     if (_lastPath != location) {
       _lastPath = location;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _refreshReturnsBadge());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _refreshReturnsBadge(),
+      );
     }
     return RoleShell(
       title: s.t('dashboard'),
@@ -127,19 +153,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         final kpis = <KpiCardData>[
           KpiCardData(
             label: s.t('gmv'),
-            value: '\$${((data?['gmv'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            value:
+                '\$${((data?['gmv'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
             delta: s.t('settlementUsd'),
           ),
           KpiCardData(
             label: s.t('wingerRevenue'),
-            value: '\$${((data?['wingerRevenue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            value:
+                '\$${((data?['wingerRevenue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
             delta:
                 '\$${((data?['settleableCommission'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ${s.t('settleable')}',
           ),
           KpiCardData(
             label: s.t('orders'),
             value: '${data?['orderCount'] ?? 0}',
-            delta: '${data?['paidCount'] ?? 0} ${s.t('paid')} · ${data?['openCount'] ?? 0} ${s.t('open')}',
+            delta:
+                '${data?['paidCount'] ?? 0} ${s.t('paid')} · ${data?['openCount'] ?? 0} ${s.t('open')}',
           ),
           KpiCardData(
             label: s.t('activeSuppliers'),
@@ -157,7 +186,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 Expanded(
                   child: Text(
                     s.t('dashboard'),
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 IconButton(
@@ -169,7 +200,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             const SizedBox(height: 8),
             Text(
               s.t('adminDashboardHint'),
-              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: WingerColors.muted,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 16),
             if (snapshot.connectionState != ConnectionState.done)
@@ -188,7 +222,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        snapshot.error.toString().replaceFirst('Exception: ', ''),
+                        snapshot.error.toString().replaceFirst(
+                          'Exception: ',
+                          '',
+                        ),
                         style: TextStyle(color: WingerColors.muted),
                       ),
                       const SizedBox(height: 12),
@@ -214,7 +251,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 children: [for (final kpi in kpis) KpiCard(data: kpi)],
               ),
               const SizedBox(height: 20),
-              Text(s.t('operationalQueue'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(
+                s.t('operationalQueue'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
               const SizedBox(height: 8),
               _AdminQueueTile(
                 title: s.t('openReturns'),
@@ -232,7 +275,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 onTap: () => context.go('/admin/orders'),
               ),
               const SizedBox(height: 12),
-              Text(s.t('platformAlerts'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(
+                s.t('platformAlerts'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
               const SizedBox(height: 8),
               ..._dashboardAlerts(context, data),
             ],
@@ -243,22 +292,43 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 }
 
-List<Widget> _dashboardAlerts(BuildContext context, Map<String, dynamic>? data) {
+List<Widget> _dashboardAlerts(
+  BuildContext context,
+  Map<String, dynamic>? data,
+) {
   final s = WingerStrings.of(context);
   final exceptions = (data?['deliveryExceptions'] as num?)?.toInt() ?? 0;
   final openReturns = (data?['openReturns'] as num?)?.toInt() ?? 0;
   final unpaid = (data?['unpaidOrders'] as num?)?.toInt() ?? 0;
   final rows = <({String title, String path, int count, bool high})>[
     if (exceptions > 0)
-      (title: s.t('exceptions'), path: '/admin/delivery', count: exceptions, high: true),
+      (
+        title: s.t('exceptions'),
+        path: '/admin/delivery',
+        count: exceptions,
+        high: true,
+      ),
     if (openReturns > 0)
-      (title: s.t('openReturns'), path: '/admin/returns', count: openReturns, high: false),
+      (
+        title: s.t('openReturns'),
+        path: '/admin/returns',
+        count: openReturns,
+        high: false,
+      ),
     if (unpaid > 0)
-      (title: s.t('unpaidOrders'), path: '/admin/orders', count: unpaid, high: false),
+      (
+        title: s.t('unpaidOrders'),
+        path: '/admin/orders',
+        count: unpaid,
+        high: false,
+      ),
   ];
   if (rows.isEmpty) {
     return [
-      Text(s.t('noPlatformAlerts'), style: TextStyle(color: WingerColors.muted)),
+      Text(
+        s.t('noPlatformAlerts'),
+        style: TextStyle(color: WingerColors.muted),
+      ),
     ];
   }
   return [
@@ -271,7 +341,10 @@ List<Widget> _dashboardAlerts(BuildContext context, Map<String, dynamic>? data) 
           trailing: row.high
               ? Text(
                   s.t('alertHigh'),
-                  style: const TextStyle(color: WingerColors.dangerInk, fontWeight: FontWeight.w800),
+                  style: const TextStyle(
+                    color: WingerColors.dangerInk,
+                    fontWeight: FontWeight.w800,
+                  ),
                 )
               : null,
         ),
@@ -299,7 +372,9 @@ class _AdminQueueTile extends StatelessWidget {
         title: Text(title),
         trailing: CircleAvatar(
           radius: 16,
-          backgroundColor: attention ? WingerColors.attention : WingerColors.brandMuted,
+          backgroundColor: attention
+              ? WingerColors.attention
+              : WingerColors.brandMuted,
           child: Text(
             '$count',
             style: TextStyle(
@@ -361,7 +436,9 @@ class _AdminSuppliersScreenState extends State<AdminSuppliersScreen> {
                 Expanded(
                   child: Text(
                     s.t('suppliers'),
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 IconButton(
@@ -372,7 +449,10 @@ class _AdminSuppliersScreenState extends State<AdminSuppliersScreen> {
             ),
             Text(
               s.t('settlementUsd'),
-              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: WingerColors.muted,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 12),
             if (snapshot.connectionState != ConnectionState.done)
@@ -389,7 +469,10 @@ class _AdminSuppliersScreenState extends State<AdminSuppliersScreen> {
                 ),
               )
             else if (suppliers.isEmpty)
-              Text(s.t('noSuppliers'), style: TextStyle(color: WingerColors.muted))
+              Text(
+                s.t('noSuppliers'),
+                style: TextStyle(color: WingerColors.muted),
+              )
             else
               for (final supplier in suppliers)
                 Card(
@@ -404,7 +487,9 @@ class _AdminSuppliersScreenState extends State<AdminSuppliersScreen> {
                             children: [
                               Text(
                                 '${supplier['name'] ?? ''}',
-                                style: const TextStyle(fontWeight: FontWeight.w700),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                               const SizedBox(height: 4),
                               Text(
@@ -442,18 +527,18 @@ class _SupplierStatusBadge extends StatelessWidget {
     final label = live
         ? s.t('statusLive')
         : review
-            ? s.t('review')
-            : s.t('statusUnverified');
+        ? s.t('review')
+        : s.t('statusUnverified');
     final background = live
         ? WingerColors.success
         : review
-            ? WingerColors.info
-            : WingerColors.attention;
+        ? WingerColors.info
+        : WingerColors.attention;
     final ink = live
         ? WingerColors.successInk
         : review
-            ? WingerColors.infoInk
-            : WingerColors.attentionInk;
+        ? WingerColors.infoInk
+        : WingerColors.attentionInk;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -508,17 +593,28 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(s.t('orders'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              s.t('orders'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 12),
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())
             else if (orders.isEmpty)
-              Text('No orders in the platform yet.', style: TextStyle(color: WingerColors.muted))
+              Text(
+                'No orders in the platform yet.',
+                style: TextStyle(color: WingerColors.muted),
+              )
             else
               for (final order in orders)
                 Card(
                   child: ListTile(
-                    title: Text(order.id, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    title: Text(
+                      order.id,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
                     subtitle: Text(
                       '${order.customerName} · ${order.itemRows.length} line(s) · ${order.paymentStatus}',
                     ),
@@ -577,17 +673,20 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
           KpiCardData(
             label: s.t('inTransit'),
             value: '${data?['inTransit'] ?? 0}',
-            delta: '\$${((data?['inTransitValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            delta:
+                '\$${((data?['inTransitValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
           ),
           KpiCardData(
             label: s.t('pickupReady'),
             value: '${data?['pickupReady'] ?? 0}',
-            delta: '\$${((data?['pickupReadyValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            delta:
+                '\$${((data?['pickupReadyValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
           ),
           KpiCardData(
             label: s.t('exceptions'),
             value: '$exceptionCount',
-            delta: '\$${((data?['exceptionValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+            delta:
+                '\$${((data?['exceptionValue'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
             positive: exceptionCount == 0,
           ),
         ];
@@ -604,7 +703,9 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
                 Expanded(
                   child: Text(
                     s.t('delivery'),
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 IconButton(
@@ -615,7 +716,10 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
             ),
             Text(
               s.t('settlementUsd'),
-              style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: WingerColors.muted,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 16),
             if (snapshot.connectionState != ConnectionState.done)
@@ -644,11 +748,17 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
               const SizedBox(height: 20),
               Text(
                 s.t('activeShipments'),
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
               ),
               const SizedBox(height: 8),
               if (shipments.isEmpty)
-                Text(s.t('noActiveShipments'), style: TextStyle(color: WingerColors.muted))
+                Text(
+                  s.t('noActiveShipments'),
+                  style: TextStyle(color: WingerColors.muted),
+                )
               else
                 for (final row in shipments)
                   Card(
@@ -663,29 +773,62 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
                               children: [
                                 Text(
                                   '${row['displayId'] ?? ''}',
-                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text('${row['supplierName'] ?? ''}'),
                                 if (carrierCaption(
                                       carrier: row['carrier'] as String?,
-                                      courierName: row['courierName'] as String?,
-                                      supplierDelivery: s.t('carrierSupplierLabel'),
-                                      courierDelivery: s.t('carrierCourierLabel'),
-                                      unnamedCourier: s.t('carrierCourierFallback'),
+                                      courierName:
+                                          row['courierName'] as String?,
+                                      supplierDelivery: s.t(
+                                        'carrierSupplierLabel',
+                                      ),
+                                      courierDelivery: s.t(
+                                        'carrierCourierLabel',
+                                      ),
+                                      unnamedCourier: s.t(
+                                        'carrierCourierFallback',
+                                      ),
                                     )
                                     case final line?)
-                                  Text(line, style: TextStyle(color: WingerColors.muted)),
-                                Text('${row['productName'] ?? ''} × ${row['quantity'] ?? 1}'),
+                                  Text(
+                                    line,
+                                    style: TextStyle(color: WingerColors.muted),
+                                  ),
+                                Text(
+                                  '${row['productName'] ?? ''} × ${row['quantity'] ?? 1}',
+                                ),
                                 const SizedBox(height: 4),
                                 Text(
                                   '\$${((row['lineTotal'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
-                                  style: const TextStyle(fontWeight: FontWeight.w700),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                                if ((row['trackingCode'] as String?)?.isNotEmpty == true) ...[
+                                if ((row['trackingCode'] as String?)
+                                        ?.isNotEmpty ==
+                                    true) ...[
                                   const SizedBox(height: 4),
                                   Text(
-                                    '${s.t('trackingCode')}: ${row['trackingCode']}',
+                                    (row['trackingCode'] as String).startsWith(
+                                          'CR-',
+                                        )
+                                        ? s
+                                              .t('courierBooked')
+                                              .replaceAll(
+                                                '{name}',
+                                                (row['courierName']
+                                                        as String?) ??
+                                                    'Courier',
+                                              )
+                                              .replaceAll(
+                                                '{reference}',
+                                                row['trackingCode'] as String,
+                                              )
+                                        : '${s.t('trackingCode')}: ${row['trackingCode']}',
                                     style: TextStyle(color: WingerColors.muted),
                                   ),
                                 ],
@@ -693,7 +836,11 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          StatusBadge(status: orderStatusFromApi(row['status'] as String?)),
+                          StatusBadge(
+                            status: orderStatusFromApi(
+                              row['status'] as String?,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -730,7 +877,10 @@ class _CommissionTotalChip extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(color: WingerColors.muted, fontSize: 12)),
+          Text(
+            label,
+            style: TextStyle(color: WingerColors.muted, fontSize: 12),
+          ),
           const SizedBox(height: 4),
           Text(
             '\$${value.toStringAsFixed(2)}',
@@ -788,7 +938,8 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
       final suppliers = await catalog.getSuppliers();
       if (!mounted) return;
       setState(() {
-        _defaultRate = (settings['defaultCommissionPercent'] as num?)?.toDouble() ?? 10;
+        _defaultRate =
+            (settings['defaultCommissionPercent'] as num?)?.toDouble() ?? 10;
         _rateCtrl.text = _defaultRate.toString();
         _agreements = agreements;
         _supplierTotals = totals;
@@ -811,7 +962,9 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
       await _reload();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(WingerStrings.of(context).t('commissionDefaultSaved'))),
+        SnackBar(
+          content: Text(WingerStrings.of(context).t('commissionDefaultSaved')),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -830,9 +983,9 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
     setState(() => _busy = true);
     try {
       await context.read<ApiClient>().proposeCommissionAgreement(
-            supplierId: supplierId,
-            ratePercent: rate,
-          );
+        supplierId: supplierId,
+        ratePercent: rate,
+      );
       await _reload();
     } catch (e) {
       if (!mounted) return;
@@ -849,15 +1002,15 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
     setState(() => _busy = true);
     try {
       await context.read<ApiClient>().commissionAgreementAction(
-            agreementId: id,
-            action: action,
-          );
+        agreementId: id,
+        action: action,
+      );
       await _reload();
       if (!mounted) return;
       if (action == 'approve') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(s.t('awaitingSupplierAccept'))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(s.t('awaitingSupplierAccept'))));
       }
     } catch (e) {
       if (!mounted) return;
@@ -878,24 +1031,45 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(s.t('commission'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              s.t('commission'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 8),
-            Text(s.t('commissionAdminHint'), style: TextStyle(color: WingerColors.muted)),
+            Text(
+              s.t('commissionAdminHint'),
+              style: TextStyle(color: WingerColors.muted),
+            ),
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!, style: const TextStyle(color: WingerColors.dangerInk)),
+              Text(
+                _error!,
+                style: const TextStyle(color: WingerColors.dangerInk),
+              ),
             ],
             const SizedBox(height: 16),
-            Text(s.t('commissionBySupplier'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+            Text(
+              s.t('commissionBySupplier'),
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+            ),
             const SizedBox(height: 4),
-            Text(s.t('commissionBySupplierHint'), style: TextStyle(color: WingerColors.muted)),
+            Text(
+              s.t('commissionBySupplierHint'),
+              style: TextStyle(color: WingerColors.muted),
+            ),
             const SizedBox(height: 10),
             if (_supplierTotals != null) ...[
               Builder(
                 builder: (context) {
-                  final totals = (_supplierTotals!['totals'] as Map<String, dynamic>?) ?? {};
-                  final rows = (_supplierTotals!['suppliers'] as List<dynamic>? ?? const [])
-                      .cast<Map<String, dynamic>>();
+                  final totals =
+                      (_supplierTotals!['totals'] as Map<String, dynamic>?) ??
+                      {};
+                  final rows =
+                      (_supplierTotals!['suppliers'] as List<dynamic>? ??
+                              const [])
+                          .cast<Map<String, dynamic>>();
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -905,44 +1079,69 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
                         children: [
                           _CommissionTotalChip(
                             label: s.t('pendingCommission'),
-                            value: (totals['pendingCommission'] as num?)?.toDouble() ?? 0,
+                            value:
+                                (totals['pendingCommission'] as num?)
+                                    ?.toDouble() ??
+                                0,
                           ),
                           _CommissionTotalChip(
                             label: s.t('recognizedCommission'),
-                            value: (totals['recognizedCommission'] as num?)?.toDouble() ?? 0,
+                            value:
+                                (totals['recognizedCommission'] as num?)
+                                    ?.toDouble() ??
+                                0,
                           ),
                           _CommissionTotalChip(
                             label: s.t('settleableCommission'),
-                            value: (totals['settleableCommission'] as num?)?.toDouble() ?? 0,
+                            value:
+                                (totals['settleableCommission'] as num?)
+                                    ?.toDouble() ??
+                                0,
                           ),
                           _CommissionTotalChip(
                             label: s.t('totalCommission'),
-                            value: (totals['totalCommission'] as num?)?.toDouble() ?? 0,
+                            value:
+                                (totals['totalCommission'] as num?)
+                                    ?.toDouble() ??
+                                0,
                             emphasize: true,
                           ),
                           _CommissionTotalChip(
                             label: s.t('demoCommission'),
-                            value: (totals['demoCommission'] as num?)?.toDouble() ?? 0,
+                            value:
+                                (totals['demoCommission'] as num?)
+                                    ?.toDouble() ??
+                                0,
                           ),
                         ],
                       ),
-                      if (((totals['demoCommission'] as num?)?.toDouble() ?? 0) > 0) ...[
+                      if (((totals['demoCommission'] as num?)?.toDouble() ??
+                              0) >
+                          0) ...[
                         const SizedBox(height: 8),
                         Text(
                           s.t('demoCommissionNote'),
-                          style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            color: WingerColors.muted,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ],
                       const SizedBox(height: 12),
                       if (rows.isEmpty)
-                        Text(s.t('noCommissionLines'), style: TextStyle(color: WingerColors.muted))
+                        Text(
+                          s.t('noCommissionLines'),
+                          style: TextStyle(color: WingerColors.muted),
+                        )
                       else
                         for (final row in rows)
                           Card(
                             child: ListTile(
                               title: Text(
                                 '${row['supplierName'] ?? row['supplierId']}',
-                                style: const TextStyle(fontWeight: FontWeight.w800),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                               subtitle: Text(
                                 '${s.t('activeRate')}: ${(row['activeRatePercent'] as num?)?.toStringAsFixed(1) ?? '—'}%'
@@ -960,12 +1159,21 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
                                 children: [
                                   Text(
                                     '\$${((row['totalCommission'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
-                                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 16,
+                                    ),
                                   ),
-                                  if (((row['demoCommission'] as num?)?.toDouble() ?? 0) > 0)
+                                  if (((row['demoCommission'] as num?)
+                                              ?.toDouble() ??
+                                          0) >
+                                      0)
                                     Text(
                                       'demo \$${((row['demoCommission'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
-                                      style: TextStyle(color: WingerColors.muted, fontSize: 11),
+                                      style: TextStyle(
+                                        color: WingerColors.muted,
+                                        fontSize: 11,
+                                      ),
                                     ),
                                 ],
                               ),
@@ -983,7 +1191,10 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(s.t('defaultCommission'), style: const TextStyle(fontWeight: FontWeight.w800)),
+                    Text(
+                      s.t('defaultCommission'),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -991,8 +1202,13 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
                           width: 120,
                           child: TextField(
                             controller: _rateCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            decoration: InputDecoration(suffixText: '%', labelText: s.t('commissionRate')),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: InputDecoration(
+                              suffixText: '%',
+                              labelText: s.t('commissionRate'),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -1007,7 +1223,10 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Text(s.t('proposeAgreement'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+            Text(
+              s.t('proposeAgreement'),
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+            ),
             const SizedBox(height: 8),
             Card(
               child: Padding(
@@ -1018,16 +1237,25 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
                       value: _proposeSupplierId,
                       items: [
                         for (final supplier in _suppliers)
-                          DropdownMenuItem(value: supplier.id, child: Text(supplier.name)),
+                          DropdownMenuItem(
+                            value: supplier.id,
+                            child: Text(supplier.name),
+                          ),
                       ],
-                      onChanged: (value) => setState(() => _proposeSupplierId = value),
+                      onChanged: (value) =>
+                          setState(() => _proposeSupplierId = value),
                       decoration: InputDecoration(labelText: s.t('suppliers')),
                     ),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _proposeRateCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(suffixText: '%', labelText: s.t('commissionRate')),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        suffixText: '%',
+                        labelText: s.t('commissionRate'),
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Align(
@@ -1042,12 +1270,18 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Text(s.t('commissionAgreements'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+            Text(
+              s.t('commissionAgreements'),
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+            ),
             const SizedBox(height: 8),
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())
             else if (_agreements.isEmpty)
-              Text(s.t('noAgreements'), style: TextStyle(color: WingerColors.muted))
+              Text(
+                s.t('noAgreements'),
+                style: TextStyle(color: WingerColors.muted),
+              )
             else
               for (final row in _agreements)
                 Card(
@@ -1069,21 +1303,35 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
                         Wrap(
                           spacing: 8,
                           children: [
-                            if (row['status'] == 'PROPOSED' || row['status'] == 'COUNTERED')
+                            if (row['status'] == 'PROPOSED' ||
+                                row['status'] == 'COUNTERED')
                               FilledButton(
-                                onPressed: _busy ? null : () => _action(row['id'] as String, 'approve'),
+                                onPressed: _busy
+                                    ? null
+                                    : () => _action(
+                                        row['id'] as String,
+                                        'approve',
+                                      ),
                                 child: Text(s.t('approve')),
                               ),
                             if (row['status'] == 'APPROVED')
                               Text(
                                 s.t('awaitingSupplierAccept'),
-                                style: TextStyle(color: WingerColors.muted, fontWeight: FontWeight.w600),
+                                style: TextStyle(
+                                  color: WingerColors.muted,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             if (row['status'] != 'ACTIVE' &&
                                 row['status'] != 'REJECTED' &&
                                 row['status'] != 'SUPERSEDED')
                               OutlinedButton(
-                                onPressed: _busy ? null : () => _action(row['id'] as String, 'reject'),
+                                onPressed: _busy
+                                    ? null
+                                    : () => _action(
+                                        row['id'] as String,
+                                        'reject',
+                                      ),
                                 child: Text(s.t('reject')),
                               ),
                           ],
@@ -1146,7 +1394,8 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
   }
 
   void _apply(Map<String, dynamic> config, List<Map<String, dynamic>> rates) {
-    final settlement = (config['settlementCurrency'] as String? ?? 'USD').toUpperCase();
+    final settlement = (config['settlementCurrency'] as String? ?? 'USD')
+        .toUpperCase();
     final seconds = (config['fxMaxAgeSeconds'] as num?)?.toInt() ?? 86400;
     final hours = seconds / 3600;
     _settlement.text = settlement;
@@ -1175,7 +1424,9 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
     final s = WingerStrings.of(context);
     final settlement = _settlement.text.trim().toUpperCase();
     final hours = double.tryParse(_maxAgeHours.text.trim());
-    if (!RegExp(r'^[A-Z]{3}$').hasMatch(settlement) || hours == null || hours <= 0) {
+    if (!RegExp(r'^[A-Z]{3}$').hasMatch(settlement) ||
+        hours == null ||
+        hours <= 0) {
       setState(() => _error = s.t('currencyHint'));
       return;
     }
@@ -1196,7 +1447,9 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
         fxMaxAgeSeconds: (hours * 3600).round(),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('currencySaved'))));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('currencySaved'))));
       await _load();
     } catch (error) {
       if (!mounted) return;
@@ -1226,7 +1479,9 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
         baseCurrency: _settlement.text.trim().toUpperCase(),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('rateSaved'))));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('rateSaved'))));
       _newQuote.clear();
       _newRate.clear();
       await _load();
@@ -1273,15 +1528,26 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(s.t('currencies'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        Text(
+          s.t('currencies'),
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
         const SizedBox(height: 8),
-        Text(s.t('currencyHint'), style: const TextStyle(color: WingerColors.muted)),
+        Text(
+          s.t('currencyHint'),
+          style: const TextStyle(color: WingerColors.muted),
+        ),
         const SizedBox(height: 16),
         if (_loading)
           const Center(child: CircularProgressIndicator())
         else ...[
           if (_error != null) ...[
-            Text(_error!, style: const TextStyle(color: WingerColors.dangerInk)),
+            Text(
+              _error!,
+              style: const TextStyle(color: WingerColors.dangerInk),
+            ),
             const SizedBox(height: 12),
           ],
           TextField(
@@ -1291,7 +1557,10 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 16),
-          Text(s.t('displayCurrencies'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          Text(
+            s.t('displayCurrencies'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -1303,9 +1572,9 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
                   onDeleted: code == _settlement.text.trim().toUpperCase()
                       ? null
                       : () => setState(() {
-                            _display.remove(code);
-                            _payment.remove(code);
-                          }),
+                          _display.remove(code);
+                          _payment.remove(code);
+                        }),
                 ),
             ],
           ),
@@ -1321,11 +1590,17 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              FilledButton(onPressed: _addDisplay, child: Text(s.t('addCurrency'))),
+              FilledButton(
+                onPressed: _addDisplay,
+                child: Text(s.t('addCurrency')),
+              ),
             ],
           ),
           const SizedBox(height: 16),
-          Text(s.t('paymentCurrencies'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          Text(
+            s.t('paymentCurrencies'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -1337,12 +1612,12 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
                   onSelected: code == _settlement.text.trim().toUpperCase()
                       ? null
                       : (selected) => setState(() {
-                            if (selected) {
-                              if (!_payment.contains(code)) _payment.add(code);
-                            } else {
-                              _payment.remove(code);
-                            }
-                          }),
+                          if (selected) {
+                            if (!_payment.contains(code)) _payment.add(code);
+                          } else {
+                            _payment.remove(code);
+                          }
+                        }),
                 ),
             ],
           ),
@@ -1358,7 +1633,10 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
             child: Text(s.t('saveCurrencies')),
           ),
           const SizedBox(height: 24),
-          Text(s.t('exchangeRates'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+          Text(
+            s.t('exchangeRates'),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+          ),
           const SizedBox(height: 8),
           for (final row in _rates)
             Card(
@@ -1376,18 +1654,27 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: TextField(
-                            controller: _rateFields[(row['quoteCurrency'] as String).toUpperCase()],
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            controller:
+                                _rateFields[(row['quoteCurrency'] as String)
+                                    .toUpperCase()],
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
                             decoration: InputDecoration(
-                              labelText: (row['quoteCurrency'] as String).toUpperCase(),
+                              labelText: (row['quoteCurrency'] as String)
+                                  .toUpperCase(),
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          row['fresh'] == true ? s.t('rateFresh') : s.t('rateExpired'),
+                          row['fresh'] == true
+                              ? s.t('rateFresh')
+                              : s.t('rateExpired'),
                           style: TextStyle(
-                            color: row['fresh'] == true ? WingerColors.successInk : WingerColors.attentionInk,
+                            color: row['fresh'] == true
+                                ? WingerColors.successInk
+                                : WingerColors.attentionInk,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -1398,7 +1685,10 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
                       row['source'] == 'manual' || row['source'] == 'admin'
                           ? s.t('rateManual')
                           : s.t('rateAuto'),
-                      style: const TextStyle(color: WingerColors.muted, fontSize: 12),
+                      style: const TextStyle(
+                        color: WingerColors.muted,
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Align(
@@ -1407,8 +1697,12 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
                         onPressed: _saving
                             ? null
                             : () {
-                                final quote = (row['quoteCurrency'] as String).toUpperCase();
-                                _saveRate(quote, _rateFields[quote]?.text ?? '');
+                                final quote = (row['quoteCurrency'] as String)
+                                    .toUpperCase();
+                                _saveRate(
+                                  quote,
+                                  _rateFields[quote]?.text ?? '',
+                                );
                               },
                         child: Text(s.t('saveRate')),
                       ),
@@ -1431,7 +1725,9 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
               Expanded(
                 child: TextField(
                   controller: _newRate,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: InputDecoration(labelText: s.t('saveRate')),
                 ),
               ),
@@ -1441,7 +1737,9 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
           Align(
             alignment: Alignment.centerRight,
             child: FilledButton(
-              onPressed: _saving ? null : () => _saveRate(_newQuote.text, _newRate.text),
+              onPressed: _saving
+                  ? null
+                  : () => _saveRate(_newQuote.text, _newRate.text),
               child: Text(s.t('addRate')),
             ),
           ),
