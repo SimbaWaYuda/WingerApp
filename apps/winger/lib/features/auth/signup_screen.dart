@@ -106,11 +106,6 @@ class _SignupScreenState extends State<SignupScreen> {
               selected: _role == UserRole.supplier,
               onSelected: (_) => setState(() => _role = UserRole.supplier),
             ),
-            ChoiceChip(
-              label: Text(s.t('wingerAdmin')),
-              selected: _role == UserRole.admin,
-              onSelected: (_) => setState(() => _role = UserRole.admin),
-            ),
           ],
         ),
         const SizedBox(height: 16),

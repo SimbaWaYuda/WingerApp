@@ -3,6 +3,8 @@ import { UserRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { Roles } from './roles.decorator';
+import { RolesGuard } from './roles.guard';
 import { AuthUser } from './auth.types';
 
 @Controller('auth')
@@ -46,6 +48,20 @@ export class AuthController {
       supplierId: body.supplierId,
       businessName: body.businessName,
       preferredSupplierSlug: body.preferredSupplierSlug,
+    });
+  }
+
+  @Post('admins')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  createAdmin(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { email?: string; password?: string; name?: string },
+  ) {
+    return this.authService.createAdmin(user, {
+      email: String(body.email ?? ''),
+      password: String(body.password ?? ''),
+      name: String(body.name ?? ''),
     });
   }
 

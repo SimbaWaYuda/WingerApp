@@ -149,6 +149,7 @@ Future<void> _showAddedToCartChoices(
   String? productName,
 }) async {
   final s = WingerStrings.of(context);
+  final router = GoRouter.of(context);
   final choice = await showDialog<String>(
     context: context,
     builder: (ctx) {
@@ -172,12 +173,11 @@ Future<void> _showAddedToCartChoices(
       );
     },
   );
-  if (!context.mounted) return;
-  if (choice == 'checkout') {
-    context.go('/customer/checkout');
-  } else if (choice == 'continue') {
-    context.go('/customer');
-  }
+  if (choice == null) return;
+  final path = choice == 'checkout' ? '/customer/checkout' : '/customer';
+  // Wait until the dialog route is gone. Going in the same turn updates the
+  // address and leaves the product page on screen.
+  WidgetsBinding.instance.addPostFrameCallback((_) => router.go(path));
 }
 
 class _CompareTray extends StatelessWidget {

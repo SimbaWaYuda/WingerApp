@@ -13,7 +13,7 @@ import '../features/supplier/supplier_screens.dart';
 GoRouter createRouter(AppSession session) {
   return GoRouter(
     initialLocation: '/login',
-    refreshListenable: session,
+    refreshListenable: session.authSignal,
     redirect: (context, state) {
       final loc = state.matchedLocation;
       final onAuth = loc == '/login' || loc == '/signup';

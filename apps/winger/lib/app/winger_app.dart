@@ -17,6 +17,60 @@ import '../core/state/app_session.dart';
 import '../core/theme/winger_theme.dart';
 import 'router.dart';
 
+/// Rebuilds only when the language changes. Rebuilding [MaterialApp.router]
+/// on every cart or wishlist update drops Compare, Cart, and the added-to-cart
+/// dialog navigation.
+class _LocaleRouterApp extends StatefulWidget {
+  const _LocaleRouterApp({required this.session, required this.router});
+
+  final AppSession session;
+  final GoRouter router;
+
+  @override
+  State<_LocaleRouterApp> createState() => _LocaleRouterAppState();
+}
+
+class _LocaleRouterAppState extends State<_LocaleRouterApp> {
+  late String _localeCode;
+
+  @override
+  void initState() {
+    super.initState();
+    _localeCode = widget.session.localeCode.code;
+    widget.session.addListener(_onSession);
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_onSession);
+    super.dispose();
+  }
+
+  void _onSession() {
+    final next = widget.session.localeCode.code;
+    if (next == _localeCode || !mounted) return;
+    setState(() => _localeCode = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp.router(
+      title: 'Winger',
+      debugShowCheckedModeBanner: false,
+      theme: WingerTheme.light(),
+      locale: Locale(_localeCode),
+      supportedLocales: WingerStrings.supported,
+      localizationsDelegates: const [
+        WingerStringsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      routerConfig: widget.router,
+    );
+  }
+}
+
 class WingerApp extends StatefulWidget {
   const WingerApp({super.key});
 
@@ -108,25 +162,7 @@ class _WingerAppState extends State<WingerApp> {
         Provider.value(value: _inventory),
         Provider.value(value: _analytics),
       ],
-      child: AnimatedBuilder(
-        animation: _session,
-        builder: (context, _) {
-          return MaterialApp.router(
-            title: 'Winger',
-            debugShowCheckedModeBanner: false,
-            theme: WingerTheme.light(),
-            locale: Locale(_session.localeCode.code),
-            supportedLocales: WingerStrings.supported,
-            localizationsDelegates: const [
-              WingerStringsDelegate(),
-              GlobalMaterialLocalizations.delegate,
-              GlobalWidgetsLocalizations.delegate,
-              GlobalCupertinoLocalizations.delegate,
-            ],
-            routerConfig: _router,
-          );
-        },
-      ),
+      child: _LocaleRouterApp(session: _session, router: _router),
     );
   }
 }

@@ -21,6 +21,7 @@ import {
   buildSnapshotValues,
   commissionReportRow,
   isReportableSettleable,
+  sumSupplierPayoutSplit,
   roundMoney,
   sumCommissionBuckets,
 } from './commission.math';
@@ -753,7 +754,17 @@ export class CommissionsService {
       },
       orderBy: { createdAt: 'desc' },
     });
-    const buckets = sumCommissionBuckets(rows.map((row) => commissionReportRow(row)));
+    const reportRows = rows.map((row) => commissionReportRow(row));
+    const buckets = sumCommissionBuckets(reportRows);
+    const payoutSplit = sumSupplierPayoutSplit(
+      rows.map((row, index) => ({
+        ...reportRows[index],
+        transferAmount:
+          row.transferAmount == null ? null : Number(row.transferAmount),
+        transferCurrency: row.transferCurrency,
+        transferReversed: row.transferReversed === true,
+      })),
+    );
     const rate = await this.resolveRateForSupplier(user.supplierId);
     return {
       activeRatePercent: rate.ratePercent,
@@ -762,6 +773,9 @@ export class CommissionsService {
       recognizedCommission: buckets.recognizedCommission,
       settleableCommission: buckets.settleableCommission,
       reversedCommission: buckets.reversedCommission,
+      commissionWaiting: payoutSplit.commissionWaiting,
+      cashCommission: payoutSplit.cashCommission,
+      payoutsSent: payoutSplit.payoutsSent,
       lines: rows.slice(0, 50).map((r) => ({
         id: r.id,
         orderId: r.orderItem.order.displayId,
@@ -771,6 +785,7 @@ export class CommissionsService {
         commissionAmount: Number(r.commissionAmount),
         status: r.status,
         isDemo: r.isDemo,
+        paymentMode: r.orderItem.order.paymentMode,
         transferAmount: r.transferAmount == null ? null : Number(r.transferAmount),
         transferCurrency: r.transferCurrency,
         transferReversed: r.transferReversed,

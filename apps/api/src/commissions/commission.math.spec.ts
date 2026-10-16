@@ -7,7 +7,9 @@ import {
   isReportableSettleable,
   roundMoney,
   sumCommissionBuckets,
+  sumSupplierPayoutSplit,
   type CommissionMoneyRow,
+  type SupplierPayoutSplitRow,
 } from './commission.math';
 
 describe('commission.math', () => {
@@ -75,6 +77,27 @@ describe('commission.math', () => {
     expect(isReportableSettleable(rows[5])).toBe(false);
   });
 
+  it('splits card commission still waiting, cash, and payouts already sent', () => {
+    const rows: SupplierPayoutSplitRow[] = [
+      splitLine({
+        amount: 31.9,
+        paymentMode: 'stripe',
+        transferAmount: 287.1,
+        transferCurrency: 'USD',
+      }),
+      splitLine({ amount: 10, paymentMode: 'cod' }),
+      splitLine({ amount: 8, paymentMode: 'cod' }),
+      splitLine({ amount: 6, paymentMode: 'cod' }),
+      splitLine({ amount: 4, paymentMode: 'card' }),
+      splitLine({ status: 'PENDING', amount: 31.9, paymentMode: 'card' }),
+    ];
+    expect(sumSupplierPayoutSplit(rows)).toEqual({
+      commissionWaiting: 4,
+      cashCommission: 24,
+      payoutsSent: [{ currency: 'USD', amount: 287.1 }],
+    });
+  });
+
   it('does not count uncollected COD as earned revenue', () => {
     const uncollected = line({
       status: 'PENDING',
@@ -87,6 +110,18 @@ describe('commission.math', () => {
     expect(isReportableSettleable(uncollected)).toBe(false);
   });
 });
+
+function splitLine(
+  overrides: Partial<SupplierPayoutSplitRow>,
+): SupplierPayoutSplitRow {
+  return {
+    ...line({ status: 'SETTLEABLE', ...overrides }),
+    transferAmount: null,
+    transferCurrency: null,
+    transferReversed: false,
+    ...overrides,
+  };
+}
 
 function line(overrides: Partial<CommissionMoneyRow>): CommissionMoneyRow {
   return {

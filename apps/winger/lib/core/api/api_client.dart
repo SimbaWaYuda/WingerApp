@@ -88,6 +88,35 @@ class ApiClient {
     await refreshProfile(applyLocale: true);
   }
 
+  Future<String> createAdminAccount({
+    required String email,
+    required String password,
+    required String name,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .post(
+          _uri('/auth/admins'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'email': email,
+            'password': password,
+            'name': name,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Create admin failed (${response.statusCode})',
+      );
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final user = data['user'] as Map<String, dynamic>;
+    return user['email']?.toString() ?? email;
+  }
+
   Future<void> login({
     required String email,
     required String password,

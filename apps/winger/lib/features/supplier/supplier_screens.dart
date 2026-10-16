@@ -1967,6 +1967,18 @@ class _EditorThumb extends StatelessWidget {
   }
 }
 
+String _payoutsSentLabel(List<Map<String, dynamic>> payouts) {
+  if (payouts.isEmpty) return '\$0.00';
+  return payouts
+      .map((row) {
+        final currency = (row['currency'] as String?)?.toUpperCase() ?? 'USD';
+        final amount = (row['amount'] as num?)?.toDouble() ?? 0;
+        final text = amount.toStringAsFixed(2);
+        return currency == 'USD' ? '\$$text' : '$currency $text';
+      })
+      .join(', ');
+}
+
 class SupplierPaymentsScreen extends StatefulWidget {
   const SupplierPaymentsScreen({super.key});
 
@@ -2130,8 +2142,13 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
             (data?.summary['activeRatePercent'] as num?)?.toDouble() ??
             data?.defaultRate ??
             10;
-        final settleable =
-            (data?.summary['settleableCommission'] as num?)?.toDouble() ?? 0;
+        final commissionWaiting =
+            (data?.summary['commissionWaiting'] as num?)?.toDouble() ?? 0;
+        final cashCommission =
+            (data?.summary['cashCommission'] as num?)?.toDouble() ?? 0;
+        final payoutsSent =
+            (data?.summary['payoutsSent'] as List<dynamic>? ?? const [])
+                .cast<Map<String, dynamic>>();
         final recognized =
             (data?.summary['recognizedCommission'] as num?)?.toDouble() ?? 0;
         final pending =
@@ -2240,9 +2257,23 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                   ),
                   KpiCard(
                     data: KpiCardData(
-                      label: s.t('settleableCommission'),
-                      value: '\$${settleable.toStringAsFixed(2)}',
-                      delta: s.t('settleable'),
+                      label: s.t('commissionWaiting'),
+                      value: '\$${commissionWaiting.toStringAsFixed(2)}',
+                      delta: s.t('notPaidOut'),
+                    ),
+                  ),
+                  KpiCard(
+                    data: KpiCardData(
+                      label: s.t('cashStaysInWinger'),
+                      value: '\$${cashCommission.toStringAsFixed(2)}',
+                      delta: s.t('notSentToStripe'),
+                    ),
+                  ),
+                  KpiCard(
+                    data: KpiCardData(
+                      label: s.t('payoutsAlreadySent'),
+                      value: _payoutsSentLabel(payoutsSent),
+                      delta: s.t('acceptedByStripe'),
                     ),
                   ),
                   KpiCard(
@@ -2260,6 +2291,11 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                s.t('payoutSplitHint'),
+                style: TextStyle(color: WingerColors.muted),
               ),
               const SizedBox(height: 16),
               Text(
@@ -2420,6 +2456,8 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                       subtitle: Text(
                         [
                           '${line['ratePercent']}% of \$${(line['commissionBase'] as num?)?.toStringAsFixed(2) ?? '0'}',
+                          if (line['paymentMode'] == 'cod')
+                            s.t('cashStaysInWinger'),
                           if (line['transferAmount'] != null &&
                               line['transferReversed'] != true)
                             '${s.t('payoutSent')} ${line['transferCurrency'] ?? 'USD'} ${(line['transferAmount'] as num).toStringAsFixed(2)}',

@@ -320,6 +320,9 @@ describe('CommissionsService', () => {
       expect(result.settleableCommission).toBe(1);
       expect(result.recognizedCommission).toBe(0);
       expect(result.reversedCommission).toBe(0);
+      expect(result.commissionWaiting).toBe(1);
+      expect(result.cashCommission).toBe(0);
+      expect(result.payoutsSent).toEqual([]);
     });
   });
 

@@ -85,6 +85,58 @@ export function countsAsEarnedRevenue(row: CommissionMoneyRow): boolean {
   return false;
 }
 
+export type SupplierPayoutSplitRow = CommissionMoneyRow & {
+  transferAmount: number | null;
+  transferCurrency: string | null;
+  transferReversed: boolean;
+};
+
+/** A card payout Stripe already accepted. Cash orders never count. */
+export function payoutAlreadySent(row: SupplierPayoutSplitRow): boolean {
+  return (
+    row.isDemo === false &&
+    row.transferReversed !== true &&
+    row.transferAmount != null &&
+    row.transferAmount > 0
+  );
+}
+
+/**
+ * Split settleable commission the way the Payments screen should read it.
+ * Waiting is card commission with no payout yet.
+ * Cash stays in Winger.
+ * Sent is the supplier amount Stripe accepted, not the commission.
+ */
+export function sumSupplierPayoutSplit(rows: SupplierPayoutSplitRow[]) {
+  let waiting = 0;
+  let cash = 0;
+  const sentByCurrency = new Map<string, number>();
+  for (const row of rows) {
+    if (row.isDemo) continue;
+    if (payoutAlreadySent(row)) {
+      const currency = (row.transferCurrency || 'USD').trim().toUpperCase() || 'USD';
+      sentByCurrency.set(
+        currency,
+        (sentByCurrency.get(currency) ?? 0) + (row.transferAmount ?? 0),
+      );
+    }
+    if (!isReportableSettleable(row)) continue;
+    if (row.paymentMode === 'cod') {
+      cash += row.amount;
+    } else if (!payoutAlreadySent(row)) {
+      waiting += row.amount;
+    }
+  }
+  return {
+    commissionWaiting: roundMoney(waiting),
+    cashCommission: roundMoney(cash),
+    payoutsSent: [...sentByCurrency.entries()].map(([currency, amount]) => ({
+      currency,
+      amount: roundMoney(amount),
+    })),
+  };
+}
+
 export function sumCommissionBuckets(rows: CommissionMoneyRow[]) {
   let pending = 0;
   let recognized = 0;

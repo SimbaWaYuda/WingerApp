@@ -18,7 +18,33 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Winger marketplace">
+
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    /* iPhone Safari: Flutter's invisible accessibility layer covers the page and eats taps. */
+    flt-semantics-placeholder {
+      position: fixed !important;
+      left: 0 !important;
+      top: 0 !important;
+      width: 1px !important;
+      height: 1px !important;
+      pointer-events: none !important;
+      opacity: 0 !important;
+    }
+
+    flt-semantics-host {
+      left: 0 !important;
+      top: 0 !important;
+    }
+  </style>
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -35,6 +61,90 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <script>
+    // iPhone Safari hit-tests through Flutter's canvas (pointer-events: none,
+    // scene host sized 0). The tap lands outside flutter-view, so buttons never
+    // run. Give the glass pane a real box, and shrink the accessibility
+    // placeholder so it cannot cover the page.
+    (function () {
+      function disarmPlaceholder(el) {
+        el.style.setProperty('pointer-events', 'none', 'important');
+        el.style.setProperty('width', '1px', 'important');
+        el.style.setProperty('height', '1px', 'important');
+        el.style.setProperty('right', 'auto', 'important');
+        el.style.setProperty('bottom', 'auto', 'important');
+        el.style.setProperty('overflow', 'hidden', 'important');
+      }
+
+      function armGlass(glass) {
+        glass.style.setProperty('position', 'absolute', 'important');
+        glass.style.setProperty('left', '0', 'important');
+        glass.style.setProperty('top', '0', 'important');
+        glass.style.setProperty('width', '100%', 'important');
+        glass.style.setProperty('height', '100%', 'important');
+        glass.style.setProperty('pointer-events', 'auto', 'important');
+      }
+
+      function scan(root) {
+        if (!root || !root.querySelectorAll) return;
+        root.querySelectorAll('flt-semantics-placeholder').forEach(disarmPlaceholder);
+        root.querySelectorAll('flt-semantics-host').forEach(function (el) {
+          el.style.setProperty('left', '0', 'important');
+          el.style.setProperty('top', '0', 'important');
+        });
+        root.querySelectorAll('flt-glass-pane').forEach(function (glass) {
+          armGlass(glass);
+          if (glass.shadowRoot) scan(glass.shadowRoot);
+        });
+      }
+
+      var observer = new MutationObserver(function () { scan(document); });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      scan(document);
+
+      function insideView(target) {
+        var view = document.querySelector('flutter-view');
+        if (!view || !target || target === document || target === window) return false;
+        if (target === view || (target.nodeType === 1 && view.contains(target))) return true;
+        var root = target.getRootNode && target.getRootNode();
+        return !!(root && root.host && view.contains(root.host));
+      }
+
+      function forward(event) {
+        if (event.__wingerForwarded || insideView(event.target)) return;
+        var glass = document.querySelector('flt-glass-pane');
+        if (!glass || typeof event.clientX !== 'number') return;
+        var copy = new PointerEvent(event.type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          screenX: event.screenX,
+          screenY: event.screenY,
+          pointerId: event.pointerId || 1,
+          pointerType: event.pointerType || 'touch',
+          isPrimary: event.isPrimary !== false,
+          button: event.button || 0,
+          buttons: event.buttons || 0,
+          pressure: event.pressure || 0
+        });
+        copy.__wingerForwarded = true;
+        glass.dispatchEvent(copy);
+      }
+
+      ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(function (type) {
+        document.addEventListener(type, forward, true);
+      });
+
+      document.addEventListener('touchstart', function () {}, { passive: true });
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          regs.forEach(function (reg) { reg.unregister(); });
+        });
+      }
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -56,6 +57,11 @@ export class AuthService {
     }
     if (!input.name.trim()) {
       throw new BadRequestException('Name is required');
+    }
+    if (input.role !== UserRole.CUSTOMER && input.role !== UserRole.SUPPLIER) {
+      throw new ForbiddenException(
+        'Only an existing Winger admin can create an admin account',
+      );
     }
 
     const existing = await this.prisma.user.findUnique({ where: { email } });
@@ -126,6 +132,46 @@ export class AuthService {
     });
 
     return this.tokenResponse(user);
+  }
+
+  /** Another admin account. Public signup cannot do this. */
+  async createAdmin(
+    actor: AuthUser,
+    input: { email: string; password: string; name: string },
+  ) {
+    if (actor.role !== UserRole.ADMIN) {
+      throw new ForbiddenException(
+        'Only an existing Winger admin can create an admin account',
+      );
+    }
+    const email = input.email.toLowerCase().trim();
+    const name = input.name.trim();
+    if (!email || !input.password || input.password.length < 6) {
+      throw new BadRequestException('Valid email and password (6+ chars) required');
+    }
+    if (!name) {
+      throw new BadRequestException('Name is required');
+    }
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      throw new ConflictException('Email already registered');
+    }
+    const user = await this.prisma.user.create({
+      data: {
+        email,
+        passwordHash: await bcrypt.hash(input.password, 10),
+        name,
+        role: UserRole.ADMIN,
+      },
+    });
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+    };
   }
 
   /** Preferred slug if unique; otherwise system-generated `s-…` id. */

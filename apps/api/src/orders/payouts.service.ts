@@ -242,6 +242,8 @@ export class PayoutsService {
 }
 
 function publicApiOrigin(): string {
+  const configured = process.env.PUBLIC_API_ORIGIN?.trim().replace(/\/+$/, '');
+  if (configured) return configured;
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   return `http://localhost:${Number.isFinite(port) ? port : 3000}`;
 }

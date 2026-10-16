@@ -6,8 +6,28 @@ import '../models/models.dart';
 import '../offline/offline_database.dart';
 import '../repositories/cart_repository.dart';
 
+String resolveApiBaseUrl() {
+  const defined = String.fromEnvironment('API_BASE_URL');
+  final trimmed = defined.trim();
+  if (trimmed.isNotEmpty) {
+    return trimmed.replaceAll(RegExp(r'/+$'), '');
+  }
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    return 'http://10.0.2.2:3000';
+  }
+  return 'http://localhost:3000';
+}
+
+/// Fires only when sign-in state changes. Cart, wishlist, and compare updates
+/// must not refresh the router, or the page stays put while the address changes.
+class AuthSignal extends ChangeNotifier {
+  void ping() => notifyListeners();
+}
+
 class AppSession extends ChangeNotifier {
   AppSession();
+
+  final AuthSignal authSignal = AuthSignal();
 
   CartRepository? _cartRepository;
   OfflineDatabase? _db;
@@ -46,9 +66,8 @@ class AppSession extends ChangeNotifier {
   bool apiOnline = false;
   int pendingSyncCount = 0;
   /// Android emulator reaches the host machine through 10.0.2.2, not localhost.
-  String apiBaseUrl = !kIsWeb && defaultTargetPlatform == TargetPlatform.android
-      ? 'http://10.0.2.2:3000'
-      : 'http://localhost:3000';
+  /// API_BASE_URL is the public address when this build is used off this computer.
+  String apiBaseUrl = resolveApiBaseUrl();
 
   List<CartItem> get cart => List.unmodifiable(_cart);
   int get cartCount => _cart.fold(0, (sum, item) => sum + item.quantity);
@@ -273,6 +292,7 @@ class AppSession extends ChangeNotifier {
     if (cityName != null && cityName.isNotEmpty) city = cityName;
     if (address != null && address.isNotEmpty) addressLine = address;
     notifyListeners();
+    authSignal.ping();
   }
 
   void applyProfile({
@@ -299,6 +319,7 @@ class AppSession extends ChangeNotifier {
     compareIds.clear();
     lastOrder = null;
     notifyListeners();
+    authSignal.ping();
   }
 
   Future<void> addToCart(Product product, {int quantity = 1}) async {

@@ -209,6 +209,14 @@ class WingerStrings {
       'payoutSent': 'Payout sent',
       'payoutNone':
           'No payout was sent. Cash orders stay in Winger.',
+      'commissionWaiting': 'Commission still waiting',
+      'cashStaysInWinger': 'Cash stays in Winger',
+      'payoutsAlreadySent': 'Payouts already sent',
+      'payoutSplitHint':
+          'Commission still waiting is card commission with no payout yet. Cash orders are not sent to Stripe. Payouts already sent are the amounts Stripe accepted.',
+      'notPaidOut': 'Not paid out yet',
+      'notSentToStripe': 'Not sent to Stripe',
+      'acceptedByStripe': 'Accepted by Stripe',
       'deliveryFees': 'Delivery fees',
       'deliveryFeesHint':
           'Amounts are in USD. Enter 0 to make that method free.',
@@ -572,6 +580,10 @@ class WingerStrings {
       'haveAccount': 'Sign in',
       'createAccount': 'Create account',
       'createAccountLink': 'New here? Create an account',
+      'createAdmin': 'Create admin account',
+      'createAdminHint':
+          'Only a signed-in Winger admin can add another admin. Signup cannot.',
+      'adminCreated': 'Admin account created:',
       'businessName': 'Business name',
       'businessNameHint': 'Shown on your supplier profile',
       'preferredSupplierId': 'Preferred supplier id (optional)',
@@ -779,6 +791,14 @@ class WingerStrings {
       'payoutSent': 'Pago enviado',
       'payoutNone':
           'No se envió ningún pago. Los pedidos en efectivo se quedan en Winger.',
+      'commissionWaiting': 'Comisión aún pendiente',
+      'cashStaysInWinger': 'El efectivo se queda en Winger',
+      'payoutsAlreadySent': 'Pagos ya enviados',
+      'payoutSplitHint':
+          'La comisión aún pendiente es de tarjetas sin pago. Los pedidos en efectivo no se envían a Stripe. Los pagos ya enviados son los importes que Stripe aceptó.',
+      'notPaidOut': 'Aún sin pago',
+      'notSentToStripe': 'No se envía a Stripe',
+      'acceptedByStripe': 'Aceptado por Stripe',
       'deliveryFees': 'Tarifas de entrega',
       'deliveryFeesHint':
           'Los importes están en USD. Escribe 0 para dejar ese método gratis.',
@@ -1144,6 +1164,10 @@ class WingerStrings {
       'haveAccount': 'Iniciar sesión',
       'createAccount': 'Crear cuenta',
       'createAccountLink': '¿Nuevo? Crea una cuenta',
+      'createAdmin': 'Crear cuenta de administrador',
+      'createAdminHint':
+          'Solo un administrador de Winger conectado puede agregar otro. El registro no puede.',
+      'adminCreated': 'Cuenta de administrador creada:',
       'businessName': 'Nombre del negocio',
       'businessNameHint': 'Se muestra en tu perfil de proveedor',
       'preferredSupplierId': 'Id de proveedor preferido (opcional)',
@@ -1351,6 +1375,14 @@ class WingerStrings {
       'payoutSent': 'Malipo yametumwa',
       'payoutNone':
           'Hakuna malipo yaliyotumwa. Oda za pesa taslimu hubaki kwenye Winger.',
+      'commissionWaiting': 'Kamisheni inayosubiri',
+      'cashStaysInWinger': 'Pesa taslimu hubaki kwenye Winger',
+      'payoutsAlreadySent': 'Malipo yaliyotumwa',
+      'payoutSplitHint':
+          'Kamisheni inayosubiri ni ya kadi ambayo haijalipwa. Oda za pesa taslimu hazitumwi Stripe. Malipo yaliyotumwa ni kiasi ambacho Stripe imekubali.',
+      'notPaidOut': 'Haijalipwa bado',
+      'notSentToStripe': 'Haitumwi Stripe',
+      'acceptedByStripe': 'Stripe imekubali',
       'deliveryFees': 'Ada za usafirishaji',
       'deliveryFeesHint': 'Kiasi ni kwa USD. Weka 0 ili njia hiyo iwe bure.',
       'standardDelivery': 'Usafirishaji wa kawaida',
@@ -1713,6 +1745,10 @@ class WingerStrings {
       'haveAccount': 'Ingia',
       'createAccount': 'Unda akaunti',
       'createAccountLink': 'Mpya? Unda akaunti',
+      'createAdmin': 'Unda akaunti ya msimamizi',
+      'createAdminHint':
+          'Msimamizi wa Winger aliyeingia pekee ndiye anayeweza kuongeza mwingine. Usajili hauwezi.',
+      'adminCreated': 'Akaunti ya msimamizi imeundwa:',
       'businessName': 'Jina la biashara',
       'businessNameHint': 'Inaonekana kwenye wasifu wako wa msambazaji',
       'preferredSupplierId': 'Kitambulisho unachopendelea (si lazima)',

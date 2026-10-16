@@ -120,6 +120,19 @@ class AdminDashboardScreen extends StatefulWidget {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Future<Map<String, dynamic>>? _future;
+  final _adminName = TextEditingController();
+  final _adminEmail = TextEditingController();
+  final _adminPassword = TextEditingController();
+  bool _creatingAdmin = false;
+  String? _adminNotice;
+
+  @override
+  void dispose() {
+    _adminName.dispose();
+    _adminEmail.dispose();
+    _adminPassword.dispose();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -136,6 +149,33 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       );
     }
     return context.read<ApiClient>().fetchAdminDashboard();
+  }
+
+  Future<void> _createAdmin() async {
+    final s = WingerStrings.of(context);
+    setState(() {
+      _creatingAdmin = true;
+      _adminNotice = null;
+    });
+    try {
+      final email = await context.read<ApiClient>().createAdminAccount(
+        name: _adminName.text.trim(),
+        email: _adminEmail.text.trim(),
+        password: _adminPassword.text,
+      );
+      if (!mounted) return;
+      _adminName.clear();
+      _adminEmail.clear();
+      _adminPassword.clear();
+      setState(() => _adminNotice = '${s.t('adminCreated')} $email');
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _adminNotice = error.toString().replaceFirst('Exception: ', ''),
+      );
+    } finally {
+      if (mounted) setState(() => _creatingAdmin = false);
+    }
   }
 
   @override
@@ -204,6 +244,55 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               style: TextStyle(
                 color: WingerColors.muted,
                 fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      s.t('createAdmin'),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      s.t('createAdminHint'),
+                      style: TextStyle(color: WingerColors.muted),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _adminName,
+                      decoration: InputDecoration(labelText: s.t('obName')),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _adminEmail,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: InputDecoration(labelText: s.t('email')),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _adminPassword,
+                      obscureText: true,
+                      decoration: InputDecoration(labelText: s.t('password')),
+                    ),
+                    if (_adminNotice != null) ...[
+                      const SizedBox(height: 8),
+                      Text(_adminNotice!),
+                    ],
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: _creatingAdmin ? null : _createAdmin,
+                      child: Text(s.t('createAdmin')),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
