@@ -12,6 +12,7 @@ import '../../core/widgets/courier_trip.dart';
 import '../../core/widgets/kpi_card.dart';
 import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
+import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
 
 List<ShellDestination> adminDestinations({int returnsAttention = 0}) => [
@@ -295,6 +296,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+            const ChangePasswordCard(),
+            const SizedBox(height: 16),
+            const AdminPasswordResetCard(),
             const SizedBox(height: 16),
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())

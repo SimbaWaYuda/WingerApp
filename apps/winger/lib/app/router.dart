@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../core/models/models.dart';
 import '../core/state/app_session.dart';
 import '../features/admin/admin_screens.dart';
+import '../features/auth/choose_password_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/signup_screen.dart';
 import '../features/customer/customer_screens.dart';
@@ -17,13 +18,18 @@ GoRouter createRouter(AppSession session) {
     redirect: (context, state) {
       final loc = state.matchedLocation;
       final onAuth = loc == '/login' || loc == '/signup';
+      final home = switch (session.role) {
+        UserRole.customer => '/customer',
+        UserRole.supplier => '/supplier',
+        UserRole.admin => '/admin',
+        null => '/login',
+      };
       if (!session.isSignedIn && !onAuth) return '/login';
-      if (session.isSignedIn && onAuth) {
-        return switch (session.role!) {
-          UserRole.customer => '/customer',
-          UserRole.supplier => '/supplier',
-          UserRole.admin => '/admin',
-        };
+      if (session.isSignedIn && session.mustChangePassword) {
+        return loc == '/choose-password' ? null : '/choose-password';
+      }
+      if (session.isSignedIn && (onAuth || loc == '/choose-password')) {
+        return home;
       }
       if (session.role == UserRole.customer &&
           (loc.startsWith('/supplier') || loc.startsWith('/admin'))) {
@@ -41,6 +47,10 @@ GoRouter createRouter(AppSession session) {
     },
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(
+        path: '/choose-password',
+        builder: (context, state) => const ChoosePasswordScreen(),
+      ),
       GoRoute(path: '/signup', builder: (context, state) => const SignupScreen()),
       ShellRoute(
         builder: (context, state, child) => CustomerShell(child: child),

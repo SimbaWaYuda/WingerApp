@@ -91,6 +91,10 @@ model User {
   city             String?
   addressLine      String?
   profileComplete  Boolean             @default(false)
+  /// Set when the person asks for a new password from the login screen.
+  passwordResetRequestedAt DateTime?
+  /// Admin set a temporary password. Sign-in stays on the choose-password screen.
+  mustChangePassword Boolean @default(false)
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
   orders           Order[]

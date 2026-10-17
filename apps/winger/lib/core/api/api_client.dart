@@ -88,6 +88,89 @@ class ApiClient {
     await refreshProfile(applyLocale: true);
   }
 
+  Future<void> requestPasswordReset({required String email}) async {
+    final response = await http
+        .post(
+          _uri('/auth/password-resets'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'email': email}),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Password reset request failed (${response.statusCode})',
+      );
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchPasswordResetRequests() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/auth/password-resets'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Password reset list failed (${response.statusCode})',
+      );
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return (data['requests'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  Future<String> resetAccountPassword({
+    required String email,
+    required String password,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .post(
+          _uri('/auth/password-resets/apply'),
+          headers: session.authHeaders,
+          body: jsonEncode({'email': email, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Password reset failed (${response.statusCode})',
+      );
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final user = data['user'] as Map<String, dynamic>;
+    return user['email']?.toString() ?? email;
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .patch(
+          _uri('/auth/password'),
+          headers: session.authHeaders,
+          body: jsonEncode({
+            'currentPassword': currentPassword,
+            'newPassword': newPassword,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Change password failed (${response.statusCode})',
+      );
+    }
+    session.setMustChangePassword(false);
+  }
+
   Future<String> createAdminAccount({
     required String email,
     required String password,
@@ -154,6 +237,7 @@ class ApiClient {
       mail: user['email'] as String,
       selectedRole: role,
       supplier: user['supplierId'] as String?,
+      passwordChangeRequired: user['mustChangePassword'] == true,
     );
     session.setApiOnline(true);
     await refreshProfile(applyLocale: true);
@@ -191,6 +275,7 @@ class ApiClient {
         cityName: user['city'] as String? ?? 'Nairobi',
         address: user['addressLine'] as String? ?? 'Westlands',
       );
+      session.setMustChangePassword(user['mustChangePassword'] == true);
       final preferred = user['displayCurrency'] as String?;
       if (preferred != null && preferred.isNotEmpty) {
         session.displayCurrency = preferred.toUpperCase();

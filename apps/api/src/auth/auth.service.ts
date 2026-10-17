@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -219,6 +220,7 @@ export class AuthService {
       preferredLocale: user.preferredLocale,
       displayCurrency: user.displayCurrency,
       profileComplete: user.profileComplete,
+      mustChangePassword: user.mustChangePassword,
     };
   }
 
@@ -255,6 +257,113 @@ export class AuthService {
     return this.me(user.id);
   }
 
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('User not found');
+    const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!ok) {
+      throw new UnauthorizedException('Current password is wrong');
+    }
+    this.assertPassword(newPassword);
+    if (newPassword === currentPassword) {
+      throw new BadRequestException('Choose a different password');
+    }
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await bcrypt.hash(newPassword, 10),
+        passwordResetRequestedAt: null,
+        mustChangePassword: false,
+      },
+    });
+    return { ok: true, mustChangePassword: false };
+  }
+
+  /** Marks the account. Does not reveal whether the email exists. */
+  async requestPasswordReset(email: string) {
+    const normalized = email.toLowerCase().trim();
+    if (!normalized.includes('@')) {
+      throw new BadRequestException('Valid email required');
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalized },
+    });
+    if (user) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { passwordResetRequestedAt: new Date() },
+      });
+    }
+    return { ok: true };
+  }
+
+  async listPasswordResetRequests(actor: AuthUser) {
+    this.assertAdmin(actor);
+    const rows = await this.prisma.user.findMany({
+      where: { passwordResetRequestedAt: { not: null } },
+      select: {
+        email: true,
+        name: true,
+        role: true,
+        passwordResetRequestedAt: true,
+      },
+      orderBy: { passwordResetRequestedAt: 'asc' },
+    });
+    return {
+      requests: rows.map((row) => ({
+        email: row.email,
+        name: row.name,
+        role: row.role,
+        requestedAt: row.passwordResetRequestedAt,
+      })),
+    };
+  }
+
+  async resetPassword(
+    actor: AuthUser,
+    input: { email: string; password: string },
+  ) {
+    this.assertAdmin(actor);
+    this.assertPassword(input.password);
+    const email = input.email.toLowerCase().trim();
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) throw new NotFoundException('No account uses that email');
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await bcrypt.hash(input.password, 10),
+        passwordResetRequestedAt: null,
+        mustChangePassword: true,
+      },
+    });
+    return {
+      user: {
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        mustChangePassword: true,
+      },
+    };
+  }
+
+  private assertAdmin(actor: AuthUser) {
+    if (actor.role !== UserRole.ADMIN) {
+      throw new ForbiddenException(
+        'Only an existing Winger admin can reset a password',
+      );
+    }
+  }
+
+  private assertPassword(password: string) {
+    if (!password || password.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters');
+    }
+  }
+
   async updatePreferredLocale(userId: string, locale: string) {
     const code = locale.trim().toLowerCase();
     if (code !== 'en' && code !== 'es' && code !== 'sw') {
@@ -273,6 +382,7 @@ export class AuthService {
     role: UserRole;
     supplierId: string | null;
     name: string;
+    mustChangePassword?: boolean;
   }) {
     const payload: JwtPayload = {
       sub: user.id,
@@ -289,6 +399,7 @@ export class AuthService {
         name: user.name,
         role: user.role,
         supplierId: user.supplierId,
+        mustChangePassword: user.mustChangePassword ?? false,
       },
     };
   }

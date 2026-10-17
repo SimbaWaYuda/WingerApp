@@ -20,6 +20,7 @@ import '../../core/widgets/product_card.dart';
 import '../../core/widgets/product_photo.dart';
 import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
+import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
 
 String _deliveryFeeLabel(WingerStrings s, AppSession session, double amount) {
@@ -4765,6 +4766,8 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
           trailing: Text('${session.cartCount}'),
           onTap: () => context.go('/customer/cart'),
         ),
+        const ChangePasswordCard(),
+        const SizedBox(height: 8),
         ListTile(
           leading: const Icon(Icons.support_agent),
           title: Text(s.t('support')),

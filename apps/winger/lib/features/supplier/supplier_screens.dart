@@ -22,6 +22,7 @@ import '../../core/widgets/product_photo.dart';
 import '../../core/widgets/courier_trip.dart';
 import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
+import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
 
 List<ShellDestination> supplierDestinations({int openReturns = 0}) => [
@@ -234,6 +235,8 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                 label: Text(s.t('deliveryFees')),
               ),
             ),
+            const SizedBox(height: 16),
+            const ChangePasswordCard(),
             const SizedBox(height: 16),
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())

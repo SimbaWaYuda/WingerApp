@@ -55,6 +55,10 @@ class _LoginScreenState extends State<LoginScreen> {
         role: _role,
       );
       if (!mounted) return;
+      if (context.read<AppSession>().mustChangePassword) {
+        context.go('/choose-password');
+        return;
+      }
       context.go(switch (_role) {
         UserRole.customer => '/customer',
         UserRole.supplier => '/supplier',
@@ -291,6 +295,14 @@ class _LoginForm extends StatelessWidget {
         const SizedBox(height: 12),
         Center(
           child: TextButton(
+            onPressed: busy
+                ? null
+                : () => _showForgotPassword(context, email.text.trim()),
+            child: Text(s.t('forgotPassword')),
+          ),
+        ),
+        Center(
+          child: TextButton(
             onPressed: () => context.go('/signup'),
             child: Text(s.t('createAccountLink')),
           ),
@@ -310,6 +322,99 @@ class _LoginForm extends StatelessWidget {
             'Supplier (Savanna): supplier@savanna.example\n'
             'Admin: admin@winger.example',
           ),
+        ),
+      ],
+    );
+  }
+}
+
+Future<void> _showForgotPassword(BuildContext context, String email) async {
+  final sent = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => _ForgotPasswordDialog(initialEmail: email),
+  );
+  if (sent != true || !context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(WingerStrings.of(context).t('resetRequested'))),
+  );
+}
+
+class _ForgotPasswordDialog extends StatefulWidget {
+  const _ForgotPasswordDialog({required this.initialEmail});
+
+  final String initialEmail;
+
+  @override
+  State<_ForgotPasswordDialog> createState() => _ForgotPasswordDialogState();
+}
+
+class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
+  late final TextEditingController _email;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _email = TextEditingController(text: widget.initialEmail);
+  }
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.read<ApiClient>().requestPasswordReset(
+        email: _email.text.trim(),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return AlertDialog(
+      title: Text(s.t('forgotPassword')),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(s.t('forgotPasswordHint')),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _email,
+            keyboardType: TextInputType.emailAddress,
+            decoration: InputDecoration(labelText: s.t('email')),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: WingerColors.dangerInk)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _send,
+          child: Text(s.t('forgotPassword')),
         ),
       ],
     );

@@ -584,6 +584,29 @@ class WingerStrings {
       'createAdminHint':
           'Only a signed-in Winger admin can add another admin. Signup cannot.',
       'adminCreated': 'Admin account created:',
+      'forgotPassword': 'Forgot password?',
+      'forgotPasswordHint':
+          'Enter the account email. A Winger admin sets the new password and tells you. Winger does not email it.',
+      'resetRequested':
+          'Request sent. Sign in after an admin tells you the new password.',
+      'changePassword': 'Change password',
+      'currentPassword': 'Current password',
+      'newPassword': 'New password',
+      'confirmPassword': 'Confirm new password',
+      'passwordChanged': 'Password updated. Use it the next time you sign in.',
+      'passwordMismatch': 'The new passwords do not match.',
+      'resetPassword': 'Reset a password',
+      'resetPasswordHint':
+          'Set a temporary password, then tell that person. They sign in with it and choose their own before they can continue. This works for customers, suppliers, and admins.',
+      'temporaryPasswordSaved': 'Temporary password saved for',
+      'choosePassword': 'Choose your password',
+      'choosePasswordHint':
+          'This sign-in used a temporary password. Choose your own before you continue.',
+      'temporaryPassword': 'Temporary password',
+      'passwordResetDone': 'New password saved for',
+      'noResetRequests': 'No password reset requests.',
+      'resetRequests': 'Asked for a new password',
+      'useThisEmail': 'Use this email',
       'businessName': 'Business name',
       'businessNameHint': 'Shown on your supplier profile',
       'preferredSupplierId': 'Preferred supplier id (optional)',
@@ -1168,6 +1191,30 @@ class WingerStrings {
       'createAdminHint':
           'Solo un administrador de Winger conectado puede agregar otro. El registro no puede.',
       'adminCreated': 'Cuenta de administrador creada:',
+      'forgotPassword': '¿Olvidaste la contraseña?',
+      'forgotPasswordHint':
+          'Escribe el correo de la cuenta. Un administrador de Winger define la nueva contraseña y te la dice. Winger no la envía por correo.',
+      'resetRequested':
+          'Solicitud enviada. Entra cuando un administrador te diga la nueva contraseña.',
+      'changePassword': 'Cambiar contraseña',
+      'currentPassword': 'Contraseña actual',
+      'newPassword': 'Nueva contraseña',
+      'confirmPassword': 'Confirma la nueva contraseña',
+      'passwordChanged':
+          'Contraseña actualizada. Úsala la próxima vez que entres.',
+      'passwordMismatch': 'Las contraseñas nuevas no coinciden.',
+      'resetPassword': 'Restablecer una contraseña',
+      'resetPasswordHint':
+          'Define una contraseña temporal y díselo a esa persona. Entra con ella y elige la suya antes de continuar. Sirve para clientes, proveedores y administradores.',
+      'temporaryPasswordSaved': 'Contraseña temporal guardada para',
+      'choosePassword': 'Elige tu contraseña',
+      'choosePasswordHint':
+          'Este acceso usó una contraseña temporal. Elige la tuya antes de continuar.',
+      'temporaryPassword': 'Contraseña temporal',
+      'passwordResetDone': 'Nueva contraseña guardada para',
+      'noResetRequests': 'No hay solicitudes de contraseña.',
+      'resetRequests': 'Pidió una contraseña nueva',
+      'useThisEmail': 'Usar este correo',
       'businessName': 'Nombre del negocio',
       'businessNameHint': 'Se muestra en tu perfil de proveedor',
       'preferredSupplierId': 'Id de proveedor preferido (opcional)',
@@ -1749,6 +1796,29 @@ class WingerStrings {
       'createAdminHint':
           'Msimamizi wa Winger aliyeingia pekee ndiye anayeweza kuongeza mwingine. Usajili hauwezi.',
       'adminCreated': 'Akaunti ya msimamizi imeundwa:',
+      'forgotPassword': 'Umesahau nenosiri?',
+      'forgotPasswordHint':
+          'Andika barua pepe ya akaunti. Msimamizi wa Winger anaweka nenosiri jipya na kukuambia. Winger hailitumi kwa barua pepe.',
+      'resetRequested':
+          'Ombi limetumwa. Ingia baada ya msimamizi kukuambia nenosiri jipya.',
+      'changePassword': 'Badilisha nenosiri',
+      'currentPassword': 'Nenosiri la sasa',
+      'newPassword': 'Nenosiri jipya',
+      'confirmPassword': 'Thibitisha nenosiri jipya',
+      'passwordChanged': 'Nenosiri limebadilishwa. Litumie unapoingia tena.',
+      'passwordMismatch': 'Manenosiri mapya hayafanani.',
+      'resetPassword': 'Weka nenosiri upya',
+      'resetPasswordHint':
+          'Weka nenosiri la muda, kisha mwambie mtu huyo. Anaingia nalo na kuchagua lake kabla ya kuendelea. Inafanya kazi kwa wateja, wasambazaji na wasimamizi.',
+      'temporaryPasswordSaved': 'Nenosiri la muda limehifadhiwa kwa',
+      'choosePassword': 'Chagua nenosiri lako',
+      'choosePasswordHint':
+          'Kuingia huku kulitumia nenosiri la muda. Chagua lako kabla ya kuendelea.',
+      'temporaryPassword': 'Nenosiri la muda',
+      'passwordResetDone': 'Nenosiri jipya limehifadhiwa kwa',
+      'noResetRequests': 'Hakuna maombi ya nenosiri.',
+      'resetRequests': 'Aliomba nenosiri jipya',
+      'useThisEmail': 'Tumia barua pepe hii',
       'businessName': 'Jina la biashara',
       'businessNameHint': 'Inaonekana kwenye wasifu wako wa msambazaji',
       'preferredSupplierId': 'Kitambulisho unachopendelea (si lazima)',

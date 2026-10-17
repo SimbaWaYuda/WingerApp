@@ -39,6 +39,7 @@ class AppSession extends ChangeNotifier {
   String userId = 'user-amina';
   String? supplierId;
   String? accessToken;
+  bool mustChangePassword = false;
   String phone = '';
   String city = 'Nairobi';
   String addressLine = 'Westlands';
@@ -278,6 +279,7 @@ class AppSession extends ChangeNotifier {
     required String mail,
     required UserRole selectedRole,
     String? supplier,
+    bool passwordChangeRequired = false,
     String? phoneNumber,
     String? cityName,
     String? address,
@@ -288,6 +290,7 @@ class AppSession extends ChangeNotifier {
     email = mail;
     role = selectedRole;
     supplierId = supplier;
+    mustChangePassword = passwordChangeRequired;
     if (phoneNumber != null) phone = phoneNumber;
     if (cityName != null && cityName.isNotEmpty) city = cityName;
     if (address != null && address.isNotEmpty) addressLine = address;
@@ -309,9 +312,17 @@ class AppSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setMustChangePassword(bool required) {
+    if (mustChangePassword == required) return;
+    mustChangePassword = required;
+    notifyListeners();
+    authSignal.ping();
+  }
+
   void signOut() {
     role = null;
     accessToken = null;
+    mustChangePassword = false;
     supplierId = null;
     phone = '';
     city = 'Nairobi';

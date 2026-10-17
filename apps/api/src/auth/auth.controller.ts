@@ -51,6 +51,44 @@ export class AuthController {
     });
   }
 
+  @Post('password-resets')
+  requestPasswordReset(@Body() body: { email?: string }) {
+    return this.authService.requestPasswordReset(String(body.email ?? ''));
+  }
+
+  @Get('password-resets')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  listPasswordResets(@CurrentUser() user: AuthUser) {
+    return this.authService.listPasswordResetRequests(user);
+  }
+
+  @Post('password-resets/apply')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  resetPassword(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { email?: string; password?: string },
+  ) {
+    return this.authService.resetPassword(user, {
+      email: String(body.email ?? ''),
+      password: String(body.password ?? ''),
+    });
+  }
+
+  @Patch('password')
+  @UseGuards(JwtAuthGuard)
+  changePassword(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { currentPassword?: string; newPassword?: string },
+  ) {
+    return this.authService.changePassword(
+      user.sub,
+      String(body.currentPassword ?? ''),
+      String(body.newPassword ?? ''),
+    );
+  }
+
   @Post('admins')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
