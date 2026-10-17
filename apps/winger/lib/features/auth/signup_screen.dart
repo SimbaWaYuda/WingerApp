@@ -7,6 +7,7 @@ import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
+import '../../core/widgets/password_field.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -120,10 +121,9 @@ class _SignupScreenState extends State<SignupScreen> {
           decoration: InputDecoration(labelText: s.t('email')),
         ),
         const SizedBox(height: 12),
-        TextField(
+        PasswordField(
           controller: _password,
-          obscureText: true,
-          decoration: InputDecoration(labelText: s.t('password')),
+          labelText: s.t('password'),
         ),
         if (_role == UserRole.supplier) ...[
           const SizedBox(height: 12),

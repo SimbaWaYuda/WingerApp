@@ -12,6 +12,7 @@ import '../../core/widgets/courier_trip.dart';
 import '../../core/widgets/kpi_card.dart';
 import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
+import '../../core/widgets/password_field.dart';
 import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
 
@@ -278,10 +279,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       decoration: InputDecoration(labelText: s.t('email')),
                     ),
                     const SizedBox(height: 8),
-                    TextField(
+                    PasswordField(
                       controller: _adminPassword,
-                      obscureText: true,
-                      decoration: InputDecoration(labelText: s.t('password')),
+                      labelText: s.t('password'),
                     ),
                     if (_adminNotice != null) ...[
                       const SizedBox(height: 8),

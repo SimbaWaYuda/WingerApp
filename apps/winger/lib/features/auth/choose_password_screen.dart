@@ -7,6 +7,7 @@ import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
+import '../../core/widgets/password_field.dart';
 
 class ChoosePasswordScreen extends StatefulWidget {
   const ChoosePasswordScreen({super.key});
@@ -88,24 +89,19 @@ class _ChoosePasswordScreenState extends State<ChoosePasswordScreen> {
                 const SizedBox(height: 8),
                 Text(session.email),
                 const SizedBox(height: 16),
-                TextField(
+                PasswordField(
                   controller: _current,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: s.t('temporaryPassword'),
-                  ),
+                  labelText: s.t('temporaryPassword'),
                 ),
                 const SizedBox(height: 8),
-                TextField(
+                PasswordField(
                   controller: _next,
-                  obscureText: true,
-                  decoration: InputDecoration(labelText: s.t('newPassword')),
+                  labelText: s.t('newPassword'),
                 ),
                 const SizedBox(height: 8),
-                TextField(
+                PasswordField(
                   controller: _confirm,
-                  obscureText: true,
-                  decoration: InputDecoration(labelText: s.t('confirmPassword')),
+                  labelText: s.t('confirmPassword'),
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 8),

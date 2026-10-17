@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/api/api_client.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/theme/winger_colors.dart';
+import '../../core/widgets/password_field.dart';
 
 class ChangePasswordCard extends StatefulWidget {
   const ChangePasswordCard({super.key});
@@ -79,22 +80,19 @@ class _ChangePasswordCardState extends State<ChangePasswordCard> {
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
             ),
             const SizedBox(height: 12),
-            TextField(
+            PasswordField(
               controller: _current,
-              obscureText: true,
-              decoration: InputDecoration(labelText: s.t('currentPassword')),
+              labelText: s.t('currentPassword'),
             ),
             const SizedBox(height: 8),
-            TextField(
+            PasswordField(
               controller: _next,
-              obscureText: true,
-              decoration: InputDecoration(labelText: s.t('newPassword')),
+              labelText: s.t('newPassword'),
             ),
             const SizedBox(height: 8),
-            TextField(
+            PasswordField(
               controller: _confirm,
-              obscureText: true,
-              decoration: InputDecoration(labelText: s.t('confirmPassword')),
+              labelText: s.t('confirmPassword'),
             ),
             if (_notice != null) ...[
               const SizedBox(height: 8),
@@ -246,16 +244,14 @@ class _AdminPasswordResetCardState extends State<AdminPasswordResetCard> {
               decoration: InputDecoration(labelText: s.t('email')),
             ),
             const SizedBox(height: 8),
-            TextField(
+            PasswordField(
               controller: _password,
-              obscureText: true,
-              decoration: InputDecoration(labelText: s.t('newPassword')),
+              labelText: s.t('newPassword'),
             ),
             const SizedBox(height: 8),
-            TextField(
+            PasswordField(
               controller: _confirm,
-              obscureText: true,
-              decoration: InputDecoration(labelText: s.t('confirmPassword')),
+              labelText: s.t('confirmPassword'),
             ),
             if (_notice != null) ...[
               const SizedBox(height: 8),

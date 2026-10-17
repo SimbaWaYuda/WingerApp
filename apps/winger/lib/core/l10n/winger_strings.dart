@@ -28,6 +28,8 @@ class WingerStrings {
       'wingerAdminBody': 'Platform operations and governance.',
       'email': 'Email address',
       'password': 'Password',
+      'showPassword': 'Show password',
+      'hidePassword': 'Hide password',
       'continueRole': 'Continue',
       'back': 'Back',
       'languageHint':
@@ -632,6 +634,8 @@ class WingerStrings {
       'wingerAdminBody': 'Operaciones y gobierno de la plataforma.',
       'email': 'Correo electrónico',
       'password': 'Contraseña',
+      'showPassword': 'Mostrar contraseña',
+      'hidePassword': 'Ocultar contraseña',
       'continueRole': 'Continuar',
       'back': 'Atrás',
       'languageHint':
@@ -1239,6 +1243,8 @@ class WingerStrings {
       'wingerAdminBody': 'Operesheni na utawala wa jukwaa.',
       'email': 'Barua pepe',
       'password': 'Nenosiri',
+      'showPassword': 'Onyesha nenosiri',
+      'hidePassword': 'Ficha nenosiri',
       'continueRole': 'Endelea',
       'back': 'Rudi',
       'languageHint':

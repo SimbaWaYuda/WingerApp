@@ -26,6 +26,11 @@ Passed on 16 October 2026, on this computer.
 - `WG-10095` was delivered.
 - From an iPhone, off this computer, the web app showed API Online. `WG-10097` was paid with a test card and delivered. Pulse Watch Pro is booked with Bot Sender · `CR-10010`, driver Deo N, plate `TZG 27 GD`.
 
+Passed on 17 October 2026, on the public link from an iPhone.
+
+- **Forgot password?** for `kalilo.msuya@example.com` reached the admin dashboard. The admin saved a temporary password, and the request list cleared.
+- Kijani Payments still showed commission waiting **$0.00**. The Pulse Watch payout of USD 287.10 was already sent. Cash commission stays at **$24.00**. Later test-card orders are demo, so they do not raise this number.
+
 ## Sign in
 
 Password for every seeded account: `demo1234`
@@ -41,6 +46,15 @@ Testers can create a customer or supplier account from **New here? Create an acc
 On the login screen, pick the matching role before Continue. The app runs here as the Windows app, Chrome at `http://localhost:61258`, or the Android emulator. The emulator talks to this computer. It is not a public app.
 
 Language can be English, Español, or Kiswahili.
+
+## Reset a password
+
+There is no password email. **Forgot password?** on the login screen asks an admin to set one.
+
+1. The person enters their email and sends the request. The app says the request was sent. A missing email gets the same reply.
+2. Sign in as the admin. **Reset a password** on the dashboard lists who asked. Set a temporary password and tell that person.
+3. They sign in with the temporary password. The app stays on **Choose your password** until they save their own. The temporary password then stops working.
+4. This works for customers, suppliers, and admins, on the Windows app, the phone, and the web app.
 
 ## Pay with a test card
 
