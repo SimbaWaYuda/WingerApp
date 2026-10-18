@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
@@ -1309,8 +1310,14 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
         }
         saved = await api.updateMyProduct(product.id, body);
       }
-      if (draft.pendingPaths.isNotEmpty) {
-        await api.uploadProductImages(saved.id, draft.pendingPaths);
+      if (draft.pendingPhotos.isNotEmpty) {
+        await api.uploadProductImages(
+          saved.id,
+          [
+            for (final photo in draft.pendingPhotos)
+              ProductPhotoUpload(filename: photo.name, bytes: photo.bytes),
+          ],
+        );
       }
       if (!mounted) return;
       _reload();
@@ -1492,6 +1499,13 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
   }
 }
 
+class _PendingPhoto {
+  const _PendingPhoto({required this.name, required this.bytes});
+
+  final String name;
+  final Uint8List bytes;
+}
+
 class _ProductEditorResult {
   const _ProductEditorResult({
     required this.name,
@@ -1508,7 +1522,7 @@ class _ProductEditorResult {
     required this.description,
     required this.taxRatePercent,
     required this.taxRateInvalid,
-    required this.pendingPaths,
+    required this.pendingPhotos,
     required this.removedImageIds,
   });
 
@@ -1526,7 +1540,7 @@ class _ProductEditorResult {
   final String description;
   final double? taxRatePercent;
   final bool taxRateInvalid;
-  final List<String> pendingPaths;
+  final List<_PendingPhoto> pendingPhotos;
   final List<String> removedImageIds;
 }
 
@@ -1570,7 +1584,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
   late final TextEditingController _taxCtrl;
   late List<ProductImageRef> _existing;
   final List<_ExtraSpecEditors> _extraSpecs = [];
-  final List<String> _pendingPaths = [];
+  final List<_PendingPhoto> _pendingPhotos = [];
   final List<String> _removedImageIds = [];
 
   @override
@@ -1650,7 +1664,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     super.dispose();
   }
 
-  int get _totalCount => _existing.length + _pendingPaths.length;
+  int get _totalCount => _existing.length + _pendingPhotos.length;
 
   static const _minImageEdge = 600;
 
@@ -1665,15 +1679,21 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     );
     if (result.isEmpty) return;
 
-    final accepted = <String>[];
+    final accepted = <_PendingPhoto>[];
     var rejectedSmall = 0;
-    for (final file in result.take(remaining * 2)) {
-      final path = file.path;
-      if (path == null || path.isEmpty) continue;
+    for (final file in result.take(remaining)) {
+      Uint8List bytes;
+      try {
+        bytes = await file.readAsBytes();
+      } catch (_) {
+        rejectedSmall += 1;
+        continue;
+      }
       if (accepted.length >= remaining) break;
-      final ok = await _isImageLargeEnough(path);
+      final ok = await _isImageLargeEnough(bytes);
       if (ok) {
-        accepted.add(path);
+        final name = file.name.trim().isEmpty ? 'photo.jpg' : file.name.trim();
+        accepted.add(_PendingPhoto(name: name, bytes: bytes));
       } else {
         rejectedSmall += 1;
       }
@@ -1681,7 +1701,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
 
     if (!mounted) return;
     if (accepted.isNotEmpty) {
-      setState(() => _pendingPaths.addAll(accepted));
+      setState(() => _pendingPhotos.addAll(accepted));
     }
     if (rejectedSmall > 0) {
       ScaffoldMessenger.of(
@@ -1690,9 +1710,8 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     }
   }
 
-  Future<bool> _isImageLargeEnough(String path) async {
+  Future<bool> _isImageLargeEnough(Uint8List bytes) async {
     try {
-      final bytes = await File(path).readAsBytes();
       if (bytes.length < 20 * 1024) return false;
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
@@ -1737,7 +1756,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
             (double.tryParse(_taxCtrl.text.trim()) == null ||
                 double.parse(_taxCtrl.text.trim()) < 0 ||
                 double.parse(_taxCtrl.text.trim()) > 100),
-        pendingPaths: List<String>.from(_pendingPaths),
+        pendingPhotos: List<_PendingPhoto>.from(_pendingPhotos),
         removedImageIds: List<String>.from(_removedImageIds),
       ),
     );
@@ -1784,15 +1803,15 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                         });
                       },
                     ),
-                  for (var i = 0; i < _pendingPaths.length; i++)
+                  for (var i = 0; i < _pendingPhotos.length; i++)
                     _EditorThumb(
-                      child: Image.file(
-                        File(_pendingPaths[i]),
+                      child: Image.memory(
+                        _pendingPhotos[i].bytes,
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) =>
                             const Icon(Icons.broken_image_outlined),
                       ),
-                      onRemove: () => setState(() => _pendingPaths.removeAt(i)),
+                      onRemove: () => setState(() => _pendingPhotos.removeAt(i)),
                     ),
                   if (_totalCount < _maxImages)
                     OutlinedButton.icon(

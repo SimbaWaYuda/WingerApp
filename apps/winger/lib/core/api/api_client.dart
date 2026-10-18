@@ -1,10 +1,18 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
 import '../../features/onboarding/onboarding_models.dart';
 import '../models/models.dart';
 import '../state/app_session.dart';
+
+class ProductPhotoUpload {
+  const ProductPhotoUpload({required this.filename, required this.bytes});
+
+  final String filename;
+  final Uint8List bytes;
+}
 
 class ApiClient {
   ApiClient(this.session);
@@ -1261,10 +1269,10 @@ class ApiClient {
 
   Future<Product> uploadProductImages(
     String productId,
-    List<String> paths,
+    List<ProductPhotoUpload> photos,
   ) async {
     _requireAccessToken();
-    if (paths.isEmpty) {
+    if (photos.isEmpty) {
       throw Exception('Select at least one image to upload');
     }
     final request = http.MultipartRequest(
@@ -1272,8 +1280,13 @@ class ApiClient {
       _uri('/products/$productId/images'),
     );
     request.headers['Authorization'] = 'Bearer ${session.accessToken}';
-    for (final path in paths) {
-      request.files.add(await http.MultipartFile.fromPath('files', path));
+    for (final photo in photos) {
+      final name = photo.filename.trim().isEmpty
+          ? 'photo.jpg'
+          : photo.filename.trim();
+      request.files.add(
+        http.MultipartFile.fromBytes('files', photo.bytes, filename: name),
+      );
     }
     final streamed = await request.send().timeout(const Duration(seconds: 30));
     final response = await http.Response.fromStream(streamed);

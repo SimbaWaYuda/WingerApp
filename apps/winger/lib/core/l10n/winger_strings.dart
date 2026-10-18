@@ -325,6 +325,14 @@ class WingerStrings {
       'activeSuppliers': 'Active suppliers',
       'statusLive': 'Live',
       'statusUnverified': 'Unverified',
+      'supplierReviewHint':
+          'Open a supplier to read the business and approve them.',
+      'approveSupplier': 'Approve supplier',
+      'supplierApproved': '{name} is now live.',
+      'supplierReviewBody':
+          'Approving marks this supplier live. Customers then see them as verified.',
+      'supplierNoBio': 'No business description yet.',
+      'supplierAlreadyLive': 'This supplier is already live.',
       'noSuppliers': 'No suppliers yet.',
       'settlementUsd': 'Settlement USD',
       'paid': 'paid',
@@ -933,6 +941,14 @@ class WingerStrings {
       'activeSuppliers': 'Proveedores activos',
       'statusLive': 'Activo',
       'statusUnverified': 'Sin verificar',
+      'supplierReviewHint':
+          'Abre un proveedor para leer el negocio y aprobarlo.',
+      'approveSupplier': 'Aprobar proveedor',
+      'supplierApproved': '{name} ya está activo.',
+      'supplierReviewBody':
+          'Aprobar marca a este proveedor como activo. Los clientes lo verán verificado.',
+      'supplierNoBio': 'Aún no hay descripción del negocio.',
+      'supplierAlreadyLive': 'Este proveedor ya está activo.',
       'noSuppliers': 'Aún no hay proveedores.',
       'settlementUsd': 'Liquidación USD',
       'paid': 'pagados',
@@ -1541,6 +1557,14 @@ class WingerStrings {
       'activeSuppliers': 'Wasambazaji hai',
       'statusLive': 'Hai',
       'statusUnverified': 'Haijathibitishwa',
+      'supplierReviewHint':
+          'Fungua msambazaji kusoma biashara na kumuidhinisha.',
+      'approveSupplier': 'Idhinisha msambazaji',
+      'supplierApproved': '{name} sasa yuko hai.',
+      'supplierReviewBody':
+          'Kuidhinisha kunamfanya msambazaji huyu hai. Wateja watamwona amethibitishwa.',
+      'supplierNoBio': 'Bado hakuna maelezo ya biashara.',
+      'supplierAlreadyLive': 'Msambazaji huyu tayari yuko hai.',
       'noSuppliers': 'Bado hakuna wasambazaji.',
       'settlementUsd': 'Malipo USD',
       'paid': 'zimelipwa',

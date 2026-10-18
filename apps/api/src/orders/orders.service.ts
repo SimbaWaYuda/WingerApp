@@ -663,7 +663,16 @@ export class OrdersService {
     }
 
     const [suppliers, items] = await Promise.all([
-      this.prisma.supplier.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.supplier.findMany({
+        orderBy: { name: 'asc' },
+        include: {
+          users: {
+            select: { name: true, email: true },
+            orderBy: { createdAt: 'asc' },
+            take: 1,
+          },
+        },
+      }),
       this.prisma.orderItem.findMany({
         where: { status: { not: OrderStatus.CANCELLED } },
         select: { supplierId: true, orderId: true, lineTotal: true },
@@ -688,6 +697,10 @@ export class OrdersService {
         id: supplier.id,
         name: supplier.name,
         verificationStatus: supplier.verificationStatus,
+        businessBio: supplier.businessBio,
+        city: supplier.city,
+        ownerName: supplier.users[0]?.name ?? null,
+        ownerEmail: supplier.users[0]?.email ?? null,
         orderCount: bucket?.orders.size ?? 0,
         grossSales: round(bucket?.grossSales ?? 0),
         currency: 'USD',

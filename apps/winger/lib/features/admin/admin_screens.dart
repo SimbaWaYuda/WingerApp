@@ -511,6 +511,23 @@ class _AdminSuppliersScreenState extends State<AdminSuppliersScreen> {
     return context.read<ApiClient>().fetchAdminSuppliers();
   }
 
+  Future<void> _openSupplier(Map<String, dynamic> supplier) async {
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => _SupplierReviewDialog(supplier: supplier),
+    );
+    if (approved != true || !mounted) return;
+    final name = supplier['name']?.toString() ?? '';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          WingerStrings.of(context).t('supplierApproved').replaceAll('{name}', name),
+        ),
+      ),
+    );
+    setState(() => _future = _load());
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
@@ -543,6 +560,11 @@ class _AdminSuppliersScreenState extends State<AdminSuppliersScreen> {
               ],
             ),
             Text(
+              s.t('supplierReviewHint'),
+              style: TextStyle(color: WingerColors.muted),
+            ),
+            const SizedBox(height: 4),
+            Text(
               s.t('settlementUsd'),
               style: TextStyle(
                 color: WingerColors.muted,
@@ -571,39 +593,145 @@ class _AdminSuppliersScreenState extends State<AdminSuppliersScreen> {
             else
               for (final supplier in suppliers)
                 Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${supplier['name'] ?? ''}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
+                  child: InkWell(
+                    onTap: () => _openSupplier(supplier),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${supplier['name'] ?? ''}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${supplier['orderCount'] ?? 0} ${s.t('orders').toLowerCase()} · \$${((supplier['grossSales'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
-                              ),
-                            ],
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${supplier['orderCount'] ?? 0} ${s.t('orders').toLowerCase()} · \$${((supplier['grossSales'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}',
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        _SupplierStatusBadge(
-                          status: '${supplier['verificationStatus'] ?? ''}',
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          _SupplierStatusBadge(
+                            status: '${supplier['verificationStatus'] ?? ''}',
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
           ],
         );
       },
+    );
+  }
+}
+
+class _SupplierReviewDialog extends StatefulWidget {
+  const _SupplierReviewDialog({required this.supplier});
+
+  final Map<String, dynamic> supplier;
+
+  @override
+  State<_SupplierReviewDialog> createState() => _SupplierReviewDialogState();
+}
+
+class _SupplierReviewDialogState extends State<_SupplierReviewDialog> {
+  bool _busy = false;
+  String? _error;
+
+  bool get _live {
+    final status = '${widget.supplier['verificationStatus'] ?? ''}'.toUpperCase();
+    return status == 'APPROVED' || status == 'VERIFIED';
+  }
+
+  Future<void> _approve() async {
+    final id = widget.supplier['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.read<ApiClient>().postOnboarding(
+        '/admin/approve-supplier/${Uri.encodeComponent(id)}',
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final supplier = widget.supplier;
+    final bio = supplier['businessBio']?.toString().trim() ?? '';
+    final ownerName = supplier['ownerName']?.toString().trim() ?? '';
+    final ownerEmail = supplier['ownerEmail']?.toString().trim() ?? '';
+    final city = supplier['city']?.toString().trim() ?? '';
+    final account = [
+      if (ownerName.isNotEmpty) ownerName,
+      if (ownerEmail.isNotEmpty) ownerEmail,
+    ].join(' · ');
+    return AlertDialog(
+      title: Text('${supplier['name'] ?? ''}'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SupplierStatusBadge(
+            status: '${supplier['verificationStatus'] ?? ''}',
+          ),
+          const SizedBox(height: 12),
+          Text(s.t('supplierReviewBody')),
+          const SizedBox(height: 12),
+          Text(
+            bio.isEmpty ? s.t('supplierNoBio') : bio,
+            style: TextStyle(
+              color: bio.isEmpty ? WingerColors.muted : null,
+            ),
+          ),
+          if (city.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(city),
+          ],
+          if (account.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text('${s.t('supplierAccount')}: $account'),
+          ],
+          if (_live) ...[
+            const SizedBox(height: 12),
+            Text(s.t('supplierAlreadyLive')),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: const TextStyle(color: WingerColors.dangerInk)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+        ),
+        if (!_live)
+          FilledButton(
+            onPressed: _busy ? null : _approve,
+            child: Text(s.t('approveSupplier')),
+          ),
+      ],
     );
   }
 }
