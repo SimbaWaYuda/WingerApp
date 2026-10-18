@@ -1673,8 +1673,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     final remaining = _maxImages - _totalCount;
     if (remaining <= 0) return;
     final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+      type: FileType.image,
       compressionQuality: 0,
     );
     if (result.isEmpty) return;

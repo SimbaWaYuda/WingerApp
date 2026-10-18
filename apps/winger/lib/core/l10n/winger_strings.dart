@@ -393,9 +393,9 @@ class WingerStrings {
       'photos': 'Photos',
       'addPhotos': 'Add photos',
       'productPhotosHint':
-          'Up to 8 images · JPG/PNG/WebP/GIF · min 600×600 · max 5 MB · use original photos, not web thumbnails',
+          'Up to 8 images · JPG/JPEG/PNG/WebP/GIF · min 600×600 · max 5 MB · use original photos, not web thumbnails',
       'productImageUploadFailed':
-          'Could not upload that file. Use JPG, PNG, WebP, or GIF under 5 MB.',
+          'Could not upload that file. Use JPG, JPEG, PNG, WebP, or GIF under 5 MB.',
       'productImageTooSmall':
           'That image is too small (needs at least 600×600). Save/download the full-size photo, then try again.',
       'netPayout': 'Net payout',
@@ -1008,9 +1008,9 @@ class WingerStrings {
       'photos': 'Fotos',
       'addPhotos': 'Añadir fotos',
       'productPhotosHint':
-          'Hasta 8 imágenes · JPG/PNG/WebP/GIF · mín. 600×600 · máx. 5 MB · usa fotos originales, no miniaturas web',
+          'Hasta 8 imágenes · JPG/JPEG/PNG/WebP/GIF · mín. 600×600 · máx. 5 MB · usa fotos originales, no miniaturas web',
       'productImageUploadFailed':
-          'No se pudo subir ese archivo. Usa JPG, PNG, WebP o GIF de menos de 5 MB.',
+          'No se pudo subir ese archivo. Usa JPG, JPEG, PNG, WebP o GIF de menos de 5 MB.',
       'productImageTooSmall':
           'Esa imagen es demasiado pequeña (mín. 600×600). Guarda la foto a tamaño completo e inténtalo de nuevo.',
       'netPayout': 'Pago neto',
@@ -1625,9 +1625,9 @@ class WingerStrings {
       'photos': 'Picha',
       'addPhotos': 'Ongeza picha',
       'productPhotosHint':
-          'Hadí 8 picha · JPG/PNG/WebP/GIF · angalau 600×600 · hadí 5 MB · tumia picha halisi, si vijipicha vya wavuti',
+          'Hadí 8 picha · JPG/JPEG/PNG/WebP/GIF · angalau 600×600 · hadí 5 MB · tumia picha halisi, si vijipicha vya wavuti',
       'productImageUploadFailed':
-          'Imeshindikana kupakia faili hiyo. Tumia JPG, PNG, WebP au GIF chini ya 5 MB.',
+          'Imeshindikana kupakia faili hiyo. Tumia JPG, JPEG, PNG, WebP au GIF chini ya 5 MB.',
       'productImageTooSmall':
           'Picha hiyo ni ndogo mno (angalau 600×600). Hifadhi picha kamili kisha jaribu tena.',
       'netPayout': 'Malipo halisi',
