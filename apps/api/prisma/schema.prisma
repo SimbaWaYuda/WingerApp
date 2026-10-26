@@ -305,6 +305,8 @@ model Product {
   /// Custom supplier specs: [{ "label": "Material", "value": "Cotton" }]
   extraSpecs    Json        @default("[]")
   description   String      @default("")
+  /// Bilingual search bag. Displayed name and description stay on those columns.
+  searchText    String      @default("") @db.Text
   /// Null uses the delivery-city rate, then the supplier rate. 0 means this product is tax free.
   taxRatePercent Decimal?   @db.Decimal(5, 2)
   stock         Int         @default(0)
@@ -315,10 +317,20 @@ model Product {
   images          ProductImage[]
   inventoryLedger InventoryLedger[]
   orderItems      OrderItem[]
+  searchEmbedding ProductSearchEmbedding?
 
   @@index([supplierId])
   @@index([category])
   @@index([name])
+}
+
+model ProductSearchEmbedding {
+  productId   String   @id
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  model       String
+  vector      Json
+  contentHash String
+  updatedAt   DateTime @updatedAt
 }
 
 model ProductImage {

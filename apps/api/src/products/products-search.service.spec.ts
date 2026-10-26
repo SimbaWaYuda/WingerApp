@@ -1,6 +1,13 @@
 import { HttpException } from '@nestjs/common';
 import { ProductsSearchService } from './products-search.service';
 
+function searchIndex(ids: string[] = []) {
+  return {
+    similar: jest.fn().mockResolvedValue(ids),
+    refresh: jest.fn(),
+  };
+}
+
 function facets() {
   return {
     listCategories: jest.fn().mockResolvedValue([{ name: 'Home', productCount: 1 }]),
@@ -28,7 +35,10 @@ describe('ProductsSearchService', () => {
   it('applies a local budget and returns catalogue ids from browse', async () => {
     delete process.env.SEARCH_AI_API_KEY;
     const products = facets();
-    const service = new ProductsSearchService(products as never);
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex() as never,
+    );
     const result = await service.search(
       { q: 'black office chair under $150', page: 1, pageSize: 24 },
       'tester',
@@ -43,7 +53,10 @@ describe('ProductsSearchService', () => {
   it('falls back to keyword browse when the AI provider fails', async () => {
     process.env.SEARCH_AI_API_KEY = 'sk-test-search';
     const products = facets();
-    const service = new ProductsSearchService(products as never);
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex() as never,
+    );
     service.bindFetch(async () => {
       throw new Error('network down');
     });
@@ -55,7 +68,10 @@ describe('ProductsSearchService', () => {
   it('uses AI filters only when they match real facets', async () => {
     process.env.SEARCH_AI_API_KEY = 'sk-test-search';
     const products = facets();
-    const service = new ProductsSearchService(products as never);
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex() as never,
+    );
     service.bindFetch(async () => ({
       ok: true,
       status: 200,
@@ -89,7 +105,10 @@ describe('ProductsSearchService', () => {
   it('asks browse for every clothing match when the query is nguo', async () => {
     delete process.env.SEARCH_AI_API_KEY;
     const products = facets();
-    const service = new ProductsSearchService(products as never);
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex() as never,
+    );
     await service.search({ q: 'nataka nguo' }, 'tester-nguo');
     expect(products.browse).toHaveBeenCalledWith(
       expect.objectContaining({ clothing: true }),
@@ -98,10 +117,78 @@ describe('ProductsSearchService', () => {
     expect(query.category).toBeUndefined();
   });
 
+  it('keeps keyword browse when semantic ranking times out', async () => {
+    delete process.env.SEARCH_AI_API_KEY;
+    const products = facets();
+    const index = {
+      similar: jest.fn().mockRejectedValue(new Error('aborted')),
+      refresh: jest.fn(),
+    };
+    const service = new ProductsSearchService(products as never, index as never);
+    const result = await service.search({ q: 'AeroPulse' }, 'tester-embed-timeout');
+    expect(products.browse).toHaveBeenCalled();
+    expect(result.items[0].id).toBe('p-chair');
+  });
+
+  it('unions semantic ids with keyword browse and keeps a budget filter', async () => {
+    delete process.env.SEARCH_AI_API_KEY;
+    const products = facets();
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex(['p-kitanda-mbao']) as never,
+    );
+    await service.search(
+      { q: 'Find a strong wooden bed under $200', page: 1, pageSize: 24 },
+      'tester-bed',
+    );
+    expect(products.browse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxPrice: 200,
+        semanticIds: ['p-kitanda-mbao'],
+      }),
+    );
+  });
+
+  it('keeps page size and an exact product id query', async () => {
+    delete process.env.SEARCH_AI_API_KEY;
+    const products = facets();
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex() as never,
+    );
+    await service.search(
+      { q: 'p-oak-wooden-bed', page: 2, pageSize: 12 },
+      'tester-sku',
+    );
+    expect(products.browse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        q: 'p-oak-wooden-bed',
+        page: 2,
+        pageSize: 12,
+      }),
+    );
+  });
+
+  it('passes in-stock through to browse', async () => {
+    delete process.env.SEARCH_AI_API_KEY;
+    const products = facets();
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex() as never,
+    );
+    await service.search({ q: 'chair', inStock: true }, 'tester-stock');
+    expect(products.browse).toHaveBeenCalledWith(
+      expect.objectContaining({ inStock: true }),
+    );
+  });
+
   it('returns an empty page when nothing matches', async () => {
     delete process.env.SEARCH_AI_API_KEY;
     const products = facets();
-    const service = new ProductsSearchService(products as never);
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex() as never,
+    );
     const result = await service.search({ q: 'chair under $5' }, 'tester-empty');
     expect(result.items).toEqual([]);
     expect(result.total).toBe(0);
@@ -109,7 +196,10 @@ describe('ProductsSearchService', () => {
 
   it('rejects an oversized query', async () => {
     const products = facets();
-    const service = new ProductsSearchService(products as never);
+    const service = new ProductsSearchService(
+      products as never,
+      searchIndex() as never,
+    );
     await expect(service.search({ q: 'chair '.repeat(80) }, 'tester-long')).rejects.toBeInstanceOf(
       HttpException,
     );

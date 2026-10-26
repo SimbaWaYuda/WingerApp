@@ -1,3 +1,5 @@
+import { canonicalToken, foldWord } from './search-document';
+
 export const SEARCH_QUERY_MAX = 200;
 export const SEARCH_RATE_LIMIT = 30;
 export const SEARCH_RATE_WINDOW_MS = 60_000;
@@ -115,6 +117,11 @@ const STOPWORDS = new Set([
   'unas',
   'nataka',
   'ninataka',
+  'natafuta',
+  'natafute',
+  'dola',
+  'dollar',
+  'dollars',
   'tafuta',
   'tafadhali',
   'naomba',
@@ -124,73 +131,14 @@ const STOPWORDS = new Set([
   'nitafute',
   'cha',
   'vya',
+  'chenye',
+  'yenye',
+  'kilicho',
+  'ambacho',
+  'with',
+  'that',
+  'this',
 ]);
-
-/** Spanish / Kiswahili shopping words → English catalogue tokens. */
-const SYNONYMS: Record<string, string> = {
-  reloj: 'watch',
-  relojes: 'watch',
-  saa: 'watch',
-  masaa: 'watch',
-  smartwatch: 'watch',
-  auriculares: 'headphones',
-  audifonos: 'headphones',
-  cascos: 'headphones',
-  altavoz: 'speaker',
-  altavoces: 'speaker',
-  parlante: 'speaker',
-  spika: 'speaker',
-  kipaza: 'speaker',
-  sauti: 'audio',
-  sonido: 'audio',
-  silla: 'chair',
-  sillas: 'chair',
-  kiti: 'chair',
-  viti: 'chair',
-  lampara: 'lamp',
-  lamparas: 'lamp',
-  taa: 'lamp',
-  mochila: 'bag',
-  bolso: 'bag',
-  bolsa: 'bag',
-  bolsos: 'bag',
-  mkoba: 'bag',
-  mifuko: 'bag',
-  begi: 'bag',
-  chaqueta: 'jacket',
-  chamarra: 'jacket',
-  abrigo: 'jacket',
-  koti: 'jacket',
-  jaketi: 'jacket',
-  ropa: 'clothes',
-  prenda: 'clothes',
-  prendas: 'clothes',
-  nguo: 'clothes',
-  mavazi: 'clothes',
-  hogar: 'home',
-  mueble: 'home',
-  nyumbani: 'home',
-  nyumba: 'home',
-  electronico: 'electronic',
-  electronicos: 'electronic',
-  elektroniki: 'electronic',
-  cocina: 'kitchen',
-  negro: 'black',
-  negra: 'black',
-  negros: 'black',
-  negras: 'black',
-  nyeusi: 'black',
-  blanco: 'white',
-  blanca: 'white',
-  nyeupe: 'white',
-  azul: 'navy',
-  marino: 'navy',
-  grafito: 'graphite',
-  oficina: 'office',
-  ofisi: 'office',
-  escritorio: 'desk',
-  dawati: 'desk',
-};
 
 const CLOTHING_UMBRELLA = new Set([
   'clothes',
@@ -221,25 +169,21 @@ export const GARMENT_TOKENS = [
   'clothes',
 ];
 
-function foldWord(value: string): string {
-  return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-}
-
 function expandWord(word: string): string {
-  const folded = foldWord(word);
-  return SYNONYMS[folded] ?? folded;
+  return canonicalToken(word);
 }
 
 export function isClothingUmbrellaToken(token: string): boolean {
   const folded = foldWord(token);
-  return CLOTHING_UMBRELLA.has(folded) || CLOTHING_UMBRELLA.has(SYNONYMS[folded] ?? '');
+  return CLOTHING_UMBRELLA.has(folded) || CLOTHING_UMBRELLA.has(canonicalToken(folded));
 }
 
 export function expandSearchQuery(query: string): string {
   return query.replace(/[a-z0-9áéíóúñü]+/gi, (word) => {
     const folded = foldWord(word);
     if (folded.length < 3 || STOPWORDS.has(folded)) return word;
-    return SYNONYMS[folded] ?? word;
+    const mapped = canonicalToken(folded);
+    return mapped === folded ? word : mapped;
   });
 }
 
@@ -296,7 +240,7 @@ function takeClothingUmbrella(query: string): { clothing: boolean; rest: string 
   const rest = query
     .replace(/[a-z0-9áéíóúñü]+/gi, (word) => {
       const folded = foldWord(word);
-      if (CLOTHING_UMBRELLA.has(folded) || CLOTHING_UMBRELLA.has(SYNONYMS[folded] ?? '')) {
+      if (CLOTHING_UMBRELLA.has(folded) || CLOTHING_UMBRELLA.has(canonicalToken(folded))) {
         clothing = true;
         return ' ';
       }
@@ -328,7 +272,7 @@ export function interpretLocal(
   let rest = expandSearchQuery(clipSearchQuery(query));
   const max = takePrice(
     rest,
-    /(?:under|below|less than|at most|max(?:imum)?|up to|menos de|hasta|chini ya)\s*\$?\s*(\d+(?:\.\d+)?)/i,
+    /(?:under|below|less than|at most|max(?:imum)?|up to|not exceeding|no more than|menos de|hasta|chini ya|kisichozidi|isiyozidi)\s*(?:dola\s*)?\$?\s*(\d+(?:\.\d+)?)/i,
   );
   rest = max.rest;
   const min = takePrice(

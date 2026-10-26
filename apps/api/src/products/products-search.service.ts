@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { ProductSearchIndexService } from './product-search-index.service';
 import {
   ProductBrowseQuery,
   ProductBrowseResult,
@@ -35,7 +36,10 @@ export class ProductsSearchService {
   private readonly logger = new Logger(ProductsSearchService.name);
   private readonly limiter = new SearchRateLimiter();
 
-  constructor(private readonly products: ProductsService) {}
+  constructor(
+    private readonly products: ProductsService,
+    private readonly searchIndex: ProductSearchIndexService,
+  ) {}
 
   private fetchImpl: ChatFetch = fetch as ChatFetch;
 
@@ -86,7 +90,19 @@ export class ProductsSearchService {
       filters = { ...client, q };
     }
 
-    const page = await this.products.browse(filters);
+    let semanticIds: string[] = [];
+    if (q) {
+      try {
+        semanticIds = await this.searchIndex.similar(q);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'semantic search failed';
+        this.logger.warn(`Semantic search fallback: ${message}`);
+      }
+    }
+    const page = await this.products.browse({
+      ...filters,
+      semanticIds: semanticIds.length ? semanticIds : undefined,
+    });
     return { ...page, interpretation: interpreted };
   }
 

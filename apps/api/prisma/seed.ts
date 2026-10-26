@@ -1,5 +1,6 @@
 import { PrismaClient, StockStatus, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { buildSearchDocument } from '../src/products/search-document';
 
 const prisma = new PrismaClient();
 
@@ -238,6 +239,128 @@ const products = [
     stock: 48,
     stockStatus: StockStatus.IN_STOCK,
   },
+  {
+    id: 'p-oak-wooden-bed',
+    name: 'Oak Frame Wooden Bed',
+    brand: 'Atlas Home',
+    supplierId: 's-atlas',
+    supplierName: 'Atlas Home',
+    price: 189,
+    rating: 4.4,
+    imageUrl:
+      'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=800',
+    category: 'Home',
+    model: 'Oak-Q',
+    color: 'Oak',
+    size: 'Queen',
+    battery: '—',
+    weight: '38kg',
+    description:
+      'A strong wooden bed with a sturdy oak frame for a small bedroom.',
+    stock: 12,
+    stockStatus: StockStatus.IN_STOCK,
+  },
+  {
+    id: 'p-kitanda-mbao',
+    name: 'Kitanda cha Mbao Imara',
+    brand: 'Atlas Home',
+    supplierId: 's-atlas',
+    supplierName: 'Atlas Home',
+    price: 175,
+    rating: 4.3,
+    imageUrl:
+      'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=800',
+    category: 'Home',
+    model: 'KM-1',
+    color: 'Mbao',
+    size: 'Queen',
+    battery: '—',
+    weight: '36kg',
+    description:
+      'Kitanda imara cha mbao kwa chumba kidogo, kimeundwa kwa mbao ngumu.',
+    stock: 9,
+    stockStatus: StockStatus.IN_STOCK,
+  },
+  {
+    id: 'p-office-chair-wheels',
+    name: 'Black Office Chair with Wheels',
+    brand: 'Atlas Home',
+    supplierId: 's-atlas',
+    supplierName: 'Atlas Home',
+    price: 149,
+    rating: 4.2,
+    imageUrl:
+      'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=800',
+    category: 'Home',
+    model: 'BOC-W',
+    color: 'Black',
+    size: 'Standard',
+    battery: '—',
+    weight: '12kg',
+    description: 'Rolling office chair with a black seat and smooth wheels.',
+    stock: 20,
+    stockStatus: StockStatus.IN_STOCK,
+  },
+  {
+    id: 'p-kiti-ofisi-magurudumu',
+    name: 'Kiti cha Ofisi Cheusi chenye Magurudumu',
+    brand: 'Atlas Home',
+    supplierId: 's-atlas',
+    supplierName: 'Atlas Home',
+    price: 139,
+    rating: 4.1,
+    imageUrl:
+      'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=800',
+    category: 'Home',
+    model: 'KOM-1',
+    color: 'Black',
+    size: 'Standard',
+    battery: '—',
+    weight: '11kg',
+    description: 'Kiti cha ofisi cheusi chenye magurudumu kwa kazi ya dawati.',
+    stock: 14,
+    stockStatus: StockStatus.IN_STOCK,
+  },
+  {
+    id: 'p-mixed-office-stool',
+    name: 'Rolling Office Stool',
+    brand: 'Atlas Home',
+    supplierId: 's-atlas',
+    supplierName: 'Atlas Home',
+    price: 89,
+    rating: 4.0,
+    imageUrl:
+      'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=800',
+    category: 'Home',
+    model: 'ROS-1',
+    color: 'Black',
+    size: 'Standard',
+    battery: '—',
+    weight: '7kg',
+    description: 'Kiti cha ofisi chenye magurudumu, rangi nyeusi.',
+    stock: 16,
+    stockStatus: StockStatus.IN_STOCK,
+  },
+  {
+    id: 'p-kitanda-out',
+    name: 'Kitanda cha Mbao (stoo imeisha)',
+    brand: 'Atlas Home',
+    supplierId: 's-atlas',
+    supplierName: 'Atlas Home',
+    price: 165,
+    rating: 4.0,
+    imageUrl:
+      'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=800',
+    category: 'Home',
+    model: 'KM-0',
+    color: 'Mbao',
+    size: 'Queen',
+    battery: '—',
+    weight: '36kg',
+    description: 'Kitanda cha mbao. Stoo imeisha.',
+    stock: 0,
+    stockStatus: StockStatus.OUT_OF_STOCK,
+  },
 ];
 
 async function main() {
@@ -269,6 +392,16 @@ async function main() {
   }
 
   for (const product of products) {
+    const searchText = buildSearchDocument({
+      id: product.id,
+      name: product.name,
+      brand: product.brand,
+      category: product.category,
+      color: product.color,
+      size: product.size,
+      model: product.model,
+      description: product.description,
+    });
     await prisma.product.upsert({
       where: { id: product.id },
       update: {
@@ -289,8 +422,9 @@ async function main() {
         description: product.description,
         stock: product.stock,
         stockStatus: product.stockStatus,
+        searchText,
       },
-      create: product,
+      create: { ...product, searchText },
     });
   }
 

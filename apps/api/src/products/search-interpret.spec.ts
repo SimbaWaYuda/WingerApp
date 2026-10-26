@@ -31,12 +31,33 @@ describe('search interpretation', () => {
     expect(chair.maxPrice).toBe(80);
     expect(chair.q.toLowerCase()).toContain('chair');
     expect(interpretLocal('kiti chini ya 200', facets).maxPrice).toBe(200);
+    expect(
+      interpretLocal('Natafuta kitanda imara cha mbao kisichozidi dola 200', facets)
+        .maxPrice,
+    ).toBe(200);
   });
 
   it('maps Spanish and Kiswahili product words onto the English catalogue', () => {
     expect(keywordTokens('necesito un reloj')).toEqual(['watch']);
     expect(keywordTokens('nataka saa')).toEqual(['watch']);
     expect(keywordTokens('busco auriculares')).toEqual(['headphones']);
+    expect(keywordTokens('Natafuta kitanda imara cha mbao')).toEqual([
+      'bed',
+      'strong',
+      'wood',
+    ]);
+    expect(keywordTokens('Black office chair with wheels')).toEqual([
+      'black',
+      'office',
+      'chair',
+      'wheel',
+    ]);
+    expect(keywordTokens('Kiti cha ofisi cheusi chenye magurudumu')).toEqual([
+      'chair',
+      'office',
+      'black',
+      'wheel',
+    ]);
     expect(interpretLocal('hogar', facets).category).toBe('Home');
     expect(interpretLocal('lampara negra', facets).color).toBe('Black');
     const clothes = interpretLocal('nataka nguo', facets);

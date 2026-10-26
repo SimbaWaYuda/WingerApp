@@ -22,6 +22,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { milesBetween, resolvePlace } from './distance';
+import { ProductSearchIndexService } from './product-search-index.service';
+import { buildSearchDocument } from './search-document';
 import {
   CLOTHING_CATEGORY_NAMES,
   GARMENT_TOKENS,
@@ -146,6 +148,7 @@ export type ProductBrowseQuery = {
   /** Filled by browse after the mile filter. Not a client field. */
   supplierIds?: string[];
   clothing?: boolean;
+  semanticIds?: string[];
 };
 
 export type ProductBrowseResult = {
@@ -163,6 +166,7 @@ export class ProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly searchIndex: ProductSearchIndexService,
   ) {}
 
   /** Backward-compatible list used by existing clients. */
@@ -780,6 +784,17 @@ export class ProductsService {
         battery: (dto.battery?.trim() || '—').slice(0, 80),
         weight: (dto.weight?.trim() || '—').slice(0, 80),
         extraSpecs: normalizeExtraSpecs(dto.extraSpecs),
+        searchText: buildSearchDocument({
+          id,
+          name,
+          brand: (dto.brand?.trim() || supplier.name).slice(0, 80),
+          category: (dto.category?.trim() || 'General').slice(0, 80),
+          color: (dto.color?.trim() || 'Default').slice(0, 80),
+          size: (dto.size?.trim() || 'Standard').slice(0, 80),
+          model: (dto.model?.trim() || 'Standard').slice(0, 80),
+          description: dto.description?.trim() || '',
+          extraSpecs: normalizeExtraSpecs(dto.extraSpecs),
+        }),
         taxRatePercent: this.parseOptionalProductTax(dto.taxRatePercent),
         ...(customImageUrl
           ? {
@@ -794,6 +809,17 @@ export class ProductsService {
           : {}),
       },
       include: productDetailInclude,
+    });
+    await this.searchIndex.refresh({
+      id: created.id,
+      name: created.name,
+      brand: created.brand,
+      category: created.category,
+      color: created.color,
+      size: created.size,
+      model: created.model,
+      description: created.description,
+      extraSpecs: normalizeExtraSpecs(created.extraSpecs),
     });
     return toDto(created);
   }
@@ -863,6 +889,17 @@ export class ProductsService {
       where: { id },
       data,
       include: productDetailInclude,
+    });
+    await this.searchIndex.refresh({
+      id: updated.id,
+      name: updated.name,
+      brand: updated.brand,
+      category: updated.category,
+      color: updated.color,
+      size: updated.size,
+      model: updated.model,
+      description: updated.description,
+      extraSpecs: normalizeExtraSpecs(updated.extraSpecs),
     });
     return toDto(updated);
   }
@@ -1036,14 +1073,24 @@ function buildWhere(query: ProductBrowseQuery): Prisma.ProductWhereInput {
         { color: { contains: token, mode: 'insensitive' } },
         { size: { contains: token, mode: 'insensitive' } },
         { description: { contains: token, mode: 'insensitive' } },
+        { searchText: { contains: token, mode: 'insensitive' } },
       ],
     });
-    if (other.length === 1) {
-      and.push(fields(other[0]));
-    } else if (other.length > 1) {
-      and.push({ AND: other.map(fields) });
-    } else if (!clothingFromQuery && tokens.length === 0) {
-      and.push(fields(q));
+    const keywordClause =
+      other.length === 1
+        ? fields(other[0])
+        : other.length > 1
+          ? { AND: other.map(fields) }
+          : !clothingFromQuery && tokens.length === 0
+            ? fields(q)
+            : undefined;
+    const semanticIds = (query.semanticIds ?? []).filter(Boolean);
+    if (keywordClause && semanticIds.length) {
+      and.push({ OR: [keywordClause, { id: { in: semanticIds } }] });
+    } else if (keywordClause) {
+      and.push(keywordClause);
+    } else if (semanticIds.length) {
+      and.push({ id: { in: semanticIds } });
     }
   }
   if (query.category?.trim()) {
