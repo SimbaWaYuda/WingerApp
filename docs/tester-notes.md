@@ -20,6 +20,8 @@ On this computer, the Windows app and the Android emulator still use the local A
 
 Cut over on 23 October 2026 to the named Cloudflare tunnel on `wingermarket.com`. Invite people to that link. Leave this computer on. Restarting the named tunnel keeps the same address.
 
+Windows starts Postgres, the API, the shop proxy, and the tunnel at logon after `.\scripts\boot.ps1 -Install`. Postgres stays on this computer.
+
 ## Result
 
 Passed on 16 October 2026, on this computer.
