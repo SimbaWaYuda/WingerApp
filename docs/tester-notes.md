@@ -2,19 +2,23 @@
 
 Closed test with Stripe test cards. No live charge, and no booking is sent to a courier company.
 
-Someone on another computer opens the web app. The API and the database stay on this computer. Postgres is not open to the internet. This computer has to stay on, and these addresses change if the tunnels are started again.
+Someone on another computer opens the web app. The API and the database stay on this computer. Postgres is not open to the internet. This computer has to stay on.
 
 ## Public address
 
 | What | Address |
 |------|---------|
-| Web app for testers | https://literary-those-dad-net.trycloudflare.com |
-| API | https://publish-changed-medicine-applying.trycloudflare.com |
-| Stripe webhook | `POST /stripe/webhook` on the API address |
+| Web app for testers | https://wingermarket.com |
+| API | https://wingermarket.com |
+| Stripe webhook | `POST https://wingermarket.com/stripe/webhook` |
 
-The webhook listens for `payment_intent.succeeded` and `payment_intent.payment_failed` in test mode. The existing S3 POS webhook was left as it is.
+Shop, API, and webhook share one hostname. The webhook listens for `payment_intent.succeeded` and `payment_intent.payment_failed` in test mode. The existing S3 POS webhook was left as it is.
 
-On this computer, the Windows app and the Android emulator still use the local API. Testers off this computer use the web address above.
+On this computer, the Windows app and the Android emulator still use the local API. Testers off this computer use https://wingermarket.com.
+
+## Address for this round
+
+Cut over on 23 October 2026 to the named Cloudflare tunnel on `wingermarket.com`. Invite people to that link. Leave this computer on. Restarting the named tunnel keeps the same address.
 
 ## Result
 

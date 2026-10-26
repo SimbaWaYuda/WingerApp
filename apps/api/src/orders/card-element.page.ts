@@ -35,6 +35,7 @@ export function cardElementHtml(publishableKey: string | null | undefined): stri
       const elements = stripe.elements();
       card = elements.create('card', {
         hidePostalCode: true,
+        disableLink: true,
         style: {
           base: { fontSize: '16px', color: '#1F4D43', '::placeholder': { color: '#7d8f89' } },
           invalid: { color: '#9b2c2c' }

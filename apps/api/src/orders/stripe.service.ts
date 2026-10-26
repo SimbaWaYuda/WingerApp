@@ -108,10 +108,7 @@ export class StripeService {
           currency: params.currency.toLowerCase(),
           payment_method: paymentMethodId,
           confirm: true,
-          automatic_payment_methods: {
-            enabled: true,
-            allow_redirects: 'never',
-          },
+          payment_method_types: ['card'],
           metadata: {
             orderId: params.orderId,
             orderDisplayId: params.orderDisplayId,

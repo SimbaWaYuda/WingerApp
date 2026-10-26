@@ -20,6 +20,7 @@ describe('stripe card element page', () => {
     const html = cardElementHtml('pk_test_abc123');
     expect(html).toContain('"pk_test_abc123"');
     expect(html).toContain('wingerCreatePaymentMethod');
+    expect(html).toContain('disableLink: true');
     expect(html).not.toContain('sk_');
   });
 });

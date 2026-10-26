@@ -30,10 +30,12 @@ describe('StripeService payment safety', () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         amount: 5898,
+        payment_method_types: ['card'],
         metadata: expect.objectContaining({ orderId: 'ord-1' }),
       }),
       { idempotencyKey: 'winger-charge-ord-1' },
     );
+    expect(create.mock.calls[0][0].automatic_payment_methods).toBeUndefined();
   });
 
   it('verifies webhook signatures and refuses unsigned events when the secret is missing', () => {
