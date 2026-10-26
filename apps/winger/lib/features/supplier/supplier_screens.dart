@@ -575,14 +575,14 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
           ? s.t('markedShipped')
           : status == OrderStatus.readyForPickup
           ? s.t('markReady')
-          : 'Fulfillment updated';
+          : s.t('fulfillmentUpdated');
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not update fulfillment: $error')),
+        SnackBar(content: Text('${s.t('fulfillmentFailed')}: $error')),
       );
     }
   }

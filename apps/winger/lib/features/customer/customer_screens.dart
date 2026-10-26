@@ -241,6 +241,7 @@ class _CurrencyFilter extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
     final api = context.read<ApiClient>();
+    final s = WingerStrings.of(context);
     final options = session.supportedDisplayCurrencies;
     final selected = options.contains(session.displayCurrency)
         ? session.displayCurrency
@@ -251,7 +252,7 @@ class _CurrencyFilter extends StatelessWidget {
         children: [
           const Icon(Icons.payments_outlined, size: 18),
           const SizedBox(width: 8),
-          const Text('Currency', style: TextStyle(fontWeight: FontWeight.w700)),
+          Text(s.t('displayCurrency'), style: const TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(width: 12),
           DropdownButton<String>(
             value: selected,
@@ -289,8 +290,13 @@ class _CurrencyFilter extends StatelessWidget {
             Expanded(
               child: Text(
                 session.showPaymentEstimate
-                    ? 'Prices shown in ${session.displayCurrency}. You will pay in ${session.paymentCurrency}.'
-                    : 'You will pay in ${session.paymentCurrency}.',
+                    ? s
+                        .t('pricesShownPayIn')
+                        .replaceAll('{display}', session.displayCurrency)
+                        .replaceAll('{pay}', session.paymentCurrency)
+                    : s
+                        .t('youWillPayIn')
+                        .replaceAll('{pay}', session.paymentCurrency),
                 style: const TextStyle(color: WingerColors.muted, fontSize: 12),
               ),
             ),
@@ -2843,7 +2849,7 @@ class _CompareScreenState extends State<CompareScreen> {
                   dataRowMinHeight: 48,
                   dataRowMaxHeight: 56,
                   columns: [
-                    const DataColumn(label: Text('Spec')),
+                    DataColumn(label: Text(s.t('spec'))),
                     ...products.map(
                       (p) => DataColumn(
                         label: SizedBox(
@@ -2864,7 +2870,7 @@ class _CompareScreenState extends State<CompareScreen> {
                   rows: [
                     DataRow(
                       cells: [
-                        const DataCell(Text('Price')),
+                        DataCell(Text(s.t('price'))),
                         ...products.map(
                           (p) => DataCell(Text(session.formatMoney(p.price))),
                         ),
@@ -2872,22 +2878,22 @@ class _CompareScreenState extends State<CompareScreen> {
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Supplier')),
+                        DataCell(Text(s.t('supplier'))),
                         ...products.map((p) => DataCell(Text(p.supplierName))),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Verified')),
+                        DataCell(Text(s.t('verified'))),
                         ...products.map(
                           (p) =>
-                              DataCell(Text(p.supplierVerified ? 'Yes' : 'No')),
+                              DataCell(Text(p.supplierVerified ? s.t('yes') : s.t('no'))),
                         ),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Rating')),
+                        DataCell(Text(s.t('rating'))),
                         ...products.map(
                           (p) => DataCell(Text(p.rating.toStringAsFixed(1))),
                         ),
@@ -2895,7 +2901,7 @@ class _CompareScreenState extends State<CompareScreen> {
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Stock')),
+                        DataCell(Text(s.t('stock'))),
                         ...products.map(
                           (p) => DataCell(
                             Text('${p.stock} (${p.stockStatus.name})'),
@@ -2913,31 +2919,31 @@ class _CompareScreenState extends State<CompareScreen> {
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Model')),
+                        DataCell(Text(s.t('model'))),
                         ...products.map((p) => DataCell(Text(p.model))),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Color')),
+                        DataCell(Text(s.t('color'))),
                         ...products.map((p) => DataCell(Text(p.color))),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Size')),
+                        DataCell(Text(s.t('size'))),
                         ...products.map((p) => DataCell(Text(p.size))),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Battery')),
+                        DataCell(Text(s.t('battery'))),
                         ...products.map((p) => DataCell(Text(p.battery))),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        const DataCell(Text('Weight')),
+                        DataCell(Text(s.t('weight'))),
                         ...products.map((p) => DataCell(Text(p.weight))),
                       ],
                     ),
@@ -3221,7 +3227,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         ? session.formatMoney(session.cartGrandTotal, settlement: true)
         : session.formatMoney(session.cartGrandTotal);
     final estimate = session.showPaymentEstimate
-        ? 'Estimated ${session.formatMoney(session.cartGrandTotal)}\n'
+        ? '${s.t('estimatedAmount').replaceAll('{amount}', session.formatMoney(session.cartGrandTotal))}\n'
         : '';
     final modeLine = switch (session.stripeCheckoutMode) {
       'test' => s.t('cardStripeTest'),
@@ -3232,8 +3238,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             : s.t('cardDemoCharge'),
     };
     return '$estimate$modeLine\n'
-        'You will pay $payAmount\n'
-        'Ship to ${session.addressLine}, ${session.city}';
+        '${s.t('youWillPayAmount').replaceAll('{amount}', payAmount)}\n'
+        '${s.t('shipTo').replaceAll('{address}', '${session.addressLine}, ${session.city}')}';
   }
 
   @override
@@ -3544,14 +3550,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Text(
               _payMethod == _CheckoutPayMethod.payOnDelivery
                   ? '${s.t('payOnDeliveryHint')}\n'
-                        '${session.showPaymentEstimate ? 'Estimated ${session.formatMoney(session.cartGrandTotal)}\n' : ''}'
-                        'You will pay ${session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal)}'
-                        ' when the order arrives.\n'
+                        '${session.showPaymentEstimate ? '${s.t('estimatedAmount').replaceAll('{amount}', session.formatMoney(session.cartGrandTotal))}\n' : ''}'
+                        '${s.t('payWhenArrives').replaceAll('{amount}', session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal))}\n'
                         '${session.addressLine}, ${session.city}'
                   : session.apiOnline && session.accessToken != null
                   ? _cardCheckoutNote(s, session)
                   : '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)} — '
-                        'order saved locally until online',
+                        '${s.t('orderSavedOffline')}',
             ),
             if (_payMethod == _CheckoutPayMethod.card &&
                 (session.stripeCheckoutMode == 'test' ||

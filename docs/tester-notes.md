@@ -22,6 +22,16 @@ Cut over on 23 October 2026 to the named Cloudflare tunnel on `wingermarket.com`
 
 Windows starts Postgres, the API, the shop proxy, and the tunnel at logon after `.\scripts\boot.ps1 -Install`. Postgres stays on this computer.
 
+## Phone testers
+
+Web testers keep using https://wingermarket.com. For a phone app on this computer:
+
+```powershell
+.\scripts\store.ps1
+```
+
+That writes `%USERPROFILE%\WingerData\store\winger.apk` (application id `com.winger.winger`) talking to https://wingermarket.com. Sideload it, or upload the APK/AAB to a Play internal test track. TestFlight is the iOS app on a Mac with bundle id `com.winger.winger` and the same API address.
+
 ## Result
 
 Passed on 16 October 2026, on this computer.

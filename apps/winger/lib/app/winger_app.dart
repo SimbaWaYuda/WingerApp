@@ -139,9 +139,10 @@ class _WingerAppState extends State<WingerApp> {
   @override
   Widget build(BuildContext context) {
     if (_bootError != null) {
+      final s = WingerStrings(WidgetsBinding.instance.platformDispatcher.locale);
       return MaterialApp(
         home: Scaffold(
-          body: Center(child: Text('Failed to open local DB:\n$_bootError')),
+          body: Center(child: Text('${s.t('localDbFailed')}\n$_bootError')),
         ),
       );
     }
