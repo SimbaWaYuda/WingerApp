@@ -4,14 +4,18 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
   Query,
+  Req,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
 import { memoryStorage } from 'multer';
@@ -25,6 +29,10 @@ import {
   ProductsService,
   UpsertSupplierProductDto,
 } from './products.service';
+import {
+  ProductSearchBody,
+  ProductsSearchService,
+} from './products-search.service';
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg',
@@ -57,7 +65,10 @@ function isAllowedImageUpload(file: {
 
 @Controller('products')
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly productsSearch: ProductsSearchService,
+  ) {}
 
   @Get('categories')
   listCategories() {
@@ -109,6 +120,17 @@ export class ProductsController {
     @Body() body: { products?: UpsertSupplierProductDto[] },
   ) {
     return this.productsService.bulkImportForSupplier(body?.products ?? [], user);
+  }
+
+  @Post('search')
+  @HttpCode(HttpStatus.OK)
+  search(@Body() body: ProductSearchBody, @Req() req: Request) {
+    const forwarded = req.headers['x-forwarded-for'];
+    const ip =
+      (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim() ||
+      req.ip ||
+      'local';
+    return this.productsSearch.search(body ?? {}, ip);
   }
 
   @Get()

@@ -22,6 +22,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { milesBetween, resolvePlace } from './distance';
+import { keywordTokens } from './search-interpret';
 import { normalizeCityKey } from '../orders/delivery-fees';
 
 const MAX_PRODUCT_IMAGES = 8;
@@ -1000,16 +1001,27 @@ function buildWhere(query: ProductBrowseQuery): Prisma.ProductWhereInput {
   const and: Prisma.ProductWhereInput[] = [];
   const q = query.q?.trim();
   if (q) {
-    and.push({
+    const tokens = keywordTokens(q);
+    const fields = (token: string): Prisma.ProductWhereInput => ({
       OR: [
-        { name: { contains: q, mode: 'insensitive' } },
-        { brand: { contains: q, mode: 'insensitive' } },
-        { supplierName: { contains: q, mode: 'insensitive' } },
-        { category: { contains: q, mode: 'insensitive' } },
-        { model: { contains: q, mode: 'insensitive' } },
-        { id: { contains: q, mode: 'insensitive' } },
+        { name: { contains: token, mode: 'insensitive' } },
+        { brand: { contains: token, mode: 'insensitive' } },
+        { supplierName: { contains: token, mode: 'insensitive' } },
+        { category: { contains: token, mode: 'insensitive' } },
+        { model: { contains: token, mode: 'insensitive' } },
+        { id: { contains: token, mode: 'insensitive' } },
+        { color: { contains: token, mode: 'insensitive' } },
+        { size: { contains: token, mode: 'insensitive' } },
+        { description: { contains: token, mode: 'insensitive' } },
       ],
     });
+    if (tokens.length === 1) {
+      and.push(fields(tokens[0]));
+    } else if (tokens.length > 1) {
+      and.push({ AND: tokens.map(fields) });
+    } else {
+      and.push(fields(q));
+    }
   }
   if (query.category?.trim()) {
     and.push({ category: { equals: query.category.trim(), mode: 'insensitive' } });

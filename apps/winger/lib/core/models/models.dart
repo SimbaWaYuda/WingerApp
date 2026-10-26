@@ -168,6 +168,28 @@ class SupplierProfile {
   final String? deliveryNotes;
 }
 
+class SearchInterpretation {
+  const SearchInterpretation({
+    required this.source,
+    this.q = '',
+    this.category,
+    this.brand,
+    this.color,
+    this.size,
+    this.minPrice,
+    this.maxPrice,
+  });
+
+  final String source;
+  final String q;
+  final String? category;
+  final String? brand;
+  final String? color;
+  final String? size;
+  final double? minPrice;
+  final double? maxPrice;
+}
+
 class ProductPage {
   const ProductPage({
     required this.items,
@@ -176,6 +198,7 @@ class ProductPage {
     required this.pageSize,
     required this.totalPages,
     this.distanceReady = true,
+    this.interpretation,
   });
 
   final List<Product> items;
@@ -184,6 +207,7 @@ class ProductPage {
   final int pageSize;
   final int totalPages;
   final bool distanceReady;
+  final SearchInterpretation? interpretation;
 }
 
 class CartItem {

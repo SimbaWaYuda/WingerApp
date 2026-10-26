@@ -169,7 +169,8 @@ class CatalogRepository {
         await db.upsertProducts(remote.items);
       }
       return remote;
-    } catch (_) {
+    } catch (error) {
+      if (query.trim().isNotEmpty) rethrow;
       var local = await db.getProducts(query: query);
       if (category != null && category.isNotEmpty) {
         local = local

@@ -596,13 +596,39 @@ class ApiClient {
       if (originCity != null && originCity.trim().isNotEmpty)
         'originCity': originCity.trim(),
     };
-    final response = await http
-        .get(
-          _uri('/products').replace(queryParameters: params),
-          headers: session.authHeaders,
-        )
-        .timeout(const Duration(seconds: 5));
-    if (response.statusCode != 200) {
+    final hasQuery = query.trim().isNotEmpty;
+    final response = hasQuery
+        ? await http
+              .post(
+                _uri('/products/search'),
+                headers: {
+                  ...session.authHeaders,
+                  'Content-Type': 'application/json',
+                },
+                body: jsonEncode({
+                  ...params,
+                  'q': query.trim(),
+                  'locale': session.localeCode.name,
+                  if (minPrice != null) 'minPrice': minPrice,
+                  if (maxPrice != null) 'maxPrice': maxPrice,
+                  if (minRating != null) 'minRating': minRating,
+                  if (inStock) 'inStock': true,
+                  if (maxMiles != null && maxMiles > 0) 'maxMiles': maxMiles,
+                  'page': page,
+                  'pageSize': pageSize,
+                }),
+              )
+              .timeout(const Duration(seconds: 12))
+        : await http
+              .get(
+                _uri('/products').replace(queryParameters: params),
+                headers: session.authHeaders,
+              )
+              .timeout(const Duration(seconds: 5));
+    if (response.statusCode == 429) {
+      throw Exception('searchBusy');
+    }
+    if (response.statusCode != 200 && response.statusCode != 201) {
       throw Exception('Browse HTTP ${response.statusCode}');
     }
     session.setApiOnline(true);
@@ -630,6 +656,23 @@ class ApiClient {
       pageSize: map['pageSize'] as int? ?? pageSize,
       totalPages: map['totalPages'] as int? ?? 1,
       distanceReady: map['distanceReady'] as bool? ?? true,
+      interpretation: _interpretationFromJson(
+        map['interpretation'] as Map<String, dynamic>?,
+      ),
+    );
+  }
+
+  SearchInterpretation? _interpretationFromJson(Map<String, dynamic>? raw) {
+    if (raw == null) return null;
+    return SearchInterpretation(
+      source: raw['source'] as String? ?? 'keyword',
+      q: raw['q'] as String? ?? '',
+      category: raw['category'] as String?,
+      brand: raw['brand'] as String?,
+      color: raw['color'] as String?,
+      size: raw['size'] as String?,
+      minPrice: (raw['minPrice'] as num?)?.toDouble(),
+      maxPrice: (raw['maxPrice'] as num?)?.toDouble(),
     );
   }
 

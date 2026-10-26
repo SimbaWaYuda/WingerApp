@@ -1074,24 +1074,57 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   void _reload() {
     final city = context.read<AppSession>().city;
     setState(() {
-      _future = context.read<CatalogRepository>().browseProducts(
-        query: _queryCtrl.text,
-        category: _category,
-        brand: _brand,
-        supplierId: _supplierId,
-        color: _color,
-        size: _size,
-        minPrice: _priceRange?.$1,
-        maxPrice: _priceRange?.$2,
-        minRating: _minRating,
-        inStock: _inStockOnly,
-        sort: _sort,
-        page: _page,
-        pageSize: 24,
-        maxMiles: _maxMiles,
-        originCity: city,
-      );
+      _future = context
+          .read<CatalogRepository>()
+          .browseProducts(
+            query: _queryCtrl.text,
+            category: _category,
+            brand: _brand,
+            supplierId: _supplierId,
+            color: _color,
+            size: _size,
+            minPrice: _priceRange?.$1,
+            maxPrice: _priceRange?.$2,
+            minRating: _minRating,
+            inStock: _inStockOnly,
+            sort: _sort,
+            page: _page,
+            pageSize: 24,
+            maxMiles: _maxMiles,
+            originCity: city,
+          )
+          .then((page) {
+            if (mounted) _absorbInterpretation(page.interpretation);
+            return page;
+          });
     });
+  }
+
+  void _absorbInterpretation(SearchInterpretation? interpreted) {
+    if (interpreted == null || interpreted.source == 'keyword') return;
+    var changed = false;
+    if (_category == null && (interpreted.category ?? '').isNotEmpty) {
+      _category = interpreted.category;
+      changed = true;
+    }
+    if (_brand == null && (interpreted.brand ?? '').isNotEmpty) {
+      _brand = interpreted.brand;
+      changed = true;
+    }
+    if (_color == null && (interpreted.color ?? '').isNotEmpty) {
+      _color = interpreted.color;
+      changed = true;
+    }
+    if (_size == null && (interpreted.size ?? '').isNotEmpty) {
+      _size = interpreted.size;
+      changed = true;
+    }
+    if (_priceRange == null &&
+        (interpreted.minPrice != null || interpreted.maxPrice != null)) {
+      _priceRange = (interpreted.minPrice, interpreted.maxPrice);
+      changed = true;
+    }
+    if (changed) setState(() {});
   }
 
   void _applyFilter(VoidCallback update) {
@@ -1688,6 +1721,33 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
           return const Padding(
             padding: EdgeInsets.all(24),
             child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          final busy = snapshot.error.toString().contains('searchBusy');
+          final timedOut = snapshot.error.toString().contains('TimeoutException');
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 32),
+            child: Column(
+              children: [
+                const Icon(Icons.cloud_off, size: 48, color: WingerColors.muted),
+                const SizedBox(height: 12),
+                Text(
+                  timedOut
+                      ? s.t('searchTimeout')
+                      : busy
+                      ? s.t('searchBusy')
+                      : s.t('searchError'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: WingerColors.muted),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _reload,
+                  child: Text(s.t('searchRetry')),
+                ),
+              ],
+            ),
           );
         }
         final page = snapshot.data;
