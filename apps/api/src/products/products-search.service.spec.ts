@@ -86,6 +86,18 @@ describe('ProductsSearchService', () => {
     expect(query.color).toBeUndefined();
   });
 
+  it('asks browse for every clothing match when the query is nguo', async () => {
+    delete process.env.SEARCH_AI_API_KEY;
+    const products = facets();
+    const service = new ProductsSearchService(products as never);
+    await service.search({ q: 'nataka nguo' }, 'tester-nguo');
+    expect(products.browse).toHaveBeenCalledWith(
+      expect.objectContaining({ clothing: true }),
+    );
+    const query = products.browse.mock.calls[0][0];
+    expect(query.category).toBeUndefined();
+  });
+
   it('returns an empty page when nothing matches', async () => {
     delete process.env.SEARCH_AI_API_KEY;
     const products = facets();

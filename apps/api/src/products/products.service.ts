@@ -22,7 +22,12 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { milesBetween, resolvePlace } from './distance';
-import { keywordTokens } from './search-interpret';
+import {
+  CLOTHING_CATEGORY_NAMES,
+  GARMENT_TOKENS,
+  isClothingUmbrellaToken,
+  keywordTokens,
+} from './search-interpret';
 import { normalizeCityKey } from '../orders/delivery-fees';
 
 const MAX_PRODUCT_IMAGES = 8;
@@ -140,6 +145,7 @@ export type ProductBrowseQuery = {
   originCity?: string;
   /** Filled by browse after the mile filter. Not a client field. */
   supplierIds?: string[];
+  clothing?: boolean;
 };
 
 export type ProductBrowseResult = {
@@ -997,11 +1003,28 @@ function buildProductId(name: string): string {
   return `p-${slug || 'item'}-${suffix}`;
 }
 
+function clothingMatch(): Prisma.ProductWhereInput {
+  return {
+    OR: [
+      ...CLOTHING_CATEGORY_NAMES.map((name) => ({
+        category: { equals: name, mode: 'insensitive' as const },
+      })),
+      ...GARMENT_TOKENS.flatMap((token) => [
+        { name: { contains: token, mode: 'insensitive' as const } },
+        { category: { contains: token, mode: 'insensitive' as const } },
+      ]),
+    ],
+  };
+}
+
 function buildWhere(query: ProductBrowseQuery): Prisma.ProductWhereInput {
   const and: Prisma.ProductWhereInput[] = [];
   const q = query.q?.trim();
+  let clothingFromQuery = false;
   if (q) {
     const tokens = keywordTokens(q);
+    clothingFromQuery = tokens.some((token) => isClothingUmbrellaToken(token));
+    const other = tokens.filter((token) => !isClothingUmbrellaToken(token));
     const fields = (token: string): Prisma.ProductWhereInput => ({
       OR: [
         { name: { contains: token, mode: 'insensitive' } },
@@ -1015,16 +1038,19 @@ function buildWhere(query: ProductBrowseQuery): Prisma.ProductWhereInput {
         { description: { contains: token, mode: 'insensitive' } },
       ],
     });
-    if (tokens.length === 1) {
-      and.push(fields(tokens[0]));
-    } else if (tokens.length > 1) {
-      and.push({ AND: tokens.map(fields) });
-    } else {
+    if (other.length === 1) {
+      and.push(fields(other[0]));
+    } else if (other.length > 1) {
+      and.push({ AND: other.map(fields) });
+    } else if (!clothingFromQuery && tokens.length === 0) {
       and.push(fields(q));
     }
   }
   if (query.category?.trim()) {
     and.push({ category: { equals: query.category.trim(), mode: 'insensitive' } });
+  }
+  if ((query.clothing || clothingFromQuery) && !query.category?.trim()) {
+    and.push(clothingMatch());
   }
   if (query.brand?.trim()) {
     and.push({ brand: { equals: query.brand.trim(), mode: 'insensitive' } });

@@ -17,6 +17,8 @@ export type SearchInterpretation = {
   size?: string;
   minPrice?: number;
   maxPrice?: number;
+  /** Apparel + Clothes + dress/jacket products, not one category chip. */
+  clothing?: boolean;
   source: 'local' | 'ai' | 'keyword';
 };
 
@@ -92,20 +94,171 @@ const STOPWORDS = new Set([
   'necesito',
   'busco',
   'quiero',
+  'quisiera',
+  'estoy',
+  'buscando',
+  'comprar',
+  'ver',
+  'dame',
+  'algo',
+  'este',
+  'esta',
+  'estos',
+  'estas',
+  'del',
+  'para',
+  'por',
+  'con',
+  'que',
+  'como',
+  'unos',
+  'unas',
   'nataka',
   'ninataka',
+  'tafuta',
+  'tafadhali',
+  'naomba',
+  'kitu',
+  'nipatie',
+  'nione',
+  'nitafute',
+  'cha',
+  'vya',
 ]);
+
+/** Spanish / Kiswahili shopping words → English catalogue tokens. */
+const SYNONYMS: Record<string, string> = {
+  reloj: 'watch',
+  relojes: 'watch',
+  saa: 'watch',
+  masaa: 'watch',
+  smartwatch: 'watch',
+  auriculares: 'headphones',
+  audifonos: 'headphones',
+  cascos: 'headphones',
+  altavoz: 'speaker',
+  altavoces: 'speaker',
+  parlante: 'speaker',
+  spika: 'speaker',
+  kipaza: 'speaker',
+  sauti: 'audio',
+  sonido: 'audio',
+  silla: 'chair',
+  sillas: 'chair',
+  kiti: 'chair',
+  viti: 'chair',
+  lampara: 'lamp',
+  lamparas: 'lamp',
+  taa: 'lamp',
+  mochila: 'bag',
+  bolso: 'bag',
+  bolsa: 'bag',
+  bolsos: 'bag',
+  mkoba: 'bag',
+  mifuko: 'bag',
+  begi: 'bag',
+  chaqueta: 'jacket',
+  chamarra: 'jacket',
+  abrigo: 'jacket',
+  koti: 'jacket',
+  jaketi: 'jacket',
+  ropa: 'clothes',
+  prenda: 'clothes',
+  prendas: 'clothes',
+  nguo: 'clothes',
+  mavazi: 'clothes',
+  hogar: 'home',
+  mueble: 'home',
+  nyumbani: 'home',
+  nyumba: 'home',
+  electronico: 'electronic',
+  electronicos: 'electronic',
+  elektroniki: 'electronic',
+  cocina: 'kitchen',
+  negro: 'black',
+  negra: 'black',
+  negros: 'black',
+  negras: 'black',
+  nyeusi: 'black',
+  blanco: 'white',
+  blanca: 'white',
+  nyeupe: 'white',
+  azul: 'navy',
+  marino: 'navy',
+  grafito: 'graphite',
+  oficina: 'office',
+  ofisi: 'office',
+  escritorio: 'desk',
+  dawati: 'desk',
+};
+
+const CLOTHING_UMBRELLA = new Set([
+  'clothes',
+  'clothing',
+  'apparel',
+  'ropa',
+  'prenda',
+  'prendas',
+  'nguo',
+  'mavazi',
+]);
+
+export const CLOTHING_CATEGORY_NAMES = ['Apparel', 'Clothes', 'Clothing'];
+
+export const GARMENT_TOKENS = [
+  'dress',
+  'jacket',
+  'gown',
+  'shirt',
+  'pant',
+  'blouse',
+  'skirt',
+  'coat',
+  'outfit',
+  'dashiki',
+  'kente',
+  'apparel',
+  'clothes',
+];
+
+function foldWord(value: string): string {
+  return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+function expandWord(word: string): string {
+  const folded = foldWord(word);
+  return SYNONYMS[folded] ?? folded;
+}
+
+export function isClothingUmbrellaToken(token: string): boolean {
+  const folded = foldWord(token);
+  return CLOTHING_UMBRELLA.has(folded) || CLOTHING_UMBRELLA.has(SYNONYMS[folded] ?? '');
+}
+
+export function expandSearchQuery(query: string): string {
+  return query.replace(/[a-z0-9áéíóúñü]+/gi, (word) => {
+    const folded = foldWord(word);
+    if (folded.length < 3 || STOPWORDS.has(folded)) return word;
+    return SYNONYMS[folded] ?? word;
+  });
+}
 
 export function clipSearchQuery(value: string | undefined): string {
   return (value ?? '').trim().slice(0, SEARCH_QUERY_MAX);
 }
 
 export function keywordTokens(query: string): string[] {
-  return query
-    .toLowerCase()
-    .split(/[^a-z0-9áéíóúñü]+/i)
-    .map((part) => part.trim())
-    .filter((part) => part.length >= 3 && !STOPWORDS.has(part));
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const part of query.toLowerCase().split(/[^a-z0-9áéíóúñü]+/i)) {
+    const folded = foldWord(part.trim());
+    if (folded.length < 3 || STOPWORDS.has(folded)) continue;
+    const mapped = expandWord(folded);
+    if (mapped.length < 3 || STOPWORDS.has(mapped) || seen.has(mapped)) continue;
+    seen.add(mapped);
+    tokens.push(mapped);
+  }
+  return tokens;
 }
 
 export function pickFacet(
@@ -138,6 +291,22 @@ function facetInQuery(query: string, names: string[]): { name?: string; rest: st
   return { rest };
 }
 
+function takeClothingUmbrella(query: string): { clothing: boolean; rest: string } {
+  let clothing = false;
+  const rest = query
+    .replace(/[a-z0-9áéíóúñü]+/gi, (word) => {
+      const folded = foldWord(word);
+      if (CLOTHING_UMBRELLA.has(folded) || CLOTHING_UMBRELLA.has(SYNONYMS[folded] ?? '')) {
+        clothing = true;
+        return ' ';
+      }
+      return word;
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { clothing, rest };
+}
+
 function takePrice(
   query: string,
   pattern: RegExp,
@@ -156,7 +325,7 @@ export function interpretLocal(
   query: string,
   facets: SearchFacets,
 ): SearchInterpretation {
-  let rest = clipSearchQuery(query);
+  let rest = expandSearchQuery(clipSearchQuery(query));
   const max = takePrice(
     rest,
     /(?:under|below|less than|at most|max(?:imum)?|up to|menos de|hasta|chini ya)\s*\$?\s*(\d+(?:\.\d+)?)/i,
@@ -168,6 +337,9 @@ export function interpretLocal(
   );
   rest = min.rest;
 
+  const clothing = takeClothingUmbrella(rest);
+  rest = clothing.rest;
+
   const category = facetInQuery(rest, facets.categories);
   rest = category.rest;
   const brand = facetInQuery(rest, facets.brands);
@@ -178,13 +350,14 @@ export function interpretLocal(
   rest = size.rest;
 
   return {
-    q: rest,
+    q: keywordTokens(rest).join(' '),
     category: category.name,
     brand: brand.name,
     color: color.name,
     size: size.name,
     minPrice: min.amount,
     maxPrice: max.amount,
+    clothing: clothing.clothing || undefined,
     source: 'local',
   };
 }
@@ -224,6 +397,7 @@ export type SearchFilterInput = {
   pageSize?: number;
   maxMiles?: number;
   originCity?: string;
+  clothing?: boolean;
 };
 
 export function hasExtractedFilters(interpreted: SearchInterpretation): boolean {
@@ -233,7 +407,8 @@ export function hasExtractedFilters(interpreted: SearchInterpretation): boolean 
       interpreted.color ||
       interpreted.size ||
       interpreted.minPrice != null ||
-      interpreted.maxPrice != null,
+      interpreted.maxPrice != null ||
+      interpreted.clothing,
   );
 }
 
@@ -250,6 +425,7 @@ export function mergeSearchFilters(
     size: client.size?.trim() || interpreted.size,
     minPrice: client.minPrice ?? interpreted.minPrice,
     maxPrice: client.maxPrice ?? interpreted.maxPrice,
+    clothing: client.category?.trim() ? undefined : interpreted.clothing,
   };
 }
 

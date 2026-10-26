@@ -27,8 +27,25 @@ describe('search interpretation', () => {
   });
 
   it('reads Spanish and Swahili budget phrases', () => {
-    expect(interpretLocal('silla menos de 80', facets).maxPrice).toBe(80);
+    const chair = interpretLocal('silla menos de 80', facets);
+    expect(chair.maxPrice).toBe(80);
+    expect(chair.q.toLowerCase()).toContain('chair');
     expect(interpretLocal('kiti chini ya 200', facets).maxPrice).toBe(200);
+  });
+
+  it('maps Spanish and Kiswahili product words onto the English catalogue', () => {
+    expect(keywordTokens('necesito un reloj')).toEqual(['watch']);
+    expect(keywordTokens('nataka saa')).toEqual(['watch']);
+    expect(keywordTokens('busco auriculares')).toEqual(['headphones']);
+    expect(interpretLocal('hogar', facets).category).toBe('Home');
+    expect(interpretLocal('lampara negra', facets).color).toBe('Black');
+    const clothes = interpretLocal('nataka nguo', facets);
+    expect(clothes.clothing).toBe(true);
+    expect(clothes.category).toBeUndefined();
+    expect(clothes.q).toBe('');
+    expect(interpretLocal('ropa', facets).clothing).toBe(true);
+    expect(interpretLocal('chaqueta', facets).q.toLowerCase()).toContain('jacket');
+    expect(interpretLocal('chaqueta', facets).clothing).toBeUndefined();
   });
 
   it('keeps an exact product name as keywords', () => {
@@ -71,6 +88,7 @@ describe('search interpretation', () => {
     expect(pickFacet('Standard', facets.sizes)).toBeUndefined();
     expect(keywordTokens('the black office chair')).toEqual(['black', 'office', 'chair']);
     expect(keywordTokens('need a watch')).toEqual(['watch']);
+    expect(keywordTokens('audífonos')).toEqual(['headphones']);
   });
 
   it('rate-limits a noisy client', () => {
