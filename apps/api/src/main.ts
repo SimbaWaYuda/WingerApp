@@ -4,6 +4,11 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { getLocalUploadRoot, storageDriver } from './storage/upload-paths';
 
+// Windows shells often default libpq to WIN1252; supplier names need UTF-8.
+if (!process.env.PGCLIENTENCODING) {
+  process.env.PGCLIENTENCODING = 'UTF8';
+}
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,

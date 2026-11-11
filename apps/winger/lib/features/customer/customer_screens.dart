@@ -2047,6 +2047,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   Future<SupplierProfile>? _supplierFuture;
   _DeliveryOption? _delivery;
   int _galleryIndex = 0;
+  String? _selectedColor;
+  String? _selectedSize;
   late final PageController _galleryPageCtrl;
 
   static const _deliveryLabels = <_DeliveryOption, String>{
@@ -2114,10 +2116,87 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   List<String> _galleryUrls(Product product) {
+    if (product.hasVariants && (_selectedColor ?? '').trim().isNotEmpty) {
+      final colored = product.galleryUrlsForColor(_selectedColor);
+      if (colored.isNotEmpty) return colored;
+    }
     final urls = product.galleryUrls;
     // Prefer real product photos only — never pad with unrelated catalogue images.
     if (urls.isEmpty) return const [''];
     return urls;
+  }
+
+  bool _optionsReady(Product product) {
+    final colors = product.selectableColors;
+    final sizes = product.selectableSizes;
+    if (colors.isNotEmpty && (_selectedColor ?? '').trim().isEmpty) {
+      return false;
+    }
+    if (sizes.isNotEmpty && (_selectedSize ?? '').trim().isEmpty) {
+      return false;
+    }
+    if (!product.hasVariants) return true;
+    return _selectedVariant(product) != null;
+  }
+
+  ProductVariant? _selectedVariant(Product product) {
+    if (!product.hasVariants) return null;
+    final colors = product.selectableColors;
+    final sizes = product.selectableSizes;
+    final color = colors.isEmpty ? '' : (_selectedColor ?? '');
+    final size = sizes.isEmpty ? '' : (_selectedSize ?? '');
+    if (colors.isNotEmpty && color.isEmpty) return null;
+    if (sizes.isNotEmpty && size.isEmpty) return null;
+    return product.variantFor(color: color, size: size);
+  }
+
+  int _availableQty(Product product) {
+    if (!product.hasVariants) return product.stock;
+    return _selectedVariant(product)?.stock ?? 0;
+  }
+
+  Color _swatchColor(String name, {String? hex}) {
+    final raw = (hex ?? '').trim();
+    if (raw.startsWith('#') && (raw.length == 7 || raw.length == 9)) {
+      final value = int.tryParse(raw.substring(1), radix: 16);
+      if (value != null) {
+        return Color(raw.length == 7 ? (0xFF000000 | value) : value);
+      }
+    }
+    return switch (name.trim().toLowerCase()) {
+      'black' => const Color(0xFF111111),
+      'white' => const Color(0xFFF5F5F5),
+      'pink' || 'light pink' => const Color(0xFFF4A7C3),
+      'red' => const Color(0xFFC62828),
+      'blue' || 'navy' => const Color(0xFF1D4E89),
+      'green' || 'dark green' => const Color(0xFF1F4D43),
+      'yellow' || 'gold' => const Color(0xFFE0B84F),
+      'brown' || 'tan' => const Color(0xFF8D6E63),
+      'grey' || 'gray' || 'graphite' => const Color(0xFF757575),
+      'orange' => const Color(0xFFEF6C00),
+      'purple' => const Color(0xFF6A1B9A),
+      _ => WingerColors.brandSoft,
+    };
+  }
+
+  void _ensureVariantDefaults(Product product) {
+    if (!product.offersOptionSelection) return;
+    final colors = product.selectableColors;
+    final sizes = product.selectableSizes;
+    var changed = false;
+    if (colors.length == 1 && _selectedColor == null) {
+      _selectedColor = colors.first;
+      changed = true;
+    }
+    if (sizes.length == 1 && _selectedSize == null) {
+      _selectedSize = sizes.first;
+      changed = true;
+    }
+    if (changed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   void _goGallery(int index, int total) {
@@ -2407,19 +2486,341 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  product.stockStatus == StockStatus.outOfStock
-                      ? s.t('outOfStock')
-                      : product.stockStatus == StockStatus.lowStock
-                      ? '${s.t('lowStock')} · ${product.stock}'
-                      : '${s.t('inStock')} · ${product.stock}',
-                  style: TextStyle(
-                    color: product.stockStatus == StockStatus.outOfStock
-                        ? WingerColors.dangerInk
-                        : WingerColors.successInk,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Builder(
+                  builder: (context) {
+                    _ensureVariantDefaults(product);
+                    final available = _availableQty(product);
+                    final waiting = !_optionsReady(product);
+                    final label = waiting
+                        ? s.t('selectOptions')
+                        : available <= 0
+                        ? s.t('outOfStock')
+                        : available <= 5
+                        ? '${s.t('lowStock')} · $available'
+                        : '${s.t('inStock')} · $available';
+                    return Text(
+                      label,
+                      style: TextStyle(
+                        color: available <= 0 || waiting
+                            ? WingerColors.dangerInk
+                            : WingerColors.successInk,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    );
+                  },
                 ),
+                if (product.offersOptionSelection) ...[
+                  Builder(
+                    builder: (context) {
+                      final colors = product.selectableColors;
+                      final sizes = product.selectableSizes;
+                      final usesVariants = product.hasVariants;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (colors.isNotEmpty) ...[
+                            const SizedBox(height: 16),
+                            Text(
+                              (_selectedColor ?? '').isEmpty
+                                  ? s.t('selectColour')
+                                  : s
+                                        .t('colorSelected')
+                                        .replaceAll(
+                                          '{name}',
+                                          _selectedColor!,
+                                        ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 16,
+                              runSpacing: 12,
+                              children: [
+                                for (final color in colors)
+                                  Builder(
+                                    builder: (context) {
+                                      final selected = _selectedColor == color;
+                                      final anyInStock = !usesVariants
+                                          ? product.stock > 0
+                                          : product.enabledVariants.any(
+                                              (row) =>
+                                                  row.color == color &&
+                                                  row.stock > 0,
+                                            );
+                                      final hex = product.enabledVariants
+                                          .where((row) => row.color == color)
+                                          .map((row) => row.colorHex)
+                                          .whereType<String>()
+                                          .cast<String?>()
+                                          .firstWhere(
+                                            (value) =>
+                                                (value ?? '').isNotEmpty,
+                                            orElse: () => null,
+                                          );
+                                      final colorKey =
+                                          color.trim().toLowerCase();
+                                      final colorImages = product.images
+                                          .where(
+                                            (image) =>
+                                                (image.colorKey ?? '')
+                                                        .trim()
+                                                        .toLowerCase() ==
+                                                    colorKey ||
+                                                product.variants.any(
+                                                  (variant) =>
+                                                      variant.color
+                                                              .trim()
+                                                              .toLowerCase() ==
+                                                          colorKey &&
+                                                      variant.id ==
+                                                          image.variantId,
+                                                ),
+                                          )
+                                          .map((image) => image.url)
+                                          .where(
+                                            (url) => url.trim().isNotEmpty,
+                                          )
+                                          .toList();
+                                      final variantThumb = product
+                                          .enabledVariants
+                                          .where(
+                                            (row) =>
+                                                row.color
+                                                    .trim()
+                                                    .toLowerCase() ==
+                                                colorKey,
+                                          )
+                                          .map((row) => row.imageUrl)
+                                          .whereType<String>()
+                                          .where(
+                                            (url) => url.trim().isNotEmpty,
+                                          )
+                                          .cast<String?>()
+                                          .firstWhere(
+                                            (url) => url != null,
+                                            orElse: () => null,
+                                          );
+                                      final thumb = colorImages.isNotEmpty
+                                          ? colorImages.first
+                                          : variantThumb;
+                                      return InkWell(
+                                        onTap: () {
+                                          setState(() {
+                                            _selectedColor = color;
+                                            _galleryIndex = 0;
+                                            qty = 1;
+                                          });
+                                          if (_galleryPageCtrl.hasClients) {
+                                            _galleryPageCtrl.jumpToPage(0);
+                                          }
+                                        },
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        child: SizedBox(
+                                          width: 56,
+                                          child: Column(
+                                            children: [
+                                              Container(
+                                                width: 44,
+                                                height: 44,
+                                                padding:
+                                                    const EdgeInsets.all(2),
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color: selected
+                                                        ? WingerColors.brand
+                                                        : Colors.transparent,
+                                                    width: 2.5,
+                                                  ),
+                                                ),
+                                                child: Container(
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    color: thumb == null
+                                                        ? _swatchColor(
+                                                            color,
+                                                            hex: hex,
+                                                          )
+                                                        : null,
+                                                    border: Border.all(
+                                                      color:
+                                                          WingerColors.border,
+                                                    ),
+                                                    image: thumb == null
+                                                        ? null
+                                                        : DecorationImage(
+                                                            image:
+                                                                NetworkImage(
+                                                              thumb,
+                                                            ),
+                                                            fit: BoxFit.cover,
+                                                          ),
+                                                  ),
+                                                  child: !anyInStock
+                                                      ? const Icon(
+                                                          Icons.close,
+                                                          size: 18,
+                                                          color:
+                                                              Colors.white70,
+                                                        )
+                                                      : null,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                color,
+                                                textAlign: TextAlign.center,
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: selected
+                                                      ? FontWeight.w700
+                                                      : FontWeight.w500,
+                                                  color: anyInStock
+                                                      ? WingerColors.ink
+                                                      : WingerColors.muted,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ],
+                          if (sizes.isNotEmpty) ...[
+                            if (colors.isNotEmpty) ...[
+                              const SizedBox(height: 20),
+                              const Divider(height: 1),
+                            ],
+                            const SizedBox(height: 16),
+                            Text(
+                              (_selectedSize ?? '').isEmpty
+                                  ? s.t('selectSize')
+                                  : s
+                                        .t('sizeSelected')
+                                        .replaceAll('{name}', _selectedSize!),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final width = constraints.maxWidth;
+                                final columns = width >= 420
+                                    ? 4
+                                    : width >= 280
+                                    ? 3
+                                    : 2;
+                                final gap = 10.0;
+                                final tileWidth =
+                                    (width - gap * (columns - 1)) / columns;
+                                return Wrap(
+                                  spacing: gap,
+                                  runSpacing: gap,
+                                  children: [
+                                    for (final size in sizes)
+                                      Builder(
+                                        builder: (context) {
+                                          final selected =
+                                              _selectedSize == size;
+                                          final needsColor =
+                                              colors.isNotEmpty &&
+                                              (_selectedColor ?? '').isEmpty;
+                                          final combo = usesVariants
+                                              ? product.variantFor(
+                                                  color: colors.isEmpty
+                                                      ? ''
+                                                      : (_selectedColor ?? ''),
+                                                  size: size,
+                                                )
+                                              : null;
+                                          final available = usesVariants
+                                              ? !needsColor &&
+                                                    combo != null &&
+                                                    combo.isAvailable
+                                              : product.stock > 0;
+                                          final enabled = usesVariants
+                                              ? (needsColor || available)
+                                              : available;
+                                          return SizedBox(
+                                            width: tileWidth,
+                                            child: Material(
+                                              color: selected
+                                                  ? WingerColors.brandMuted
+                                                  : WingerColors.white,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                                side: BorderSide(
+                                                  color: selected
+                                                      ? WingerColors.brand
+                                                      : WingerColors.border,
+                                                  width: selected ? 2 : 1,
+                                                ),
+                                              ),
+                                              child: InkWell(
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                                onTap: !enabled
+                                                    ? null
+                                                    : () {
+                                                        setState(() {
+                                                          _selectedSize = size;
+                                                          qty = 1;
+                                                        });
+                                                      },
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                    vertical: 12,
+                                                  ),
+                                                  child: Text(
+                                                    usesVariants &&
+                                                            !needsColor &&
+                                                            !available
+                                                        ? '$size\n${s.t('outOfStock')}'
+                                                        : size,
+                                                    textAlign:
+                                                        TextAlign.center,
+                                                    style: TextStyle(
+                                                      fontWeight: selected
+                                                          ? FontWeight.w800
+                                                          : FontWeight.w600,
+                                                      color: enabled
+                                                          ? WingerColors.ink
+                                                          : WingerColors
+                                                              .muted,
+                                                      height: 1.15,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+                ],
                 const SizedBox(height: 16),
                 FutureBuilder<SupplierProfile>(
                   future: _supplierFuture,
@@ -2566,56 +2967,87 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   style: TextStyle(color: WingerColors.muted),
                 ),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Text('${s.t('qty')}:'),
-                    const SizedBox(width: 12),
-                    IconButton(
-                      onPressed: qty > 1 ? () => setState(() => qty--) : null,
-                      icon: const Icon(Icons.remove_circle_outline),
-                    ),
-                    Text(
-                      '$qty',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 18,
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: qty < product.stock
-                          ? () => setState(() => qty++)
-                          : null,
-                      icon: const Icon(Icons.add_circle_outline),
-                    ),
-                  ],
-                ),
-                if (product.stock > 0 && product.stock <= 5)
-                  Text(
-                    s.t('stockWarning').replaceAll('{n}', '${product.stock}'),
-                    style: TextStyle(
-                      color: WingerColors.attentionInk,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: product.stock <= 0
-                      ? null
-                      : () async {
-                          session.setDeliveryMethod(
-                            _deliveryToSession(selected),
-                          );
-                          await session.addToCart(
-                            product,
-                            quantity: qty.clamp(1, product.stock),
-                          );
-                          if (!context.mounted) return;
-                          await _showAddedToCartChoices(
-                            context,
-                            productName: product.name,
-                          );
-                        },
-                  child: Text(s.t('addToCart')),
+                Builder(
+                  builder: (context) {
+                    final available = _availableQty(product);
+                    final variant = _selectedVariant(product);
+                    final optionsReady = _optionsReady(product);
+                    final selectedColor = (_selectedColor ?? '').trim();
+                    final selectedSize = (_selectedSize ?? '').trim();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text('${s.t('qty')}:'),
+                            const SizedBox(width: 12),
+                            IconButton(
+                              onPressed: qty > 1
+                                  ? () => setState(() => qty--)
+                                  : null,
+                              icon: const Icon(Icons.remove_circle_outline),
+                            ),
+                            Text(
+                              '$qty',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 18,
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: optionsReady && qty < available
+                                  ? () => setState(() => qty++)
+                                  : null,
+                              icon: const Icon(Icons.add_circle_outline),
+                            ),
+                          ],
+                        ),
+                        if (available > 0 && available <= 5)
+                          Text(
+                            s.t('stockWarning').replaceAll('{n}', '$available'),
+                            style: TextStyle(
+                              color: WingerColors.attentionInk,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed: !optionsReady || available <= 0
+                              ? null
+                              : () async {
+                                  session.setDeliveryMethod(
+                                    _deliveryToSession(selected),
+                                  );
+                                  await session.addToCart(
+                                    product,
+                                    quantity: qty.clamp(1, available),
+                                    variantId: variant?.id,
+                                    variantColor:
+                                        variant?.color ??
+                                        (selectedColor.isEmpty
+                                            ? null
+                                            : selectedColor),
+                                    variantSize:
+                                        variant?.size ??
+                                        (selectedSize.isEmpty
+                                            ? null
+                                            : selectedSize),
+                                  );
+                                  if (!context.mounted) return;
+                                  await _showAddedToCartChoices(
+                                    context,
+                                    productName: product.name,
+                                  );
+                                },
+                          child: Text(
+                            !optionsReady
+                                ? s.t('selectOptions')
+                                : s.t('addToCart'),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -3159,14 +3591,18 @@ class _CartScreenState extends State<CartScreen> {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     subtitle: Text(
-                      item.quantity > item.product.stock ||
-                              item.product.stock <= 0
-                          ? '${s.t('unavailableItem')}\n${session.formatMoney(item.product.price)} × ${item.quantity}'
-                          : '${session.formatMoney(item.product.price)} × ${item.quantity} = ${session.formatMoney(item.lineTotal)}',
+                      [
+                        if (item.optionLabel != null) item.optionLabel!,
+                        if (item.quantity > item.availableStock ||
+                            item.availableStock <= 0)
+                          '${s.t('unavailableItem')}\n${session.formatMoney(item.product.price)} × ${item.quantity}'
+                        else
+                          '${session.formatMoney(item.product.price)} × ${item.quantity} = ${session.formatMoney(item.lineTotal)}',
+                      ].join('\n'),
                       style: TextStyle(
                         color:
-                            item.quantity > item.product.stock ||
-                                item.product.stock <= 0
+                            item.quantity > item.availableStock ||
+                                item.availableStock <= 0
                             ? WingerColors.dangerInk
                             : null,
                       ),
@@ -3180,18 +3616,24 @@ class _CartScreenState extends State<CartScreen> {
                             session.updateQuantity(
                               item.product.id,
                               item.quantity - 1,
+                              variantId: item.variantId,
+                              variantColor: item.variantColor,
+                              variantSize: item.variantSize,
                             ),
                           ),
                           icon: const Icon(Icons.remove),
                         ),
                         Text('${item.quantity}'),
                         IconButton(
-                          onPressed: item.quantity >= item.product.stock
+                          onPressed: item.quantity >= item.availableStock
                               ? null
                               : () => unawaited(
                                   session.updateQuantity(
                                     item.product.id,
                                     item.quantity + 1,
+                                    variantId: item.variantId,
+                                    variantColor: item.variantColor,
+                                    variantSize: item.variantSize,
                                   ),
                                 ),
                           icon: const Icon(Icons.add),
@@ -3199,7 +3641,12 @@ class _CartScreenState extends State<CartScreen> {
                         IconButton(
                           tooltip: s.t('remove'),
                           onPressed: () => unawaited(
-                            session.removeFromCart(item.product.id),
+                            session.removeFromCart(
+                              item.product.id,
+                              variantId: item.variantId,
+                              variantColor: item.variantColor,
+                              variantSize: item.variantSize,
+                            ),
                           ),
                           icon: const Icon(Icons.delete_outline),
                         ),
@@ -3272,9 +3719,11 @@ bool _keepCheckoutAttempt(Object error) {
 class _CheckoutScreenState extends State<CheckoutScreen> {
   int step = 0;
   bool _paying = false;
+  bool _refreshingDelivery = false;
   String? _payError;
   String? _checkoutAttemptKey;
   _CheckoutPayMethod _payMethod = _CheckoutPayMethod.card;
+  late String _fulfillment;
   late final TextEditingController _city;
   late final TextEditingController _address;
   final TextEditingController _cardNumber = TextEditingController();
@@ -3306,6 +3755,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   void initState() {
     super.initState();
     final session = context.read<AppSession>();
+    _fulfillment = session.deliveryMethod;
+    if (_fulfillment != 'express' &&
+        _fulfillment != 'standard' &&
+        _fulfillment != 'pickup') {
+      _fulfillment = 'standard';
+    }
     _city = TextEditingController(text: session.city);
     _address = TextEditingController(text: session.addressLine);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -3313,6 +3768,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       unawaited(context.read<ApiClient>().refreshCurrencyQuote());
       unawaited(context.read<AppSession>().refreshCartFromServer());
     });
+  }
+
+  Future<void> _selectFulfillment(String method) async {
+    if (_fulfillment == method &&
+        context.read<AppSession>().deliveryMethod == method) {
+      return;
+    }
+    setState(() {
+      _fulfillment = method;
+      _refreshingDelivery = true;
+      _payError = null;
+    });
+    final session = context.read<AppSession>();
+    session.setDeliveryMethod(method);
+    try {
+      await session.refreshCartFromServer();
+    } finally {
+      if (mounted) setState(() => _refreshingDelivery = false);
+    }
   }
 
   @override
@@ -3534,16 +4008,24 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   ('pickup', 'Pickup'),
                 ])
                   ChoiceChip(
+                    key: ValueKey('checkout-fulfill-${option.$1}'),
                     label: Text(option.$2),
-                    selected: session.deliveryMethod == option.$1,
+                    selected: _fulfillment == option.$1,
                     selectedColor: WingerColors.brandMuted,
-                    onSelected: (_) async {
-                      session.setDeliveryMethod(option.$1);
-                      await session.refreshCartFromServer();
-                    },
+                    showCheckmark: true,
+                    onSelected: _refreshingDelivery
+                        ? null
+                        : (selected) {
+                            if (!selected) return;
+                            unawaited(_selectFulfillment(option.$1));
+                          },
                   ),
               ],
             ),
+            if (_refreshingDelivery) ...[
+              const SizedBox(height: 8),
+              const LinearProgressIndicator(minHeight: 2),
+            ],
             const SizedBox(height: 12),
             Text(
               s.t('shipments'),
@@ -3566,7 +4048,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         courierName: shipment.courierName,
                       ),
                       '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, shipment.fee)}'
-                          '${session.deliveryMethod == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
+                          '${_fulfillment == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
                     ].join('\n'),
                   ),
                   isThreeLine: true,
@@ -4074,6 +4556,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             padding: const EdgeInsets.only(bottom: 6),
                             child: Row(
                               children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: SizedBox(
+                                    width: 40,
+                                    height: 40,
+                                    child: ProductPhoto(
+                                      url: leg.imageUrl ?? '',
+                                      iconSize: 18,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
                                     '${leg.supplierName} · ${leg.productName}',
@@ -4508,6 +5002,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               for (final leg in entry.value)
                 Card(
                   child: ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: ProductPhoto(
+                          url: leg.imageUrl ?? '',
+                          iconSize: 22,
+                        ),
+                      ),
+                    ),
                     title: Text(leg.productName),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -5288,7 +5793,7 @@ class _RequestReturnDialogState extends State<_RequestReturnDialog> {
                     DropdownMenuItem(
                       value: item.orderItemId,
                       child: Text(
-                        '${item.productName} · ${item.supplierName}',
+                        '${item.displayName} · ${item.supplierName}',
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),

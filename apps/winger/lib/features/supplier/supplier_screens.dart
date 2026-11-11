@@ -473,7 +473,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
         content: Text(
           s
               .t('createReplacementConfirm')
-              .replaceAll('{product}', item.productName)
+              .replaceAll('{product}', item.displayName)
               .replaceAll('{id}', order.id),
         ),
         actions: [
@@ -575,6 +575,8 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
           ? s.t('markedShipped')
           : status == OrderStatus.readyForPickup
           ? s.t('markReady')
+          : status == OrderStatus.cancelled
+          ? s.t('markedCancelled')
           : s.t('fulfillmentUpdated');
       ScaffoldMessenger.of(
         context,
@@ -585,6 +587,31 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
         SnackBar(content: Text('${s.t('fulfillmentFailed')}: $error')),
       );
     }
+  }
+
+  Future<void> _cannotFulfil(CustomerOrder order, OrderItemRow item) async {
+    final s = WingerStrings.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.t('cannotFulfil')),
+        content: Text(
+          '${item.displayName}\n\n${s.t('cannotFulfilConfirm')}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.t('back')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.t('cannotFulfil')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _updateItem(order: order, item: item, status: OrderStatus.cancelled);
   }
 
   Future<void> _openFulfillment(CustomerOrder order, OrderItemRow item) async {
@@ -605,7 +632,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${order.id} · ${item.productName}',
+                  '${order.id} · ${item.displayName}',
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
@@ -661,7 +688,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
       builder: (ctx) => AlertDialog(
         title: Text(s.t('bookCourier')),
         content: Text(
-          '${order.id} · ${item.productName}\n\n${s.t('bookCourierConfirm')}',
+          '${order.id} · ${item.displayName}\n\n${s.t('bookCourierConfirm')}',
         ),
         actions: [
           TextButton(
@@ -705,7 +732,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${order.id} · ${item.productName}',
+                    '${order.id} · ${item.displayName}',
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 12),
@@ -878,8 +905,42 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(order.customerName),
-                            Text('${item.productName} × ${item.quantity}'),
-                            Text('\$${item.lineTotal.toStringAsFixed(2)}'),
+                            const SizedBox(height: 8),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: SizedBox(
+                                    width: 64,
+                                    height: 64,
+                                    child: ProductPhoto(
+                                      url: item.imageUrl ?? '',
+                                      iconSize: 24,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${item.displayName} × ${item.quantity}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '\$${item.lineTotal.toStringAsFixed(2)}',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                             if (carrierCaption(
                                   carrier: item.carrier,
                                   courierName: item.courierName,
@@ -967,7 +1028,12 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                               spacing: 8,
                               runSpacing: 8,
                               children: [
-                                if (item.status == OrderStatus.returned) ...[
+                                if (item.status == OrderStatus.cancelled)
+                                  Text(
+                                    s.t('markedCancelled'),
+                                    style: TextStyle(color: WingerColors.muted),
+                                  )
+                                else if (item.status == OrderStatus.returned) ...[
                                   FilledButton(
                                     onPressed: () =>
                                         _createReplacement(order, item),
@@ -1048,6 +1114,13 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                         collectPayment: true,
                                       ),
                                       child: Text(s.t('collectPayment')),
+                                    ),
+                                  if (item.status == OrderStatus.processing ||
+                                      item.status == OrderStatus.readyForPickup)
+                                    OutlinedButton(
+                                      onPressed: () =>
+                                          _cannotFulfil(order, item),
+                                      child: Text(s.t('cannotFulfil')),
                                     ),
                                 ],
                               ],
@@ -1254,6 +1327,16 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
       );
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openVariants(Product product) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => _ProductVariantsDialog(product: product),
+    );
+    if (saved == true && mounted) {
+      setState(() => _future = _load());
     }
   }
 
@@ -1482,6 +1565,12 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
                                   : () => _openEditor(product: product),
                               child: Text(s.t('edit')),
                             ),
+                            OutlinedButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _openVariants(product),
+                              child: Text(s.t('productOptions')),
+                            ),
                             FilledButton(
                               onPressed: _busy ? null : () => _receive(product),
                               child: Text(s.t('receiveStock')),
@@ -1586,6 +1675,8 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
   final List<_ExtraSpecEditors> _extraSpecs = [];
   final List<_PendingPhoto> _pendingPhotos = [];
   final List<String> _removedImageIds = [];
+  /// Built-in Vipimo rows the supplier chose to hide in this editor.
+  final Set<String> _removedBuiltinSpecs = {};
 
   @override
   void initState() {
@@ -1863,30 +1954,48 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                 s.t('specificationsHint'),
                 style: TextStyle(color: WingerColors.muted, fontSize: 12),
               ),
-              TextField(
-                controller: _categoryCtrl,
-                decoration: InputDecoration(labelText: s.t('categories')),
-              ),
-              TextField(
-                controller: _modelCtrl,
-                decoration: InputDecoration(labelText: s.t('sku')),
-              ),
-              TextField(
-                controller: _colorCtrl,
-                decoration: InputDecoration(labelText: s.t('color')),
-              ),
-              TextField(
-                controller: _sizeCtrl,
-                decoration: InputDecoration(labelText: s.t('size')),
-              ),
-              TextField(
-                controller: _batteryCtrl,
-                decoration: InputDecoration(labelText: s.t('battery')),
-              ),
-              TextField(
-                controller: _weightCtrl,
-                decoration: InputDecoration(labelText: s.t('weight')),
-              ),
+              if (!_removedBuiltinSpecs.contains('category'))
+                _removableSpecField(
+                  controller: _categoryCtrl,
+                  label: s.t('categories'),
+                  removeTooltip: s.t('remove'),
+                  onRemove: () => _removeBuiltinSpec('category', _categoryCtrl),
+                ),
+              if (!_removedBuiltinSpecs.contains('sku'))
+                _removableSpecField(
+                  controller: _modelCtrl,
+                  label: s.t('sku'),
+                  removeTooltip: s.t('remove'),
+                  onRemove: () => _removeBuiltinSpec('sku', _modelCtrl),
+                ),
+              if (!_removedBuiltinSpecs.contains('color'))
+                _removableSpecField(
+                  controller: _colorCtrl,
+                  label: s.t('color'),
+                  removeTooltip: s.t('remove'),
+                  onRemove: () => _removeBuiltinSpec('color', _colorCtrl),
+                ),
+              if (!_removedBuiltinSpecs.contains('size'))
+                _removableSpecField(
+                  controller: _sizeCtrl,
+                  label: s.t('size'),
+                  removeTooltip: s.t('remove'),
+                  onRemove: () => _removeBuiltinSpec('size', _sizeCtrl),
+                ),
+              if (!_removedBuiltinSpecs.contains('battery'))
+                _removableSpecField(
+                  controller: _batteryCtrl,
+                  label: s.t('battery'),
+                  removeTooltip: s.t('remove'),
+                  onRemove: () => _removeBuiltinSpec('battery', _batteryCtrl),
+                ),
+              if (!_removedBuiltinSpecs.contains('weight'))
+                _removableSpecField(
+                  controller: _weightCtrl,
+                  label: s.t('weight'),
+                  removeTooltip: s.t('remove'),
+                  onRemove: () => _removeBuiltinSpec('weight', _weightCtrl),
+                ),
               const SizedBox(height: 8),
               for (var i = 0; i < _extraSpecs.length; i++)
                 Padding(
@@ -1918,7 +2027,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                             _extraSpecs.removeAt(i).dispose();
                           });
                         },
-                        icon: const Icon(Icons.close),
+                        icon: const Icon(Icons.delete_outline),
                       ),
                     ],
                   ),
@@ -1949,6 +2058,40 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
         ),
         FilledButton(onPressed: _submit, child: Text(s.t('save'))),
       ],
+    );
+  }
+
+  void _removeBuiltinSpec(String key, TextEditingController controller) {
+    setState(() {
+      controller.clear();
+      _removedBuiltinSpecs.add(key);
+    });
+  }
+
+  Widget _removableSpecField({
+    required TextEditingController controller,
+    required String label,
+    required String removeTooltip,
+    required VoidCallback onRemove,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: controller,
+              decoration: InputDecoration(labelText: label),
+            ),
+          ),
+          IconButton(
+            tooltip: removeTooltip,
+            onPressed: onRemove,
+            icon: const Icon(Icons.delete_outline),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2011,6 +2154,12 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
   Future<_SupplierFinance>? _future;
   final _proposeCtrl = TextEditingController(text: '10');
   final _counterCtrl = TextEditingController();
+  final _merchantCtrl = TextEditingController();
+  final _lipaCtrl = TextEditingController();
+  final _regCtrl = TextEditingController();
+  final _tinCtrl = TextEditingController();
+  String _network = 'ALL_NETWORKS';
+  String _preference = 'SUPPLIER_DIRECT';
   bool _busy = false;
 
   @override
@@ -2023,6 +2172,10 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
   void dispose() {
     _proposeCtrl.dispose();
     _counterCtrl.dispose();
+    _merchantCtrl.dispose();
+    _lipaCtrl.dispose();
+    _regCtrl.dispose();
+    _tinCtrl.dispose();
     super.dispose();
   }
 
@@ -2038,13 +2191,73 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
     final agreements = await api.fetchCommissionAgreements();
     final settings = await api.fetchCommissionSettings();
     final connect = await api.fetchConnectStatus();
+    final paymentProfile = await api.fetchSupplierPaymentProfile();
+    final seed =
+        (paymentProfile['pendingProfile'] as Map<String, dynamic>?) ??
+        (paymentProfile['approvedProfile'] as Map<String, dynamic>?) ??
+        (paymentProfile['currentProfile'] as Map<String, dynamic>?);
+    if (seed != null) {
+      _merchantCtrl.text = '${seed['merchantName'] ?? ''}';
+      _lipaCtrl.text = '${seed['lipaOrTillNumber'] ?? ''}';
+      _regCtrl.text = '${seed['businessRegRef'] ?? ''}';
+      _tinCtrl.text = '${seed['tinRef'] ?? ''}';
+      _network = '${seed['network'] ?? 'ALL_NETWORKS'}';
+      _preference = '${seed['preference'] ?? 'SUPPLIER_DIRECT'}';
+    }
     return _SupplierFinance(
       summary: summary,
       agreements: agreements,
       defaultRate:
           (settings['defaultCommissionPercent'] as num?)?.toDouble() ?? 10,
       connect: connect,
+      paymentProfile: paymentProfile,
     );
+  }
+
+  Future<void> _submitPaymentProfile() async {
+    setState(() => _busy = true);
+    try {
+      await context.read<ApiClient>().submitSupplierPaymentProfile(
+        preference: _preference,
+        merchantName: _merchantCtrl.text.trim(),
+        lipaOrTillNumber: _lipaCtrl.text.trim(),
+        network: _network,
+        businessRegRef: _regCtrl.text.trim(),
+        tinRef: _tinCtrl.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() => _future = _load());
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _setPaymentPreference(String preference) async {
+    setState(() => _busy = true);
+    try {
+      await context.read<ApiClient>().setSupplierPaymentPreference(preference);
+      if (!mounted) return;
+      setState(() {
+        _preference = preference;
+        _future = _load();
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _connectPayouts() async {
@@ -2192,7 +2405,126 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
               s.t('payoutsHint'),
               style: TextStyle(color: WingerColors.muted),
             ),
+            const SizedBox(height: 20),
+            Text(
+              s.t('mobileMoneyPayments'),
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              s.t('mobileMoneyHint'),
+              style: TextStyle(color: WingerColors.muted),
+            ),
+            if (data?.paymentProfile != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                '${s.t('effectiveArrangement')}: '
+                '${data!.paymentProfile['effectiveArrangement'] == 'SUPPLIER_DIRECT' ? s.t('supplierDirectPayments') : s.t('wingerManagedPayments')}',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              if (data.paymentProfile['pendingProfile'] != null)
+                Text(
+                  s.t('paymentProfilePending'),
+                  style: TextStyle(color: WingerColors.attentionInk),
+                ),
+              if (data.paymentProfile['approvedProfile'] != null &&
+                  data.paymentProfile['pendingProfile'] == null)
+                Text(
+                  s.t('paymentProfileApproved'),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              if ((data.paymentProfile['approvedProfile']
+                      as Map<String, dynamic>?)?['status'] ==
+                  'SUSPENDED')
+                Text(s.t('paymentProfileSuspended')),
+              const SizedBox(height: 8),
+              if (data.paymentProfile['approvedProfile'] != null)
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: Text(s.t('wingerManagedPayments')),
+                      selected:
+                          data.paymentProfile['effectiveArrangement'] !=
+                          'SUPPLIER_DIRECT',
+                      onSelected: _busy
+                          ? null
+                          : (selected) {
+                              if (!selected) return;
+                              unawaited(
+                                _setPaymentPreference('WINGER_MANAGED'),
+                              );
+                            },
+                    ),
+                    ChoiceChip(
+                      label: Text(s.t('supplierDirectPayments')),
+                      selected:
+                          data.paymentProfile['effectiveArrangement'] ==
+                          'SUPPLIER_DIRECT',
+                      onSelected: _busy
+                          ? null
+                          : (selected) {
+                              if (!selected) return;
+                              unawaited(
+                                _setPaymentPreference('SUPPLIER_DIRECT'),
+                              );
+                            },
+                    ),
+                  ],
+                ),
+            ],
             const SizedBox(height: 12),
+            TextField(
+              controller: _merchantCtrl,
+              decoration: InputDecoration(labelText: s.t('merchantName')),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _lipaCtrl,
+              decoration: InputDecoration(labelText: s.t('lipaOrTillNumber')),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              initialValue: _network,
+              decoration: InputDecoration(labelText: s.t('mobileMoneyNetwork')),
+              items: const [
+                DropdownMenuItem(
+                  value: 'ALL_NETWORKS',
+                  child: Text('All networks'),
+                ),
+                DropdownMenuItem(value: 'M_PESA', child: Text('M-Pesa')),
+                DropdownMenuItem(value: 'TIGO', child: Text('Tigo / Mixx')),
+                DropdownMenuItem(value: 'AIRTEL', child: Text('Airtel Money')),
+                DropdownMenuItem(value: 'HALO', child: Text('HaloPesa')),
+                DropdownMenuItem(value: 'OTHER', child: Text('Other')),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() => _network = value);
+                    },
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _regCtrl,
+              decoration: InputDecoration(labelText: s.t('businessRegRef')),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _tinCtrl,
+              decoration: InputDecoration(labelText: s.t('tinRef')),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed:
+                  _busy || data?.paymentProfile['pendingProfile'] != null
+                  ? null
+                  : _submitPaymentProfile,
+              child: Text(s.t('submitPaymentProfile')),
+            ),
+            const SizedBox(height: 20),
             if (data?.connect['payoutsEnabled'] == true)
               Text(
                 s.t('payoutsConnected'),
@@ -2522,12 +2854,14 @@ class _SupplierFinance {
     required this.agreements,
     required this.defaultRate,
     required this.connect,
+    required this.paymentProfile,
   });
 
   final Map<String, dynamic> summary;
   final List<Map<String, dynamic>> agreements;
   final double defaultRate;
   final Map<String, dynamic> connect;
+  final Map<String, dynamic> paymentProfile;
 }
 
 class SupplierDeliveryFeesScreen extends StatefulWidget {
@@ -2887,6 +3221,243 @@ class _SupplierDeliveryFeesScreenState
           child: Text(
             _saving ? s.t('saveDeliveryFees') : s.t('saveDeliveryFees'),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _VariantRowEditors {
+  _VariantRowEditors({
+    String color = '',
+    String size = '',
+    String stock = '0',
+    String? colorHex,
+    bool enabled = true,
+  }) : colorCtrl = TextEditingController(text: color),
+       sizeCtrl = TextEditingController(text: size),
+       stockCtrl = TextEditingController(text: stock),
+       hexCtrl = TextEditingController(text: colorHex ?? ''),
+       enabled = enabled;
+
+  final TextEditingController colorCtrl;
+  final TextEditingController sizeCtrl;
+  final TextEditingController stockCtrl;
+  final TextEditingController hexCtrl;
+  bool enabled;
+
+  void dispose() {
+    colorCtrl.dispose();
+    sizeCtrl.dispose();
+    stockCtrl.dispose();
+    hexCtrl.dispose();
+  }
+}
+
+class _ProductVariantsDialog extends StatefulWidget {
+  const _ProductVariantsDialog({required this.product});
+
+  final Product product;
+
+  @override
+  State<_ProductVariantsDialog> createState() => _ProductVariantsDialogState();
+}
+
+class _ProductVariantsDialogState extends State<_ProductVariantsDialog> {
+  final List<_VariantRowEditors> _rows = [];
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.product.variants;
+    if (existing.isEmpty) {
+      final sizes = expandSizeOptions(widget.product.size);
+      final colors = expandColorOptions(widget.product.color);
+      if (sizes.isNotEmpty || colors.isNotEmpty) {
+        final colorChoices = colors.isEmpty ? [''] : colors;
+        final sizeChoices = sizes.isEmpty ? [''] : sizes;
+        final per =
+            (widget.product.stock / (colorChoices.length * sizeChoices.length))
+                .floor()
+                .clamp(0, widget.product.stock);
+        for (final color in colorChoices) {
+          for (final size in sizeChoices) {
+            _rows.add(
+              _VariantRowEditors(
+                color: color,
+                size: size,
+                stock: '$per',
+              ),
+            );
+          }
+        }
+      } else {
+        _rows.add(_VariantRowEditors());
+      }
+    } else {
+      for (final row in existing) {
+        _rows.add(
+          _VariantRowEditors(
+            color: row.color,
+            size: row.size,
+            stock: '${row.stock}',
+            colorHex: row.colorHex,
+            enabled: row.enabled,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final row in _rows) {
+      row.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final payload = <Map<String, dynamic>>[];
+      for (final row in _rows) {
+        final color = row.colorCtrl.text.trim();
+        final size = row.sizeCtrl.text.trim();
+        final stock = int.tryParse(row.stockCtrl.text.trim());
+        if (color.isEmpty && size.isEmpty) continue;
+        if (stock == null || stock < 0) {
+          throw Exception('Each variant needs a valid stock quantity');
+        }
+        payload.add({
+          'color': color,
+          'size': size,
+          'stock': stock,
+          'enabled': row.enabled,
+          if (row.hexCtrl.text.trim().isNotEmpty)
+            'colorHex': row.hexCtrl.text.trim(),
+        });
+      }
+      await context.read<ApiClient>().replaceProductVariants(
+        widget.product.id,
+        payload,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return AlertDialog(
+      title: Text(s.t('productOptions')),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Add colour/size combinations with their own stock. Clear all rows and save to use product-level stock only.',
+                style: TextStyle(color: WingerColors.muted),
+              ),
+              const SizedBox(height: 12),
+              for (var i = 0; i < _rows.length; i++) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _rows[i].colorCtrl,
+                        decoration: InputDecoration(labelText: s.t('color')),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _rows[i].sizeCtrl,
+                        decoration: InputDecoration(labelText: s.t('size')),
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _rows[i].stockCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(labelText: s.t('stock')),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _rows[i].hexCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Colour hex (#RRGGBB)',
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() {
+                              _rows[i].dispose();
+                              _rows.removeAt(i);
+                            }),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(s.t('inStock')),
+                  value: _rows[i].enabled,
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() => _rows[i].enabled = value),
+                ),
+                const Divider(),
+              ],
+              TextButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => setState(() => _rows.add(_VariantRowEditors())),
+                icon: const Icon(Icons.add),
+                label: Text(s.t('productOptions')),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: const TextStyle(color: WingerColors.dangerInk),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _save,
+          child: Text(s.t('save')),
         ),
       ],
     );

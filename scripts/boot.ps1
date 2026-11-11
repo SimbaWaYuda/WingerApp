@@ -50,13 +50,22 @@ function Test-CommandLine([string]$Pattern) {
   return [bool]$found
 }
 
+function Format-ProcessArgument([string]$Value) {
+  if ($Value -match '[\s"]') {
+    return '"' + ($Value -replace '"', '\"') + '"'
+  }
+  return $Value
+}
+
 function Start-Hidden {
   param(
     [string]$FilePath,
     [string[]]$ArgumentList,
     [string]$WorkingDirectory
   )
-  Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden | Out-Null
+  # Windows PowerShell does not quote array arguments that contain spaces.
+  $quoted = ($ArgumentList | ForEach-Object { Format-ProcessArgument $_ }) -join " "
+  Start-Process -FilePath $FilePath -ArgumentList $quoted -WorkingDirectory $WorkingDirectory -WindowStyle Hidden | Out-Null
 }
 
 function Wait-LocalPort([int]$Port, [int]$Seconds) {

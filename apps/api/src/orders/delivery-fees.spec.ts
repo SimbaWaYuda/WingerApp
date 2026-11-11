@@ -58,6 +58,9 @@ describe('delivery fees', () => {
     expect(quote.tax).toBe(8);
     expect(quote.total).toBe(112.99);
     expect(quote.shipments.map((shipment) => shipment.fee)).toEqual([4.99, 0]);
+    expect(quote.shipments.map((shipment) => shipment.merchandise)).toEqual([40, 60]);
+    expect(quote.shipments[0].merchandiseTax).toBe(3.2);
+    expect(quote.shipments[1].deliveryTax).toBe(0);
   });
 
   it('uses each supplier tax rate and can include the delivery fee', () => {

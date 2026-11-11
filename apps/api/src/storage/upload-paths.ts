@@ -1,10 +1,15 @@
+import { homedir } from 'os';
 import { join, resolve } from 'path';
 
-/** Local upload root. Defaults to `<cwd>/uploads`; override with UPLOAD_DIR. */
+/**
+ * Local upload root. UPLOAD_DIR wins when set.
+ * Otherwise use the home-folder store, the same place boot.ps1 and dev.ps1 use,
+ * so a manual `npm run start:dev` does not write into apps/api/uploads.
+ */
 export function getLocalUploadRoot(): string {
   const configured = process.env.UPLOAD_DIR?.trim();
   if (configured) return resolve(configured);
-  return resolve(join(process.cwd(), 'uploads'));
+  return resolve(join(homedir(), 'WingerData', 'uploads'));
 }
 
 export function storageDriver(): 'local' | 's3' {

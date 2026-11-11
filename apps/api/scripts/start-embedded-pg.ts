@@ -46,7 +46,7 @@ async function main() {
 
   // eslint-disable-next-line no-console
   console.log(
-    `DATABASE_URL=postgresql://winger:winger@localhost:${port}/winger?schema=public`,
+    `DATABASE_URL=postgresql://winger:winger@localhost:${port}/winger?schema=public&options=-c%20client_encoding%3DUTF8`,
   );
   // eslint-disable-next-line no-console
   console.log('Embedded Postgres is running. Keep this process open.');

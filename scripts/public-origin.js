@@ -27,6 +27,7 @@ const apiPrefixes = [
   "/fx",
   "/stripe",
   "/uploads",
+  "/supplier-payments",
 ];
 
 const types = {

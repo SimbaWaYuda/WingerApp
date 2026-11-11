@@ -44,6 +44,11 @@ List<ShellDestination> adminDestinations({int returnsAttention = 0}) => [
     path: '/admin/commissions',
   ),
   const ShellDestination(
+    labelKey: 'paymentProfiles',
+    icon: Icons.phone_android_outlined,
+    path: '/admin/payment-profiles',
+  ),
+  const ShellDestination(
     labelKey: 'delivery',
     icon: Icons.local_shipping_outlined,
     path: '/admin/delivery',
@@ -1987,6 +1992,203 @@ class _AdminCurrencyScreenState extends State<AdminCurrencyScreen> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class AdminPaymentProfilesScreen extends StatefulWidget {
+  const AdminPaymentProfilesScreen({super.key});
+
+  @override
+  State<AdminPaymentProfilesScreen> createState() =>
+      _AdminPaymentProfilesScreenState();
+}
+
+class _AdminPaymentProfilesScreenState
+    extends State<AdminPaymentProfilesScreen> {
+  Future<List<Map<String, dynamic>>>? _future;
+  bool _busy = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _future ??= context.read<ApiClient>().fetchPendingPaymentProfiles();
+  }
+
+  Future<void> _reload() async {
+    setState(() {
+      _future = context.read<ApiClient>().fetchPendingPaymentProfiles();
+    });
+  }
+
+  Future<void> _review(
+    Map<String, dynamic> profile, {
+    required String action,
+  }) async {
+    final noteCtrl = TextEditingController();
+    final s = WingerStrings.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          action == 'approve'
+              ? s.t('approvePaymentProfile')
+              : action == 'reject'
+              ? s.t('rejectPaymentProfile')
+              : s.t('suspendPaymentProfile'),
+        ),
+        content: TextField(
+          controller: noteCtrl,
+          maxLines: 3,
+          decoration: InputDecoration(
+            labelText: s.t('reviewNote'),
+            helperText: action == 'approve'
+                ? null
+                : 'Required for reject / suspend',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              action == 'approve'
+                  ? s.t('approvePaymentProfile')
+                  : action == 'reject'
+                  ? s.t('rejectPaymentProfile')
+                  : s.t('suspendPaymentProfile'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      noteCtrl.dispose();
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await context.read<ApiClient>().reviewSupplierPaymentProfile(
+        profileId: '${profile['id']}',
+        action: action,
+        reviewNote: noteCtrl.text.trim(),
+      );
+      if (!mounted) return;
+      await _reload();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      noteCtrl.dispose();
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final future = _future;
+    if (future == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: future,
+      builder: (context, snapshot) {
+        final rows = snapshot.data ?? const <Map<String, dynamic>>[];
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(
+              s.t('paymentProfiles'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              s.t('mobileMoneyHint'),
+              style: TextStyle(color: WingerColors.muted),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(
+                onPressed: _busy ? null : _reload,
+                child: Text(s.t('retry')),
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (snapshot.connectionState != ConnectionState.done)
+              const Center(child: CircularProgressIndicator())
+            else if (snapshot.hasError)
+              Text(
+                snapshot.error.toString().replaceFirst('Exception: ', ''),
+                style: const TextStyle(color: WingerColors.dangerInk),
+              )
+            else if (rows.isEmpty)
+              Text(
+                s.t('noPendingPaymentProfiles'),
+                style: TextStyle(color: WingerColors.muted),
+              )
+            else
+              for (final profile in rows)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${(profile['supplier'] as Map?)?['name'] ?? profile['supplierId']}',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${profile['merchantName']} · ${profile['lipaOrTillNumber']}',
+                        ),
+                        Text(
+                          '${profile['network']} · ${profile['preference']}',
+                          style: TextStyle(color: WingerColors.muted),
+                        ),
+                        if ((profile['businessRegRef'] ?? '')
+                            .toString()
+                            .isNotEmpty)
+                          Text('${s.t('businessRegRef')}: ${profile['businessRegRef']}'),
+                        if ((profile['tinRef'] ?? '').toString().isNotEmpty)
+                          Text('${s.t('tinRef')}: ${profile['tinRef']}'),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _review(profile, action: 'approve'),
+                              child: Text(s.t('approvePaymentProfile')),
+                            ),
+                            OutlinedButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _review(profile, action: 'reject'),
+                              child: Text(s.t('rejectPaymentProfile')),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+          ],
+        );
+      },
     );
   }
 }

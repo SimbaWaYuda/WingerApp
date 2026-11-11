@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
+import '../../core/auth/login_credentials_store.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
 import '../../core/state/app_session.dart';
@@ -20,8 +23,19 @@ class _LoginScreenState extends State<LoginScreen> {
   UserRole _role = UserRole.customer;
   final _email = TextEditingController(text: 'amina.mwangi@example.com');
   final _password = TextEditingController(text: 'demo1234');
+  final _credentialsStore = LoginCredentialsStore();
+  bool _rememberMe = false;
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Do not block Continue while this runs — SharedPreferences can hang on web.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_restoreSavedLogin());
+    });
+  }
 
   @override
   void dispose() {
@@ -30,15 +44,36 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  Future<void> _restoreSavedLogin() async {
+    try {
+      final saved = await _credentialsStore.load().timeout(
+        const Duration(seconds: 2),
+      );
+      if (!mounted || saved == null) return;
+      setState(() {
+        _rememberMe = true;
+        _role = saved.role;
+        _email.text = saved.email;
+        _password.text = saved.password;
+      });
+    } catch (_) {
+      // Keep demo defaults if local storage is unavailable.
+    }
+  }
+
   void _onRole(UserRole role) {
     setState(() {
       _role = role;
       _error = null;
-      _email.text = switch (role) {
-        UserRole.customer => 'amina.mwangi@example.com',
-        UserRole.supplier => 'supplier@kijani.example',
-        UserRole.admin => 'admin@winger.example',
-      };
+      // Keep a remembered account email; only fill demo emails for a fresh form.
+      if (!_rememberMe) {
+        _email.text = switch (role) {
+          UserRole.customer => 'amina.mwangi@example.com',
+          UserRole.supplier => 'supplier@kijani.example',
+          UserRole.admin => 'admin@winger.example',
+        };
+        _password.text = 'demo1234';
+      }
     });
   }
 
@@ -55,6 +90,21 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _password.text,
         role: _role,
       );
+      try {
+        if (_rememberMe) {
+          await _credentialsStore
+              .save(
+                email: _email.text.trim(),
+                password: _password.text,
+                role: _role,
+              )
+              .timeout(const Duration(seconds: 2));
+        } else {
+          await _credentialsStore.clear().timeout(const Duration(seconds: 2));
+        }
+      } catch (_) {
+        // Sign-in already succeeded; local remember storage is optional.
+      }
       if (!mounted) return;
       if (context.read<AppSession>().mustChangePassword) {
         context.go('/choose-password');
@@ -90,6 +140,8 @@ class _LoginScreenState extends State<LoginScreen> {
       password: _password,
       busy: _busy,
       error: _error,
+      rememberMe: _rememberMe,
+      onRememberMe: (value) => setState(() => _rememberMe = value),
       onRole: _onRole,
       onLocale: (code) => session.setLocale(code),
       localeCode: session.localeCode,
@@ -198,6 +250,8 @@ class _LoginForm extends StatelessWidget {
     required this.password,
     required this.busy,
     required this.error,
+    required this.rememberMe,
+    required this.onRememberMe,
     required this.onRole,
     required this.onLocale,
     required this.localeCode,
@@ -209,6 +263,8 @@ class _LoginForm extends StatelessWidget {
   final TextEditingController password;
   final bool busy;
   final String? error;
+  final bool rememberMe;
+  final ValueChanged<bool> onRememberMe;
   final ValueChanged<UserRole> onRole;
   final ValueChanged<LocaleCode> onLocale;
   final LocaleCode localeCode;
@@ -274,11 +330,22 @@ class _LoginForm extends StatelessWidget {
           controller: password,
           labelText: s.t('password'),
         ),
+        const SizedBox(height: 8),
+        CheckboxListTile(
+          value: rememberMe,
+          onChanged: busy
+              ? null
+              : (value) => onRememberMe(value ?? false),
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          dense: true,
+          title: Text(s.t('rememberMe')),
+        ),
         if (error != null) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 4),
           Text(error!, style: const TextStyle(color: WingerColors.dangerInk, fontSize: 12)),
         ],
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
           child: FilledButton(

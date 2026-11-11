@@ -55,11 +55,16 @@ class OfflineDatabase {
 
     db.execute('''
       CREATE TABLE IF NOT EXISTS cart_lines (
-        product_id TEXT PRIMARY KEY,
+        product_id TEXT NOT NULL,
+        variant_id TEXT NOT NULL DEFAULT '',
+        variant_color TEXT,
+        variant_size TEXT,
         quantity INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (product_id, variant_id)
       );
     ''');
+    _ensureCartVariantColumns();
 
     db.execute('''
       CREATE TABLE IF NOT EXISTS local_inventory (
@@ -257,32 +262,79 @@ class OfflineDatabase {
     );
   }
 
+  void _ensureCartVariantColumns() {
+    final cols = db
+        .select('PRAGMA table_info(cart_lines)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!cols.contains('variant_id')) {
+      db.execute(
+        "ALTER TABLE cart_lines ADD COLUMN variant_id TEXT NOT NULL DEFAULT ''",
+      );
+    }
+    if (!cols.contains('variant_color')) {
+      db.execute('ALTER TABLE cart_lines ADD COLUMN variant_color TEXT');
+    }
+    if (!cols.contains('variant_size')) {
+      db.execute('ALTER TABLE cart_lines ADD COLUMN variant_size TEXT');
+    }
+  }
+
   Future<List<CartItem>> loadCart() async {
     final lines = db.select('SELECT * FROM cart_lines');
     final items = <CartItem>[];
     for (final line in lines) {
       final product = await getProduct(line['product_id'] as String);
       if (product == null) continue;
-      items.add(CartItem(product: product, quantity: line['quantity'] as int));
+      final variantId = (line['variant_id'] as String?) ?? '';
+      items.add(
+        CartItem(
+          product: product,
+          quantity: line['quantity'] as int,
+          variantId: variantId.isEmpty ? null : variantId,
+          variantColor: line['variant_color'] as String?,
+          variantSize: line['variant_size'] as String?,
+        ),
+      );
     }
     return items;
   }
 
-  Future<void> upsertCartLine(String productId, int quantity) async {
+  Future<void> upsertCartLine(
+    String productId,
+    int quantity, {
+    String? variantId,
+    String? variantColor,
+    String? variantSize,
+  }) async {
+    final vid = variantId ?? '';
     db.execute(
       '''
-      INSERT INTO cart_lines (product_id, quantity, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(product_id) DO UPDATE SET
+      INSERT INTO cart_lines (product_id, variant_id, variant_color, variant_size, quantity, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(product_id, variant_id) DO UPDATE SET
         quantity=excluded.quantity,
+        variant_color=excluded.variant_color,
+        variant_size=excluded.variant_size,
         updated_at=excluded.updated_at
       ''',
-      [productId, quantity, DateTime.now().toIso8601String()],
+      [
+        productId,
+        vid,
+        variantColor,
+        variantSize,
+        quantity,
+        DateTime.now().toIso8601String(),
+      ],
     );
   }
 
-  Future<void> removeCartLine(String productId) async {
-    db.execute('DELETE FROM cart_lines WHERE product_id = ?', [productId]);
+  Future<void> removeCartLine(String productId, {String? variantId}) async {
+    final vid = variantId ?? '';
+    db.execute(
+      'DELETE FROM cart_lines WHERE product_id = ? AND variant_id = ?',
+      [productId, vid],
+    );
   }
 
   Future<List<String>> clearCart() async {

@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UploadedFiles,
@@ -27,6 +28,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { AuthUser } from '../auth/auth.types';
 import {
   ProductsService,
+  UpsertProductVariantDto,
   UpsertSupplierProductDto,
 } from './products.service';
 import {
@@ -237,6 +239,17 @@ export class ProductsController {
     @Param('imageId') imageId: string,
   ) {
     return this.productsService.removeImage(id, imageId, user);
+  }
+
+  @Put(':id/variants')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPPLIER)
+  replaceVariants(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: { variants?: UpsertProductVariantDto[] },
+  ) {
+    return this.productsService.replaceVariants(id, body ?? {}, user);
   }
 
   @Get(':id')

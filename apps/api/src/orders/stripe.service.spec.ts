@@ -82,16 +82,58 @@ describe('StripeService payment safety', () => {
       expect.objectContaining({
         payment_intent: 'pi_1',
         amount: 2950,
-        metadata: { orderId: 'ord-1', returnRequestId: 'ret-1' },
+        metadata: { orderId: 'ord-1', reason: 'return', returnRequestId: 'ret-1' },
       }),
       { idempotencyKey: 'winger-refund-ret-1' },
     );
   });
 
-  it('reports a Stripe refund failure without throwing', async () => {
+  it('refunds a cancelled order with a stable cancel key', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 're_cancel', status: 'succeeded' });
+    const service = new StripeService();
+    service.bindForTests({ refunds: { create } } as never, 'test');
+
+    const result = await service.refundCardCharge({
+      paymentIntentId: 'pi_1',
+      amount: 58.99,
+      idempotencyKey: 'winger-cancel-ord-1',
+      orderId: 'ord-1',
+      reason: 'cancel',
+    });
+
+    expect(result).toEqual({ ok: true, refundId: 're_cancel' });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_intent: 'pi_1',
+        amount: 5899,
+        metadata: { orderId: 'ord-1', reason: 'cancel' },
+      }),
+      { idempotencyKey: 'winger-cancel-ord-1' },
+    );
+  });
+
+  it('treats an already-refunded charge as success so a retry can finish the ledger', async () => {
     const service = new StripeService();
     service.bindForTests(
       { refunds: { create: jest.fn().mockRejectedValue(new Error('Charge already refunded')) } } as never,
+      'test',
+    );
+
+    const result = await service.refundCardCharge({
+      paymentIntentId: 'pi_1',
+      amount: 10,
+      idempotencyKey: 'winger-cancel-ord-1',
+      orderId: 'ord-1',
+      reason: 'cancel',
+    });
+
+    expect(result).toEqual({ ok: true, refundId: 'already_refunded' });
+  });
+
+  it('reports a Stripe refund failure without throwing', async () => {
+    const service = new StripeService();
+    service.bindForTests(
+      { refunds: { create: jest.fn().mockRejectedValue(new Error('insufficient funds')) } } as never,
       'test',
     );
 
@@ -103,7 +145,7 @@ describe('StripeService payment safety', () => {
       returnRequestId: 'ret-1',
     });
 
-    expect(result).toEqual({ ok: false, message: 'Charge already refunded' });
+    expect(result).toEqual({ ok: false, message: 'insufficient funds' });
   });
 });
 

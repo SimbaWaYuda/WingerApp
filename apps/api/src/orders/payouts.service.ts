@@ -192,12 +192,17 @@ export class PayoutsService {
   }
 
   async reverseIfTransferred(orderItemId: string): Promise<void> {
+    const snap = await this.prisma.orderItemCommission.findUnique({
+      where: { orderItemId },
+    });
+    if (!snap?.stripeTransferId || snap.transferReversed) return;
+    if (!this.stripe.connectTestReady()) {
+      this.logger.warn(
+        `Transfer ${snap.stripeTransferId} left in place — Connect stays in test mode`,
+      );
+      return;
+    }
     try {
-      const snap = await this.prisma.orderItemCommission.findUnique({
-        where: { orderItemId },
-      });
-      if (!snap?.stripeTransferId || snap.transferReversed) return;
-      if (!this.stripe.connectTestReady()) return;
       await this.stripe.reverseSupplierTransfer({
         transferId: snap.stripeTransferId,
         idempotencyKey: `reversal-${orderItemId}`,
@@ -207,7 +212,11 @@ export class PayoutsService {
         data: { transferReversed: true },
       });
     } catch (error) {
-      this.logger.warn(`Supplier transfer reversal skipped: ${safeStripeMessage(error)}`);
+      const message = safeStripeMessage(error);
+      this.logger.warn(`Supplier transfer reversal failed: ${message}`);
+      throw new BadRequestException(
+        `Could not reverse the supplier payout: ${message}`,
+      );
     }
   }
 

@@ -333,17 +333,42 @@ class AppSession extends ChangeNotifier {
     authSignal.ping();
   }
 
-  Future<void> addToCart(Product product, {int quantity = 1}) async {
-    final index = _cart.indexWhere((item) => item.product.id == product.id);
+  Future<void> addToCart(
+    Product product, {
+    int quantity = 1,
+    String? variantId,
+    String? variantColor,
+    String? variantSize,
+  }) async {
+    final lineKey = cartLineKey(
+      product.id,
+      variantId: variantId,
+      variantColor: variantColor,
+      variantSize: variantSize,
+    );
+    final index = _cart.indexWhere((item) => item.lineKey == lineKey);
     final nextQty = index >= 0 ? _cart[index].quantity + quantity : quantity;
+    final line = CartItem(
+      product: product,
+      quantity: nextQty,
+      variantId: variantId,
+      variantColor: variantColor,
+      variantSize: variantSize,
+    );
     if (index >= 0) {
-      _cart[index] = _cart[index].copyWith(quantity: nextQty);
+      _cart[index] = line;
     } else {
-      _cart.add(CartItem(product: product, quantity: nextQty));
+      _cart.add(line);
     }
     _recomputeLocalFees();
     notifyListeners();
-    await _cartRepository?.upsert(product, nextQty);
+    await _cartRepository?.upsert(
+      product,
+      nextQty,
+      variantId: variantId,
+      variantColor: variantColor,
+      variantSize: variantSize,
+    );
     if (accessToken != null && _api != null) {
       try {
         await _api!.stampOnboardingActivity('added_to_cart');
@@ -351,23 +376,57 @@ class AppSession extends ChangeNotifier {
     }
   }
 
-  Future<void> updateQuantity(String productId, int quantity) async {
+  Future<void> updateQuantity(
+    String productId,
+    int quantity, {
+    String? variantId,
+    String? variantColor,
+    String? variantSize,
+  }) async {
+    final lineKey = cartLineKey(
+      productId,
+      variantId: variantId,
+      variantColor: variantColor,
+      variantSize: variantSize,
+    );
     if (quantity <= 0) {
-      await removeFromCart(productId);
+      await removeFromCart(
+        productId,
+        variantId: variantId,
+        variantColor: variantColor,
+        variantSize: variantSize,
+      );
       return;
     }
-    final index = _cart.indexWhere((item) => item.product.id == productId);
+    final index = _cart.indexWhere((item) => item.lineKey == lineKey);
     if (index >= 0) {
-      final product = _cart[index].product;
-      _cart[index] = _cart[index].copyWith(quantity: quantity);
+      final current = _cart[index];
+      _cart[index] = current.copyWith(quantity: quantity);
       _recomputeLocalFees();
       notifyListeners();
-      await _cartRepository?.upsert(product, quantity);
+      await _cartRepository?.upsert(
+        current.product,
+        quantity,
+        variantId: current.variantId,
+        variantColor: current.variantColor,
+        variantSize: current.variantSize,
+      );
     }
   }
 
-  Future<void> removeFromCart(String productId) async {
-    _cart.removeWhere((item) => item.product.id == productId);
+  Future<void> removeFromCart(
+    String productId, {
+    String? variantId,
+    String? variantColor,
+    String? variantSize,
+  }) async {
+    final lineKey = cartLineKey(
+      productId,
+      variantId: variantId,
+      variantColor: variantColor,
+      variantSize: variantSize,
+    );
+    _cart.removeWhere((item) => item.lineKey == lineKey);
     if (_cart.isEmpty) {
       cartDeliveryFee = 0;
       cartTax = 0;
@@ -376,7 +435,7 @@ class AppSession extends ChangeNotifier {
       _recomputeLocalFees();
     }
     notifyListeners();
-    await _cartRepository?.remove(productId);
+    await _cartRepository?.remove(productId, variantId: variantId);
   }
 
   /// Sync cart lines with trusted server prices/stock. Returns false if issues remain.
@@ -385,7 +444,10 @@ class AppSession extends ChangeNotifier {
       if (_cart.isNotEmpty) _recomputeLocalFees();
       notifyListeners();
       return _cart.isNotEmpty &&
-          !_cart.any((item) => item.quantity > item.product.stock || item.product.stock <= 0);
+          !_cart.any(
+            (item) =>
+                item.quantity > item.availableStock || item.availableStock <= 0,
+          );
     }
     try {
       final result = await _api!.validateCart(
@@ -397,18 +459,38 @@ class AppSession extends ChangeNotifier {
       for (final line in result.lines) {
         final product = line.product;
         if (product == null) {
-          await _cartRepository?.remove(line.productId);
+          await _cartRepository?.remove(
+            line.productId,
+            variantId: line.variantId,
+          );
           continue;
         }
         final qty = line.availableQty <= 0
             ? 0
             : line.requestedQty.clamp(1, line.availableQty);
         if (qty <= 0) {
-          await _cartRepository?.remove(product.id);
+          await _cartRepository?.remove(
+            product.id,
+            variantId: line.variantId,
+          );
           continue;
         }
-        next.add(CartItem(product: product, quantity: qty));
-        await _cartRepository?.upsert(product, qty);
+        next.add(
+          CartItem(
+            product: product,
+            quantity: qty,
+            variantId: line.variantId,
+            variantColor: line.variantColor,
+            variantSize: line.variantSize,
+          ),
+        );
+        await _cartRepository?.upsert(
+          product,
+          qty,
+          variantId: line.variantId,
+          variantColor: line.variantColor,
+          variantSize: line.variantSize,
+        );
       }
       _cart
         ..clear()
@@ -426,12 +508,13 @@ class AppSession extends ChangeNotifier {
       }
       notifyListeners();
       return result.ok &&
-          !_cart.any((item) => item.quantity > item.product.stock);
+          !_cart.any((item) => item.quantity > item.availableStock);
     } catch (_) {
       _recomputeLocalFees();
       notifyListeners();
       return !_cart.any(
-        (item) => item.quantity > item.product.stock || item.product.stock <= 0,
+        (item) =>
+            item.quantity > item.availableStock || item.availableStock <= 0,
       );
     }
   }

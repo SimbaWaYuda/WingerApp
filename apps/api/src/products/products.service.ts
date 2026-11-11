@@ -23,6 +23,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { milesBetween, resolvePlace } from './distance';
 import { ProductSearchIndexService } from './product-search-index.service';
+import {
+  aggregateVariantStock,
+  normalizeVariantAxis,
+  stockStatusFor as variantStockStatusFor,
+  uniqueColors,
+  uniqueSizes,
+} from './product-variants';
 import { buildSearchDocument } from './search-document';
 import {
   CLOTHING_CATEGORY_NAMES,
@@ -49,6 +56,9 @@ const productDetailInclude = {
   },
   images: {
     orderBy: { sortOrder: 'asc' as const },
+  },
+  variants: {
+    orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
   },
 } satisfies Prisma.ProductInclude;
 
@@ -80,6 +90,33 @@ export type ProductImageDto = {
   id: string;
   url: string;
   sortOrder: number;
+  variantId?: string | null;
+  colorKey?: string | null;
+};
+
+export type ProductVariantDto = {
+  id: string;
+  color: string;
+  size: string;
+  colorHex?: string | null;
+  sku?: string | null;
+  stock: number;
+  stockStatus: 'inStock' | 'lowStock' | 'outOfStock';
+  enabled: boolean;
+  sortOrder: number;
+  imageUrl?: string | null;
+};
+
+export type UpsertProductVariantDto = {
+  id?: string;
+  color?: string;
+  size?: string;
+  colorHex?: string | null;
+  sku?: string | null;
+  stock?: number;
+  enabled?: boolean;
+  sortOrder?: number;
+  imageUrl?: string | null;
 };
 
 export type ProductDto = {
@@ -107,6 +144,10 @@ export type ProductDto = {
   taxRatePercent: number | null;
   stock: number;
   stockStatus: 'inStock' | 'lowStock' | 'outOfStock';
+  /** Empty = legacy single-SKU product (use product.stock). */
+  variants: ProductVariantDto[];
+  optionColors: string[];
+  optionSizes: string[];
   createdAt?: string;
 };
 
@@ -663,6 +704,87 @@ export class ProductsService {
     return products.map(toDto);
   }
 
+  /**
+   * Replace all variants for a product. Empty list clears variants and keeps
+   * product-level stock (legacy single-SKU mode).
+   */
+  async replaceVariants(
+    productId: string,
+    body: { variants?: UpsertProductVariantDto[] },
+    user: AuthUser,
+  ): Promise<ProductDto> {
+    const product = await this.requireOwnedProduct(productId, user);
+    const incoming = Array.isArray(body.variants) ? body.variants : [];
+    const normalized = incoming.map((row, index) => {
+      const color = normalizeVariantAxis(row.color);
+      const size = normalizeVariantAxis(row.size);
+      const stock = row.stock == null ? 0 : Math.floor(Number(row.stock));
+      if (!Number.isFinite(stock) || stock < 0) {
+        throw new BadRequestException(
+          'Variant stock must be a non-negative integer',
+        );
+      }
+      if (!color && !size) {
+        throw new BadRequestException(
+          'Each variant needs at least a colour or a size',
+        );
+      }
+      return {
+        color,
+        size,
+        colorHex: row.colorHex?.trim() || null,
+        sku: row.sku?.trim() || null,
+        stock,
+        stockStatus: variantStockStatusFor(stock),
+        enabled: row.enabled !== false,
+        sortOrder: row.sortOrder ?? index,
+        imageUrl: row.imageUrl?.trim() || null,
+      };
+    });
+    const keys = new Set<string>();
+    for (const row of normalized) {
+      const key = `${row.color.toLowerCase()}::${row.size.toLowerCase()}`;
+      if (keys.has(key)) {
+        throw new BadRequestException(
+          `Duplicate variant ${row.color || '—'} / ${row.size || '—'}`,
+        );
+      }
+      keys.add(key);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productVariant.deleteMany({ where: { productId: product.id } });
+      if (normalized.length > 0) {
+        await tx.productVariant.createMany({
+          data: normalized.map((row) => ({
+            productId: product.id,
+            color: row.color,
+            size: row.size,
+            colorHex: row.colorHex,
+            sku: row.sku,
+            stock: row.stock,
+            stockStatus: row.stockStatus,
+            enabled: row.enabled,
+            sortOrder: row.sortOrder,
+            imageUrl: row.imageUrl,
+          })),
+        });
+        const total = aggregateVariantStock(normalized);
+        await tx.product.update({
+          where: { id: product.id },
+          data: {
+            stock: total,
+            stockStatus: stockStatusFor(total),
+            color: uniqueColors(normalized)[0] || product.color,
+            size: uniqueSizes(normalized)[0] || product.size,
+          },
+        });
+      }
+    });
+
+    return this.findOne(product.id);
+  }
+
   async bulkImportForSupplier(
     items: UpsertSupplierProductDto[],
     user: AuthUser,
@@ -1205,7 +1327,25 @@ function toDto(product: {
   stock: number;
   stockStatus: StockStatus;
   createdAt?: Date;
-  images?: { id: string; url: string; sortOrder: number }[];
+  images?: {
+    id: string;
+    url: string;
+    sortOrder: number;
+    variantId?: string | null;
+    colorKey?: string | null;
+  }[];
+  variants?: {
+    id: string;
+    color: string;
+    size: string;
+    colorHex?: string | null;
+    sku?: string | null;
+    stock: number;
+    stockStatus: StockStatus;
+    enabled: boolean;
+    sortOrder: number;
+    imageUrl?: string | null;
+  }[];
   supplier?: {
     verificationStatus: string;
     ratingAvg?: number;
@@ -1225,11 +1365,28 @@ function toDto(product: {
       id: image.id,
       url: image.url,
       sortOrder: image.sortOrder,
+      variantId: image.variantId ?? null,
+      colorKey: image.colorKey ?? null,
     })) ??
     (product.imageUrl
       ? [{ id: `cover-${product.id}`, url: product.imageUrl, sortOrder: 0 }]
       : []);
   const imageUrl = product.imageUrl || images[0]?.url || DEFAULT_PRODUCT_IMAGE;
+  const variants = (product.variants ?? []).map((row) => ({
+    id: row.id,
+    color: row.color,
+    size: row.size,
+    colorHex: row.colorHex ?? null,
+    sku: row.sku ?? null,
+    stock: row.stock,
+    stockStatus: mapStatus(row.stockStatus),
+    enabled: row.enabled,
+    sortOrder: row.sortOrder,
+    imageUrl: row.imageUrl ?? null,
+  }));
+  const enabled = variants.filter((row) => row.enabled);
+  const stock =
+    variants.length > 0 ? aggregateVariantStock(enabled) : product.stock;
 
   return {
     id: product.id,
@@ -1261,8 +1418,14 @@ function toDto(product: {
         : typeof product.taxRatePercent === 'number'
           ? product.taxRatePercent
           : product.taxRatePercent.toNumber(),
-    stock: product.stock,
-    stockStatus: mapStatus(product.stockStatus),
+    stock,
+    stockStatus:
+      variants.length > 0
+        ? mapStatus(variantStockStatusFor(stock))
+        : mapStatus(product.stockStatus),
+    variants,
+    optionColors: uniqueColors(enabled),
+    optionSizes: uniqueSizes(enabled),
     createdAt: product.createdAt?.toISOString(),
   };
 }

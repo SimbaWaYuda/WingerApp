@@ -701,7 +701,18 @@ class ApiClient {
             'city': city ?? session.city,
             'items': [
               for (final item in items)
-                {'productId': item.product.id, 'quantity': item.quantity},
+                {
+                  'productId': item.product.id,
+                  'quantity': item.quantity,
+                  if (item.variantId != null && item.variantId!.isNotEmpty)
+                    'variantId': item.variantId,
+                  if (item.variantColor != null &&
+                      item.variantColor!.trim().isNotEmpty)
+                    'variantColor': item.variantColor,
+                  if (item.variantSize != null &&
+                      item.variantSize!.trim().isNotEmpty)
+                    'variantSize': item.variantSize,
+                },
             ],
           }),
         )
@@ -721,6 +732,9 @@ class ApiClient {
           final productJson = row['product'] as Map<String, dynamic>?;
           return CartValidationLine(
             productId: row['productId'] as String,
+            variantId: row['variantId'] as String?,
+            variantColor: row['variantColor'] as String?,
+            variantSize: row['variantSize'] as String?,
             available: row['available'] as bool? ?? false,
             reason: row['reason'] as String?,
             requestedQty: row['requestedQty'] as int? ?? 0,
@@ -782,7 +796,18 @@ class ApiClient {
               'checkoutIdempotencyKey': checkoutIdempotencyKey,
             'items': [
               for (final item in items)
-                {'productId': item.product.id, 'quantity': item.quantity},
+                {
+                  'productId': item.product.id,
+                  'quantity': item.quantity,
+                  if (item.variantId != null && item.variantId!.isNotEmpty)
+                    'variantId': item.variantId,
+                  if (item.variantColor != null &&
+                      item.variantColor!.trim().isNotEmpty)
+                    'variantColor': item.variantColor,
+                  if (item.variantSize != null &&
+                      item.variantSize!.trim().isNotEmpty)
+                    'variantSize': item.variantSize,
+                },
             ],
           }),
         )
@@ -811,7 +836,11 @@ class ApiClient {
     session.setApiOnline(true);
     final data = jsonDecode(response.body) as List<dynamic>;
     return data
-        .map((raw) => customerOrderFromApi(raw as Map<String, dynamic>))
+        .map(
+          (raw) => customerOrderFromApi(
+            _withResolvedOrderImages(raw as Map<String, dynamic>),
+          ),
+        )
         .toList();
   }
 
@@ -824,8 +853,33 @@ class ApiClient {
     }
     session.setApiOnline(true);
     return customerOrderFromApi(
-      jsonDecode(response.body) as Map<String, dynamic>,
+      _withResolvedOrderImages(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      ),
     );
+  }
+
+  Map<String, dynamic> _withResolvedOrderImages(Map<String, dynamic> json) {
+    final items = json['items'];
+    if (items is! List) return json;
+    json['items'] = [
+      for (final raw in items)
+        if (raw is Map<String, dynamic>)
+          {
+            ...raw,
+            if ((raw['imageUrl']?.toString().trim() ?? '').isNotEmpty)
+              'imageUrl': resolveMediaUrl(raw['imageUrl'].toString()),
+          }
+        else if (raw is Map)
+          {
+            ...Map<String, dynamic>.from(raw),
+            if ((raw['imageUrl']?.toString().trim() ?? '').isNotEmpty)
+              'imageUrl': resolveMediaUrl(raw['imageUrl'].toString()),
+          }
+        else
+          raw,
+    ];
+    return json;
   }
 
   Future<CustomerOrder> cancelOrder(String orderId) async {
@@ -1639,6 +1693,123 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> fetchSupplierPaymentProfile() async {
+    _requireAccessToken();
+    final response = await http
+        .get(_uri('/supplier-payments/me'), headers: session.authHeaders)
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Payment profile HTTP ${response.statusCode}',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> submitSupplierPaymentProfile({
+    required String preference,
+    required String merchantName,
+    required String lipaOrTillNumber,
+    String network = 'ALL_NETWORKS',
+    String? businessRegRef,
+    String? tinRef,
+    String? notes,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .post(
+          _uri('/supplier-payments/me'),
+          headers: {...session.authHeaders, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'preference': preference,
+            'network': network,
+            'merchantName': merchantName,
+            'lipaOrTillNumber': lipaOrTillNumber,
+            if (businessRegRef != null && businessRegRef.isNotEmpty)
+              'businessRegRef': businessRegRef,
+            if (tinRef != null && tinRef.isNotEmpty) 'tinRef': tinRef,
+            if (notes != null && notes.isNotEmpty) 'notes': notes,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Submit payment profile HTTP ${response.statusCode}',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> setSupplierPaymentPreference(
+    String preference,
+  ) async {
+    _requireAccessToken();
+    final response = await http
+        .patch(
+          _uri('/supplier-payments/me/preference'),
+          headers: {...session.authHeaders, 'Content-Type': 'application/json'},
+          body: jsonEncode({'preference': preference}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Payment preference HTTP ${response.statusCode}',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchPendingPaymentProfiles() async {
+    _requireAccessToken();
+    final response = await http
+        .get(
+          _uri('/supplier-payments/admin/pending'),
+          headers: session.authHeaders,
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode != 200) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Pending payment profiles HTTP ${response.statusCode}',
+      );
+    }
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> reviewSupplierPaymentProfile({
+    required String profileId,
+    required String action,
+    String? reviewNote,
+  }) async {
+    _requireAccessToken();
+    final response = await http
+        .post(
+          _uri('/supplier-payments/admin/$profileId/$action'),
+          headers: {...session.authHeaders, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            if (reviewNote != null && reviewNote.isNotEmpty)
+              'reviewNote': reviewNote,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Review payment profile HTTP ${response.statusCode}',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> fetchAdminSupplierCommissionTotals() async {
     _requireAccessToken();
     final response = await http
@@ -1877,6 +2048,28 @@ class ApiClient {
     session.setApiOnline(true);
   }
 
+  Future<Product> replaceProductVariants(
+    String productId,
+    List<Map<String, dynamic>> variants,
+  ) async {
+    _requireAccessToken();
+    final response = await http
+        .put(
+          _uri('/products/$productId/variants'),
+          headers: {...session.authHeaders, 'Content-Type': 'application/json'},
+          body: jsonEncode({'variants': variants}),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ??
+            'Save variants HTTP ${response.statusCode}',
+      );
+    }
+    return _productFromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   Product _productFromJson(Map<String, dynamic> json) {
     final stockStatusRaw = json['stockStatus'] as String? ?? 'inStock';
     final rawImages = json['images'] as List<dynamic>? ?? const [];
@@ -1888,11 +2081,39 @@ class ApiClient {
                 id: raw['id']?.toString() ?? '',
                 url: resolveMediaUrl(raw['url']?.toString() ?? ''),
                 sortOrder: (raw['sortOrder'] as num?)?.toInt() ?? 0,
+                variantId: raw['variantId']?.toString(),
+                colorKey: raw['colorKey']?.toString(),
               ),
             )
             .where((image) => image.id.isNotEmpty && image.url.isNotEmpty)
             .toList()
           ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    final rawVariants = json['variants'] as List<dynamic>? ?? const [];
+    final variants = rawVariants
+        .whereType<Map>()
+        .map((raw) {
+          final status = raw['stockStatus']?.toString() ?? 'inStock';
+          return ProductVariant(
+            id: raw['id']?.toString() ?? '',
+            color: raw['color']?.toString() ?? '',
+            size: raw['size']?.toString() ?? '',
+            colorHex: raw['colorHex']?.toString(),
+            sku: raw['sku']?.toString(),
+            stock: (raw['stock'] as num?)?.toInt() ?? 0,
+            stockStatus: switch (status) {
+              'lowStock' => StockStatus.lowStock,
+              'outOfStock' => StockStatus.outOfStock,
+              _ => StockStatus.inStock,
+            },
+            enabled: raw['enabled'] as bool? ?? true,
+            sortOrder: (raw['sortOrder'] as num?)?.toInt() ?? 0,
+            imageUrl: raw['imageUrl'] == null
+                ? null
+                : resolveMediaUrl(raw['imageUrl'].toString()),
+          );
+        })
+        .where((row) => row.id.isNotEmpty)
+        .toList();
     final rawCover = (json['imageUrl'] as String?)?.trim() ?? '';
     final cover = rawCover.isNotEmpty
         ? resolveMediaUrl(rawCover)
@@ -1939,6 +2160,17 @@ class ApiClient {
         'outOfStock' => StockStatus.outOfStock,
         _ => StockStatus.inStock,
       },
+      variants: variants,
+      optionColors:
+          (json['optionColors'] as List<dynamic>? ?? const [])
+              .map((row) => row.toString())
+              .where((row) => row.trim().isNotEmpty)
+              .toList(),
+      optionSizes:
+          (json['optionSizes'] as List<dynamic>? ?? const [])
+              .map((row) => row.toString())
+              .where((row) => row.trim().isNotEmpty)
+              .toList(),
     );
   }
 }

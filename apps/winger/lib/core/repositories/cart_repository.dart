@@ -13,27 +13,45 @@ class CartRepository {
 
   Future<List<CartItem>> loadCart() => db.loadCart();
 
-  Future<void> upsert(Product product, int quantity) async {
+  Future<void> upsert(
+    Product product,
+    int quantity, {
+    String? variantId,
+    String? variantColor,
+    String? variantSize,
+  }) async {
     await db.upsertProducts([product]);
     if (quantity <= 0) {
-      await remove(product.id);
+      await remove(product.id, variantId: variantId);
       return;
     }
-    await db.upsertCartLine(product.id, quantity);
+    await db.upsertCartLine(
+      product.id,
+      quantity,
+      variantId: variantId,
+      variantColor: variantColor,
+      variantSize: variantSize,
+    );
     await syncEngine.enqueue(
       operation: SyncOperation.cartUpsert,
       payload: {
         'productId': product.id,
         'quantity': quantity,
+        if (variantId != null && variantId.isNotEmpty) 'variantId': variantId,
+        if (variantColor != null) 'variantColor': variantColor,
+        if (variantSize != null) 'variantSize': variantSize,
       },
     );
   }
 
-  Future<void> remove(String productId) async {
-    await db.removeCartLine(productId);
+  Future<void> remove(String productId, {String? variantId}) async {
+    await db.removeCartLine(productId, variantId: variantId);
     await syncEngine.enqueue(
       operation: SyncOperation.cartRemove,
-      payload: {'productId': productId},
+      payload: {
+        'productId': productId,
+        if (variantId != null && variantId.isNotEmpty) 'variantId': variantId,
+      },
     );
   }
 

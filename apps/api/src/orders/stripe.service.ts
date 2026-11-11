@@ -166,15 +166,17 @@ export class StripeService {
   }
 
   /**
-   * Refunds part of a card PaymentIntent. The idempotency key must stay
-   * stable for one return so a retry cannot refund the customer twice.
+   * Refunds part or all of a card PaymentIntent. The idempotency key must stay
+   * stable for one cancel, return, or unsellable recovery so a retry cannot
+   * refund the customer twice.
    */
   async refundCardCharge(params: {
     paymentIntentId: string;
     amount: number;
     idempotencyKey: string;
     orderId: string;
-    returnRequestId: string;
+    returnRequestId?: string;
+    reason?: 'return' | 'cancel' | 'unsellable' | 'line_cancel';
   }): Promise<CardRefundResult> {
     if (!this.stripe) {
       return { ok: false, message: 'Stripe is not configured' };
@@ -183,6 +185,8 @@ export class StripeService {
     if (amountCents <= 0) {
       return { ok: false, message: 'Refund amount must be greater than zero' };
     }
+    const reason =
+      params.reason ?? (params.returnRequestId ? 'return' : 'cancel');
     try {
       const refund = await this.stripe.refunds.create(
         {
@@ -190,7 +194,10 @@ export class StripeService {
           amount: amountCents,
           metadata: {
             orderId: params.orderId,
-            returnRequestId: params.returnRequestId,
+            reason,
+            ...(params.returnRequestId
+              ? { returnRequestId: params.returnRequestId }
+              : {}),
           },
         },
         { idempotencyKey: params.idempotencyKey },
@@ -200,6 +207,9 @@ export class StripeService {
       }
       return { ok: true, refundId: refund.id };
     } catch (error) {
+      if (isAlreadyRefunded(error)) {
+        return { ok: true, refundId: 'already_refunded' };
+      }
       const message = error instanceof Error ? error.message : 'Stripe refund failed';
       this.logger.warn(`Stripe refund failed: ${message}`);
       return { ok: false, message };
@@ -332,4 +342,14 @@ export class StripeService {
       throw new Error('Stripe payouts stay in test mode');
     }
   }
+}
+
+function isAlreadyRefunded(error: unknown): boolean {
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code: unknown }).code)
+      : '';
+  if (code === 'charge_already_refunded') return true;
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  return message.includes('already refunded');
 }

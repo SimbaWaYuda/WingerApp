@@ -76,6 +76,30 @@ enum CommissionAgreementStatus {
   SUPERSEDED
 }
 
+/// Who should receive customer funds for this supplier's merchandise.
+enum PaymentArrangementPreference {
+  WINGER_MANAGED
+  SUPPLIER_DIRECT
+}
+
+enum SupplierPaymentProfileStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+  SUPERSEDED
+}
+
+enum MobileMoneyNetwork {
+  ALL_NETWORKS
+  M_PESA
+  TIGO
+  AIRTEL
+  HALO
+  OTHER
+}
+
 model User {
   id               String              @id @default(cuid())
   email            String              @unique
@@ -107,6 +131,8 @@ model User {
   commissionAgreementsProposed SupplierCommissionAgreement[] @relation("AgreementProposedBy")
   commissionAgreementsApproved SupplierCommissionAgreement[] @relation("AgreementApprovedBy")
   commissionAgreementsAccepted SupplierCommissionAgreement[] @relation("AgreementAcceptedBy")
+  paymentProfilesSubmitted SupplierPaymentProfile[] @relation("PaymentProfileSubmittedBy")
+  paymentProfilesReviewed  SupplierPaymentProfile[] @relation("PaymentProfileReviewedBy")
 
   @@index([role])
   @@index([supplierId])
@@ -148,9 +174,44 @@ model Supplier {
   products             Product[]
   users                User[]
   orderItems           OrderItem[]
+  shipments            OrderShipment[]
   reviews              SupplierReview[]
   commissionAgreements SupplierCommissionAgreement[]
   cashCollections      CashCollection[]
+  paymentProfiles      SupplierPaymentProfile[]
+}
+
+/// Versioned Lipa/Till registration. SUPPLIER_DIRECT is live only when status=APPROVED.
+model SupplierPaymentProfile {
+  id                String                         @id @default(cuid())
+  supplierId        String
+  supplier          Supplier                       @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  preference        PaymentArrangementPreference   @default(WINGER_MANAGED)
+  network           MobileMoneyNetwork             @default(ALL_NETWORKS)
+  merchantName      String
+  lipaOrTillNumber  String
+  businessRegRef    String?
+  tinRef            String?
+  notes             String?
+  status            SupplierPaymentProfileStatus   @default(DRAFT)
+  version           Int                            @default(1)
+  submittedAt       DateTime?
+  submittedByUserId String?
+  submittedBy       User?                          @relation("PaymentProfileSubmittedBy", fields: [submittedByUserId], references: [id])
+  reviewedAt        DateTime?
+  reviewedByUserId  String?
+  reviewedBy        User?                          @relation("PaymentProfileReviewedBy", fields: [reviewedByUserId], references: [id])
+  reviewNote        String?
+  activeFrom        DateTime?
+  /// Prior approved row this version replaces after admin approval.
+  replacesProfileId String?                        @unique
+  replacesProfile   SupplierPaymentProfile?        @relation("PaymentProfileVersion", fields: [replacesProfileId], references: [id])
+  replacedBy        SupplierPaymentProfile?        @relation("PaymentProfileVersion")
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+
+  @@index([supplierId, status])
+  @@index([status, submittedAt])
 }
 
 /// Destination-city tax for one supplier. A product rate overrides this.
@@ -315,6 +376,7 @@ model Product {
   updatedAt     DateTime    @updatedAt
 
   images          ProductImage[]
+  variants        ProductVariant[]
   inventoryLedger InventoryLedger[]
   orderItems      OrderItem[]
   searchEmbedding ProductSearchEmbedding?
@@ -322,6 +384,33 @@ model Product {
   @@index([supplierId])
   @@index([category])
   @@index([name])
+}
+
+/// Sellable size/colour (etc.) combination with its own stock.
+/// Products with zero variants keep using Product.stock (legacy).
+model ProductVariant {
+  id          String      @id @default(cuid())
+  productId   String
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Empty string means this axis is not used for the product.
+  color       String      @default("")
+  size        String      @default("")
+  /// Optional swatch hint (#RRGGBB). Clients may also map from color name.
+  colorHex    String?
+  sku         String?
+  stock       Int         @default(0)
+  stockStatus StockStatus @default(IN_STOCK)
+  enabled     Boolean     @default(true)
+  sortOrder   Int         @default(0)
+  imageUrl    String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  orderItems  OrderItem[]
+  images      ProductImage[]
+  inventoryLedger InventoryLedger[]
+
+  @@unique([productId, color, size])
+  @@index([productId, enabled])
 }
 
 model ProductSearchEmbedding {
@@ -337,11 +426,18 @@ model ProductImage {
   id        String   @id @default(cuid())
   productId String
   product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// When set, this image belongs to a colour / variant gallery.
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  /// Colour key matching ProductVariant.color for gallery filtering without a variant id.
+  colorKey  String?
   url       String
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
 
   @@index([productId, sortOrder])
+  @@index([variantId])
+  @@index([productId, colorKey])
 }
 
 model Order {
@@ -386,6 +482,7 @@ model Order {
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
   items                 OrderItem[]
+  shipments             OrderShipment[]
   supplierReviews       SupplierReview[]
   returnRequests        ReturnRequest[]
   cashCollections       CashCollection[]
@@ -394,6 +491,29 @@ model Order {
   @@index([status])
   @@index([paymentStatus])
   @@index([createdAt])
+}
+
+/// Locked checkout buckets per supplier. Never recomputed from live fee settings.
+model OrderShipment {
+  id                  String   @id @default(cuid())
+  orderId             String
+  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplierId          String
+  supplier            Supplier @relation(fields: [supplierId], references: [id])
+  supplierName        String
+  merchandise         Decimal  @db.Decimal(12, 2)
+  deliveryFee         Decimal  @db.Decimal(12, 2)
+  merchandiseTax      Decimal  @db.Decimal(12, 2)
+  deliveryTax         Decimal  @db.Decimal(12, 2)
+  paymentMerchandise  Decimal  @db.Decimal(12, 2)
+  paymentDelivery     Decimal  @db.Decimal(12, 2)
+  paymentTax          Decimal  @db.Decimal(12, 2)
+  /// Payment-currency amount already refunded from this bucket.
+  refundedAmount      Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt           DateTime @default(now())
+
+  @@unique([orderId, supplierId])
+  @@index([supplierId])
 }
 
 /// Cash a supplier confirmed they collected on a pay-on-delivery order.
@@ -422,6 +542,13 @@ model OrderItem {
   productId    String
   product      Product     @relation(fields: [productId], references: [id])
   productName  String
+  /// Snapshot of the product/variant image at checkout for order history.
+  imageUrl     String?
+  /// Snapshot of the selected variant at checkout. Null on legacy / non-variant lines.
+  variantId    String?
+  variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  variantColor String?
+  variantSize  String?
   supplierId   String
   supplier     Supplier    @relation(fields: [supplierId], references: [id])
   supplierName String
@@ -434,7 +561,7 @@ model OrderItem {
   status       OrderStatus @default(PROCESSING)
   trackingCode String?
   pickupCode   String?
-  /// Locked at checkout. Null on pickup and on orders placed before carriers existed.
+  /// Locked at checkout. Null on pickup and on orders before carriers existed.
   carrier      String?
   courierName  String?
   /// When set, this line is a no-charge replacement for a previously returned line.
@@ -448,6 +575,7 @@ model OrderItem {
   @@index([orderId])
   @@index([supplierId])
   @@index([productId])
+  @@index([variantId])
 }
 
 /// One booking for a courier shipment. Created when the supplier marks it shipped.
@@ -552,6 +680,8 @@ model InventoryLedger {
   id          String   @id @default(cuid())
   productId   String
   product     Product  @relation(fields: [productId], references: [id])
+  variantId   String?
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
   supplierId  String
   delta       Int
   reason      String
@@ -562,6 +692,7 @@ model InventoryLedger {
   createdAt   DateTime @default(now())
 
   @@index([productId, createdAt])
+  @@index([variantId, createdAt])
   @@index([supplierId])
 }
 

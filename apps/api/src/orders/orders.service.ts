@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -34,11 +35,27 @@ import {
   parseCourierTripDetails,
 } from './courier-booking';
 import { PayoutsService } from './payouts.service';
+import {
+  isLiveOrderLine,
+  lockShipmentPayments,
+  remainingCodPayment,
+  refundPaymentForSupplierAction,
+  shipmentPaymentTotal,
+} from './settlement-allocation';
 import { cardRefundAmount, ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
+import {
+  aggregateVariantStock,
+  resolveLineStock,
+} from '../products/product-variants';
 
 export type CreateOrderItemDto = {
   productId: string;
   quantity: number;
+  /** Required when the product has variants. */
+  variantId?: string;
+  /** Selected colour/size for legacy products without variant rows. */
+  variantColor?: string;
+  variantSize?: string;
 };
 
 export type CreateOrderDto = {
@@ -96,6 +113,8 @@ const orderWithItems = {
     include: {
       commission: true,
       courierBooking: true,
+      product: { select: { imageUrl: true } },
+      variant: { select: { imageUrl: true } },
       replacesOrderItem: {
         select: {
           id: true,
@@ -110,10 +129,13 @@ const orderWithItems = {
       },
     },
   },
+  shipments: true,
 } as const;
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly commissions: CommissionsService,
@@ -137,34 +159,57 @@ export class OrdersService {
       throw new BadRequestException('Cart is empty');
     }
 
-    const quantities = new Map<string, number>();
+    const quantities = new Map<
+      string,
+      {
+        productId: string;
+        variantId: string;
+        variantColor: string;
+        variantSize: string;
+        qty: number;
+      }
+    >();
     for (const item of dto.items) {
       const qty = Number(item.quantity);
       if (!item.productId || !Number.isFinite(qty) || qty < 1) {
         throw new BadRequestException('Invalid cart item');
       }
-      quantities.set(
-        item.productId,
-        (quantities.get(item.productId) ?? 0) + Math.floor(qty),
-      );
+      const variantId = (item.variantId ?? '').trim();
+      const variantColor = (item.variantColor ?? '').trim();
+      const variantSize = (item.variantSize ?? '').trim();
+      const key = variantId
+        ? `${item.productId}::${variantId}`
+        : `${item.productId}::${variantColor.toLowerCase()}|${variantSize.toLowerCase()}`;
+      const existing = quantities.get(key);
+      quantities.set(key, {
+        productId: item.productId,
+        variantId,
+        variantColor,
+        variantSize,
+        qty: (existing?.qty ?? 0) + Math.floor(qty),
+      });
     }
 
-    const productIds = [...quantities.keys()];
+    const productIds = [...new Set([...quantities.values()].map((row) => row.productId))];
     const products = await this.prisma.product.findMany({
       where: { id: { in: productIds } },
-      include: { supplier: { select: { verificationStatus: true } } },
+      include: {
+        supplier: { select: { verificationStatus: true } },
+        variants: true,
+      },
     });
     const byId = new Map(products.map((p) => [p.id, p]));
 
     let subtotal = 0;
     let ok = true;
-    const lines = productIds.map((productId) => {
-      const requestedQty = quantities.get(productId)!;
-      const product = byId.get(productId);
+    const lines = [...quantities.values()].map((row) => {
+      const requestedQty = row.qty;
+      const product = byId.get(row.productId);
       if (!product) {
         ok = false;
         return {
-          productId,
+          productId: row.productId,
+          variantId: row.variantId || null,
           available: false,
           reason: 'NOT_FOUND',
           requestedQty,
@@ -175,23 +220,35 @@ export class OrdersService {
         };
       }
 
+      const resolved = resolveLineStock({
+        productStock: product.stock,
+        variants: product.variants,
+        variantId: row.variantId || null,
+      });
       const unitPrice = Number(product.price);
-      const availableQty = product.stock;
+      const availableQty = resolved.ok ? resolved.stock : 0;
       const clampedQty = Math.min(requestedQty, availableQty);
-      const priceChanged = false; // client sends no price — server is source of truth
-      const insufficient = requestedQty > availableQty || availableQty <= 0;
+      const priceChanged = false;
+      const insufficient =
+        !resolved.ok || requestedQty > availableQty || availableQty <= 0;
       if (insufficient) ok = false;
 
       const lineTotal = unitPrice * clampedQty;
       subtotal += lineTotal;
+      const variant = resolved.variant;
 
       return {
-        productId,
+        productId: row.productId,
+        variantId: variant?.id ?? (row.variantId || null),
+        variantColor: variant?.color || row.variantColor || null,
+        variantSize: variant?.size || row.variantSize || null,
         available: !insufficient,
         reason: insufficient
-          ? availableQty <= 0
-            ? 'OUT_OF_STOCK'
-            : 'INSUFFICIENT_STOCK'
+          ? !resolved.ok
+            ? 'VARIANT_REQUIRED'
+            : availableQty <= 0
+              ? 'OUT_OF_STOCK'
+              : 'INSUFFICIENT_STOCK'
           : null,
         requestedQty,
         availableQty,
@@ -217,23 +274,26 @@ export class OrdersService {
               ? undefined
               : Number(product.previousPrice),
           rating: product.rating,
-          imageUrl: product.imageUrl,
+          imageUrl: variant?.imageUrl || product.imageUrl,
           category: product.category,
           model: product.model,
-          color: product.color,
-          size: product.size,
+          color: variant?.color || row.variantColor || product.color,
+          size: variant?.size || row.variantSize || product.size,
           battery: product.battery,
           weight: product.weight,
           description: product.description,
           taxRatePercent:
             product.taxRatePercent == null ? null : Number(product.taxRatePercent),
-          stock: product.stock,
+          stock: availableQty,
           stockStatus:
-            product.stockStatus === StockStatus.LOW_STOCK
-              ? 'lowStock'
-              : product.stockStatus === StockStatus.OUT_OF_STOCK
-                ? 'outOfStock'
+            availableQty <= 0
+              ? 'outOfStock'
+              : availableQty <= 5
+                ? 'lowStock'
                 : 'inStock',
+          variantId: variant?.id ?? null,
+          variantColor: variant?.color || row.variantColor || null,
+          variantSize: variant?.size || row.variantSize || null,
         },
       };
     });
@@ -325,40 +385,81 @@ export class OrdersService {
       throw new BadRequestException('Cart is empty');
     }
 
-    const quantities = new Map<string, number>();
+    const quantities = new Map<
+      string,
+      {
+        productId: string;
+        variantId: string;
+        variantColor: string;
+        variantSize: string;
+        qty: number;
+      }
+    >();
     for (const item of dto.items) {
       const qty = Number(item.quantity);
       if (!item.productId || !Number.isFinite(qty) || qty < 1) {
         throw new BadRequestException('Invalid cart item');
       }
-      quantities.set(
-        item.productId,
-        (quantities.get(item.productId) ?? 0) + Math.floor(qty),
-      );
+      const variantId = (item.variantId ?? '').trim();
+      const variantColor = (item.variantColor ?? '').trim();
+      const variantSize = (item.variantSize ?? '').trim();
+      const key = variantId
+        ? `${item.productId}::${variantId}`
+        : `${item.productId}::${variantColor.toLowerCase()}|${variantSize.toLowerCase()}`;
+      const existing = quantities.get(key);
+      quantities.set(key, {
+        productId: item.productId,
+        variantId,
+        variantColor,
+        variantSize,
+        qty: (existing?.qty ?? 0) + Math.floor(qty),
+      });
     }
 
-    const productIds = [...quantities.keys()];
+    const productIds = [
+      ...new Set([...quantities.values()].map((row) => row.productId)),
+    ];
     const products = await this.prisma.product.findMany({
       where: { id: { in: productIds } },
+      include: { variants: true },
     });
     if (products.length !== productIds.length) {
       throw new BadRequestException('One or more products were not found');
     }
+    const byId = new Map(products.map((p) => [p.id, p]));
 
-    for (const product of products) {
-      const qty = quantities.get(product.id)!;
-      if (product.stock < qty) {
+    const lines = [...quantities.values()].map((row) => {
+      const product = byId.get(row.productId)!;
+      const resolved = resolveLineStock({
+        productStock: product.stock,
+        variants: product.variants,
+        variantId: row.variantId || null,
+      });
+      if (!resolved.ok) {
         throw new BadRequestException(
-          `Insufficient stock for ${product.name} (have ${product.stock}, need ${qty})`,
+          resolved.error ?? `Invalid options for ${product.name}`,
         );
       }
-    }
-
-    const lines = products.map((product) => {
-      const quantity = quantities.get(product.id)!;
+      if (resolved.stock < row.qty) {
+        throw new BadRequestException(
+          `Insufficient stock for ${product.name}${
+            resolved.variant
+              ? ` (${resolved.variant.color || '—'} / ${resolved.variant.size || '—'})`
+              : ''
+          } (have ${resolved.stock}, need ${row.qty})`,
+        );
+      }
       const unitPrice = product.price;
-      const lineTotal = new Prisma.Decimal(unitPrice).mul(quantity);
-      return { product, quantity, unitPrice, lineTotal };
+      const lineTotal = new Prisma.Decimal(unitPrice).mul(row.qty);
+      return {
+        product,
+        quantity: row.qty,
+        unitPrice,
+        lineTotal,
+        variant: resolved.variant,
+        selectedColor: row.variantColor,
+        selectedSize: row.variantSize,
+      };
     });
     const subtotal = lines.reduce(
       (sum, line) => sum.add(line.lineTotal),
@@ -415,6 +516,19 @@ export class OrdersService {
     );
     const paymentAmount =
       paymentCurrency === displayCurrency ? displayTotal : fees.total;
+    const lockedShipments = lockShipmentPayments(
+      fees.shipments
+        .filter((row) => row.supplierId)
+        .map((row) => ({
+          supplierId: row.supplierId,
+          supplierName: row.supplierName,
+          merchandise: row.merchandise,
+          deliveryFee: row.fee,
+          merchandiseTax: row.merchandiseTax,
+          deliveryTax: row.deliveryTax,
+        })),
+      paymentAmount,
+    );
 
     let order;
     try {
@@ -456,6 +570,21 @@ export class OrdersService {
           addressLine: addressLine || 'Westlands',
           city: city || 'Nairobi',
           checkoutIdempotencyKey: checkoutKey,
+          shipments: {
+            create: lockedShipments.map((row) => ({
+              supplierId: row.supplierId,
+              supplierName: row.supplierName,
+              merchandise: new Prisma.Decimal(row.merchandise.toFixed(2)),
+              deliveryFee: new Prisma.Decimal(row.deliveryFee.toFixed(2)),
+              merchandiseTax: new Prisma.Decimal(row.merchandiseTax.toFixed(2)),
+              deliveryTax: new Prisma.Decimal(row.deliveryTax.toFixed(2)),
+              paymentMerchandise: new Prisma.Decimal(
+                row.paymentMerchandise.toFixed(2),
+              ),
+              paymentDelivery: new Prisma.Decimal(row.paymentDelivery.toFixed(2)),
+              paymentTax: new Prisma.Decimal(row.paymentTax.toFixed(2)),
+            })),
+          },
           items: {
             create: lines.map((line) => {
               const shipment = fees.shipments.find(
@@ -464,6 +593,14 @@ export class OrdersService {
               return {
               productId: line.product.id,
               productName: line.product.name,
+              imageUrl:
+                line.variant?.imageUrl ||
+                line.product.imageUrl ||
+                null,
+              variantId: line.variant?.id ?? null,
+              variantColor:
+                line.variant?.color || line.selectedColor || null,
+              variantSize: line.variant?.size || line.selectedSize || null,
               supplierId: line.product.supplierId,
               supplierName: line.product.supplierName,
               unitPrice: line.unitPrice,
@@ -487,36 +624,82 @@ export class OrdersService {
       });
 
       for (const line of lines) {
-        const reserved = await tx.product.updateMany({
-          where: {
-            id: line.product.id,
-            stock: { gte: line.quantity },
-          },
-          data: { stock: { decrement: line.quantity } },
-        });
-        if (reserved.count === 0) {
-          throw new BadRequestException(
-            `Insufficient stock for ${line.product.name}`,
-          );
+        if (line.variant) {
+          const reserved = await tx.productVariant.updateMany({
+            where: {
+              id: line.variant.id,
+              enabled: true,
+              stock: { gte: line.quantity },
+            },
+            data: { stock: { decrement: line.quantity } },
+          });
+          if (reserved.count === 0) {
+            throw new BadRequestException(
+              `Insufficient stock for ${line.product.name}`,
+            );
+          }
+          const variant = await tx.productVariant.findUniqueOrThrow({
+            where: { id: line.variant.id },
+          });
+          await tx.productVariant.update({
+            where: { id: variant.id },
+            data: { stockStatus: stockStatusFor(variant.stock) },
+          });
+          const siblings = await tx.productVariant.findMany({
+            where: { productId: line.product.id },
+          });
+          const total = aggregateVariantStock(siblings);
+          await tx.product.update({
+            where: { id: line.product.id },
+            data: {
+              stock: total,
+              stockStatus: stockStatusFor(total),
+            },
+          });
+          await tx.inventoryLedger.create({
+            data: {
+              productId: line.product.id,
+              variantId: variant.id,
+              supplierId: line.product.supplierId,
+              delta: -line.quantity,
+              reason: 'ORDER_SALE',
+              eventId: `order-${created.id}-${line.product.id}-${variant.id}`,
+              userId: user.sub,
+              quantityAfter: variant.stock,
+            },
+          });
+        } else {
+          const reserved = await tx.product.updateMany({
+            where: {
+              id: line.product.id,
+              stock: { gte: line.quantity },
+            },
+            data: { stock: { decrement: line.quantity } },
+          });
+          if (reserved.count === 0) {
+            throw new BadRequestException(
+              `Insufficient stock for ${line.product.name}`,
+            );
+          }
+          const product = await tx.product.findUniqueOrThrow({
+            where: { id: line.product.id },
+          });
+          await tx.product.update({
+            where: { id: product.id },
+            data: { stockStatus: stockStatusFor(product.stock) },
+          });
+          await tx.inventoryLedger.create({
+            data: {
+              productId: line.product.id,
+              supplierId: line.product.supplierId,
+              delta: -line.quantity,
+              reason: 'ORDER_SALE',
+              eventId: `order-${created.id}-${line.product.id}`,
+              userId: user.sub,
+              quantityAfter: product.stock,
+            },
+          });
         }
-        const product = await tx.product.findUniqueOrThrow({
-          where: { id: line.product.id },
-        });
-        await tx.product.update({
-          where: { id: product.id },
-          data: { stockStatus: stockStatusFor(product.stock) },
-        });
-        await tx.inventoryLedger.create({
-          data: {
-            productId: line.product.id,
-            supplierId: line.product.supplierId,
-            delta: -line.quantity,
-            reason: 'ORDER_SALE',
-            eventId: `order-${created.id}-${line.product.id}`,
-            userId: user.sub,
-            quantityAfter: product.stock,
-          },
-        });
       }
 
       return created;
@@ -853,7 +1036,11 @@ export class OrdersService {
           ],
         },
         include: {
-          items: { where: { supplierId: user.supplierId } },
+          items: {
+            where: { supplierId: user.supplierId },
+            include: orderWithItems.items.include,
+          },
+          shipments: true,
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -1239,6 +1426,17 @@ export class OrdersService {
             create: {
               productId: source.productId,
               productName: source.product.name,
+              imageUrl:
+                (source as { imageUrl?: string | null }).imageUrl ||
+                source.product.imageUrl ||
+                null,
+              variantId:
+                (source as { variantId?: string | null }).variantId ?? null,
+              variantColor:
+                (source as { variantColor?: string | null }).variantColor ??
+                null,
+              variantSize:
+                (source as { variantSize?: string | null }).variantSize ?? null,
               supplierId: source.supplierId,
               supplierName: source.supplierName,
               unitPrice,
@@ -1446,6 +1644,7 @@ export class OrdersService {
         dto.refundStatus === ReturnRefundStatus.ISSUED &&
         current.refundStatus !== ReturnRefundStatus.ISSUED;
       if (becameIssued) {
+        await this.payouts.reverseIfTransferred(current.orderItemId);
         await this.refundCardForReturn(row, current.quantity);
       }
       await this.prisma.returnRequest.update({
@@ -1468,7 +1667,6 @@ export class OrdersService {
           actor: user,
           returnRequestId: current.id,
         });
-        await this.payouts.reverseIfTransferred(current.orderItemId);
       }
     }
 
@@ -1512,37 +1710,215 @@ export class OrdersService {
       id: string;
       orderId: string;
       order: {
+        id?: string;
         paymentMode: string;
         stripePaymentIntentId: string | null;
         paymentAmount: Prisma.Decimal | null;
         subtotal: Prisma.Decimal;
         total: Prisma.Decimal;
       };
-      orderItem: { unitPrice: Prisma.Decimal };
+      orderItem: {
+        id: string;
+        supplierId: string;
+        unitPrice: Prisma.Decimal;
+        quantity: number;
+        lineTotal: Prisma.Decimal;
+      };
     },
     quantity: number,
   ) {
-    const mode = row.order.paymentMode;
-    if (mode !== 'test' && mode !== 'live') return;
-    const paymentIntentId = row.order.stripePaymentIntentId;
-    if (!paymentIntentId) {
-      throw new BadRequestException('This card payment has no Stripe charge to refund');
-    }
-    const amount = cardRefundAmount({
+    const siblings = await this.prisma.orderItem.findMany({
+      where: { orderId: row.orderId },
+    });
+    const includeDelivery = !siblings.some(
+      (item) =>
+        item.id !== row.orderItem.id &&
+        item.supplierId === row.orderItem.supplierId &&
+        isLiveOrderLine(item.status),
+    );
+    await this.refundSupplierBucket({
+      orderId: row.orderId,
+      paymentMode: row.order.paymentMode,
+      stripePaymentIntentId: row.order.stripePaymentIntentId,
       paymentAmount: Number(row.order.paymentAmount ?? row.order.total),
       subtotal: Number(row.order.subtotal),
-      unitPrice: Number(row.orderItem.unitPrice),
-      quantity,
+      supplierId: row.orderItem.supplierId,
+      returnedMerchandise: Number(row.orderItem.unitPrice) * quantity,
+      includeDelivery,
+      idempotencyKey: `winger-refund-${row.id}`,
+      reason: 'return',
+      returnRequestId: row.id,
+      requirePaymentIntent: true,
     });
+  }
+
+  private async refundSupplierBucket(params: {
+    orderId: string;
+    paymentMode: string;
+    stripePaymentIntentId: string | null;
+    paymentAmount: number;
+    subtotal: number;
+    supplierId: string;
+    returnedMerchandise: number;
+    includeDelivery: boolean;
+    idempotencyKey: string;
+    reason: 'return' | 'cancel' | 'line_cancel';
+    returnRequestId?: string;
+    requirePaymentIntent?: boolean;
+  }): Promise<number> {
+    const shipments = await this.prisma.orderShipment.findMany({
+      where: { orderId: params.orderId },
+    });
+    const row = shipments.find((shipment) => shipment.supplierId === params.supplierId);
+    const amount = row
+      ? refundPaymentForSupplierAction({
+          shipment: {
+            supplierId: row.supplierId,
+            supplierName: row.supplierName,
+            merchandise: Number(row.merchandise),
+            deliveryFee: Number(row.deliveryFee),
+            merchandiseTax: Number(row.merchandiseTax),
+            deliveryTax: Number(row.deliveryTax),
+            paymentMerchandise: Number(row.paymentMerchandise),
+            paymentDelivery: Number(row.paymentDelivery),
+            paymentTax: Number(row.paymentTax),
+            refundedAmount: Number(row.refundedAmount),
+          },
+          returnedMerchandise: params.returnedMerchandise,
+          includeDelivery: params.includeDelivery,
+        })
+      : cardRefundAmount({
+          paymentAmount: params.paymentAmount,
+          subtotal: params.subtotal,
+          unitPrice: params.returnedMerchandise,
+          quantity: 1,
+        });
+    if (amount > 0) {
+      await this.refundPaidCard({
+        paymentMode: params.paymentMode,
+        stripePaymentIntentId: params.stripePaymentIntentId,
+        amount,
+        orderId: params.orderId,
+        idempotencyKey: params.idempotencyKey,
+        reason: params.reason,
+        returnRequestId: params.returnRequestId,
+        requirePaymentIntent: params.requirePaymentIntent,
+      });
+    }
+    if (row && amount > 0) {
+      await this.prisma.orderShipment.update({
+        where: { id: row.id },
+        data: {
+          refundedAmount: new Prisma.Decimal(
+            roundMoney(Number(row.refundedAmount) + amount).toFixed(2),
+          ),
+        },
+      });
+    }
+    return amount;
+  }
+
+  private async refundRemainingCardCharge(order: {
+    id: string;
+    paymentMode: string;
+    stripePaymentIntentId: string | null;
+    paymentAmount: Prisma.Decimal | null;
+    total: Prisma.Decimal;
+  }) {
+    const paymentAmount = Number(order.paymentAmount ?? order.total);
+    const shipments = await this.prisma.orderShipment.findMany({
+      where: { orderId: order.id },
+    });
+    const already = roundMoney(
+      shipments.reduce((sum, row) => sum + Number(row.refundedAmount), 0),
+    );
+    const remaining =
+      shipments.length > 0
+        ? roundMoney(paymentAmount - already)
+        : paymentAmount;
+    if (remaining > 0) {
+      await this.refundPaidCard({
+        paymentMode: order.paymentMode,
+        stripePaymentIntentId: order.stripePaymentIntentId,
+        amount: remaining,
+        orderId: order.id,
+        idempotencyKey: `winger-cancel-${order.id}`,
+        reason: 'cancel',
+      });
+    }
+    for (const row of shipments) {
+      const total = shipmentPaymentTotal({
+        paymentMerchandise: Number(row.paymentMerchandise),
+        paymentDelivery: Number(row.paymentDelivery),
+        paymentTax: Number(row.paymentTax),
+      });
+      if (Number(row.refundedAmount) >= total) continue;
+      await this.prisma.orderShipment.update({
+        where: { id: row.id },
+        data: { refundedAmount: new Prisma.Decimal(total.toFixed(2)) },
+      });
+    }
+  }
+
+  /**
+   * Refunds a test/live card PaymentIntent. Demo and COD skip Stripe.
+   * A failed refund throws so the caller can leave the order unchanged.
+   */
+  private async refundPaidCard(params: {
+    paymentMode: string;
+    stripePaymentIntentId: string | null;
+    amount: number;
+    orderId: string;
+    idempotencyKey: string;
+    reason: 'return' | 'cancel' | 'unsellable' | 'line_cancel';
+    returnRequestId?: string;
+    requirePaymentIntent?: boolean;
+  }): Promise<{ ok: true } | { ok: false; message: string }> {
+    if (params.paymentMode !== 'test' && params.paymentMode !== 'live') {
+      return { ok: true };
+    }
+    const paymentIntentId = params.stripePaymentIntentId;
+    if (!paymentIntentId) {
+      if (params.requirePaymentIntent) {
+        throw new BadRequestException(
+          'This card payment has no Stripe charge to refund',
+        );
+      }
+      return { ok: true };
+    }
+    if (!(params.amount > 0)) {
+      return { ok: true };
+    }
     const result = await this.stripe.refundCardCharge({
       paymentIntentId,
-      amount,
-      idempotencyKey: `winger-refund-${row.id}`,
-      orderId: row.orderId,
-      returnRequestId: row.id,
+      amount: params.amount,
+      idempotencyKey: params.idempotencyKey,
+      orderId: params.orderId,
+      returnRequestId: params.returnRequestId,
+      reason: params.reason,
     });
     if (!result.ok) {
+      if (params.reason === 'unsellable') {
+        this.logger.warn(
+          `Unsellable refund failed for ${params.orderId}: ${result.message}`,
+        );
+        return result;
+      }
       throw new BadRequestException(result.message);
+    }
+    return { ok: true };
+  }
+
+  private async clawbackCancelledItems(
+    items: { id: string }[],
+    user: AuthUser,
+  ) {
+    for (const item of items) {
+      await this.commissions.clawbackForOrderItem({
+        orderItemId: item.id,
+        actor: user,
+      });
+      await this.payouts.reverseIfTransferred(item.id);
     }
   }
 
@@ -1697,7 +2073,8 @@ export class OrdersService {
 
   /**
    * Customer cancel before any line has shipped/delivered.
-   * Restores inventory and marks payment REFUNDED when already PAID.
+   * A paid card is refunded in Stripe before the order is marked REFUNDED.
+   * A failed refund leaves the order paid and processing.
    */
   async cancel(id: string, user: AuthUser) {
     if (user.role !== UserRole.CUSTOMER) {
@@ -1713,6 +2090,7 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('Order not found');
     if (order.status === OrderStatus.CANCELLED) {
+      await this.clawbackCancelledItems(order.items, user);
       return this.toResponse(order, 'Order already cancelled');
     }
 
@@ -1730,6 +2108,22 @@ export class OrdersService {
     const unpaidCod =
       order.paymentMode === 'cod' &&
       order.paymentStatus === PaymentStatus.PENDING;
+    const paidCard =
+      (order.paymentMode === 'test' || order.paymentMode === 'live') &&
+      order.paymentStatus === PaymentStatus.PAID &&
+      !!order.stripePaymentIntentId;
+
+    const previouslyCancelled = order.items
+      .filter((item) => item.status === OrderStatus.CANCELLED)
+      .map((item) => item.id);
+
+    if (paidCard) {
+      for (const item of order.items) {
+        if (previouslyCancelled.includes(item.id)) continue;
+        await this.payouts.reverseIfTransferred(item.id);
+      }
+      await this.refundRemainingCardCharge(order);
+    }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.updateMany({
@@ -1754,18 +2148,15 @@ export class OrdersService {
       });
     });
 
-    await this.restoreStock(order.id, user.sub, 'ORDER_CANCELLED');
-
-    // Unpaid COD cancel: remove pending commissions from settleable/pending rollups.
-    if (unpaidCod) {
-      for (const item of order.items) {
-        await this.commissions.clawbackForOrderItem({
-          orderItemId: item.id,
-          actor: user,
-        });
-        await this.payouts.reverseIfTransferred(item.id);
-      }
-    }
+    await this.restoreStock(order.id, user.sub, 'ORDER_CANCELLED', {
+      itemIds: order.items
+        .filter((item) => !previouslyCancelled.includes(item.id))
+        .map((item) => item.id),
+    });
+    await this.clawbackCancelledItems(
+      order.items.filter((item) => !previouslyCancelled.includes(item.id)),
+      user,
+    );
 
     const updated = await this.prisma.order.findUnique({
       where: { id: order.id },
@@ -1775,7 +2166,9 @@ export class OrdersService {
       updated!,
       unpaidCod
         ? 'Order cancelled, stock restored, and unpaid COD commission cleared'
-        : 'Order cancelled and stock restored',
+        : paidCard
+          ? 'Order cancelled, Stripe refunded, and stock restored'
+          : 'Order cancelled and stock restored',
     );
   }
 
@@ -1838,13 +2231,13 @@ export class OrdersService {
     }
 
     const nextItemStatus = dto.status ?? item.status;
-    if (
-      nextItemStatus === OrderStatus.RETURNED ||
-      nextItemStatus === OrderStatus.CANCELLED
-    ) {
+    if (nextItemStatus === OrderStatus.RETURNED) {
       throw new BadRequestException(
         'Use the returns workflow to mark items as returned',
       );
+    }
+    if (nextItemStatus === OrderStatus.CANCELLED) {
+      return this.cancelUnshippedItem(item, user);
     }
 
     await this.prisma.orderItem.update({
@@ -1881,6 +2274,112 @@ export class OrdersService {
     } else {
       await this.recognizeAndTransfer(item.id);
     }
+
+    return this.reloadItemOrder(item.orderId, user);
+  }
+
+  /**
+   * Supplier/admin cannot-fulfil for an unshipped line. Refunds only that
+   * supplier's remaining bucket. Other suppliers on the order stay as they are.
+   */
+  private async cancelUnshippedItem(
+    item: {
+      id: string;
+      orderId: string;
+      productId: string;
+      supplierId: string;
+      status: OrderStatus;
+      quantity: number;
+      lineTotal: Prisma.Decimal;
+      order: {
+        id: string;
+        paymentMode: string;
+        paymentStatus: PaymentStatus;
+        stripePaymentIntentId: string | null;
+        paymentAmount: Prisma.Decimal | null;
+        subtotal: Prisma.Decimal;
+        total: Prisma.Decimal;
+        customerId: string;
+      };
+    },
+    user: AuthUser,
+  ) {
+    if (
+      item.status === OrderStatus.SHIPPED ||
+      item.status === OrderStatus.DELIVERED
+    ) {
+      throw new BadRequestException(
+        'Cannot cancel a shipped or delivered line. Use the returns workflow',
+      );
+    }
+
+    const siblings = await this.prisma.orderItem.findMany({
+      where: { orderId: item.orderId },
+    });
+    const includeDelivery = !siblings.some(
+      (row) =>
+        row.id !== item.id &&
+        row.supplierId === item.supplierId &&
+        isLiveOrderLine(row.status),
+    );
+    const paidCard =
+      (item.order.paymentMode === 'test' || item.order.paymentMode === 'live') &&
+      item.order.paymentStatus === PaymentStatus.PAID &&
+      !!item.order.stripePaymentIntentId;
+
+    if (paidCard) {
+      await this.payouts.reverseIfTransferred(item.id);
+      await this.refundSupplierBucket({
+        orderId: item.orderId,
+        paymentMode: item.order.paymentMode,
+        stripePaymentIntentId: item.order.stripePaymentIntentId,
+        paymentAmount: Number(item.order.paymentAmount ?? item.order.total),
+        subtotal: Number(item.order.subtotal),
+        supplierId: item.supplierId,
+        returnedMerchandise: Number(item.lineTotal),
+        includeDelivery,
+        idempotencyKey: `winger-line-cancel-${item.id}`,
+        reason: 'line_cancel',
+      });
+    }
+
+    await this.prisma.orderItem.update({
+      where: { id: item.id },
+      data: { status: OrderStatus.CANCELLED },
+    });
+    await this.prisma.courierBooking.updateMany({
+      where: { orderItemId: item.id, status: 'booked' },
+      data: { status: 'cancelled' },
+    });
+    await this.restoreStock(item.orderId, item.order.customerId, 'LINE_CANCELLED', {
+      itemIds: [item.id],
+    });
+    await this.commissions.clawbackForOrderItem({
+      orderItemId: item.id,
+      actor: user,
+    });
+    if (!paidCard) {
+      await this.payouts.reverseIfTransferred(item.id);
+    }
+
+    const items = await this.prisma.orderItem.findMany({
+      where: { orderId: item.orderId },
+    });
+    const rollup = rollupStatus(items.map((row) => row.status));
+    const allDone = items.every(
+      (row) =>
+        row.status === OrderStatus.CANCELLED ||
+        row.status === OrderStatus.RETURNED,
+    );
+    await this.prisma.order.update({
+      where: { id: item.orderId },
+      data: {
+        status: rollup,
+        ...(allDone && item.order.paymentStatus === PaymentStatus.PAID
+          ? { paymentStatus: PaymentStatus.REFUNDED }
+          : {}),
+      },
+    });
 
     return this.reloadItemOrder(item.orderId, user);
   }
@@ -1933,6 +2432,12 @@ export class OrdersService {
     if (supplierItems.length === 0) {
       throw new BadRequestException('This supplier has no lines on the order');
     }
+    const liveSupplierItems = supplierItems.filter((row) =>
+      isLiveOrderLine(row.status),
+    );
+    if (liveSupplierItems.length === 0) {
+      throw new BadRequestException('This supplier has no remaining lines to collect');
+    }
 
     const existingCollections = await this.prisma.cashCollection.findMany({
       where: { orderId },
@@ -1946,19 +2451,36 @@ export class OrdersService {
 
     const already = existingCollections.find((row) => row.supplierId === supplierId);
     if (!already) {
-      const orderBase = order.items.reduce(
-        (sum, row) => sum + Number(row.lineTotal),
-        0,
-      );
-      const supplierBase = supplierItems.reduce(
-        (sum, row) => sum + Number(row.lineTotal),
-        0,
-      );
       const payment = Number(order.paymentAmount ?? order.total);
-      const share = orderBase === 0 ? 0 : supplierBase / orderBase;
-      const amount = roundMoney(payment * share);
+      const liveMerchandise = liveSupplierItems.reduce(
+        (sum, row) => sum + Number(row.lineTotal),
+        0,
+      );
+      const liveOrderBase = order.items
+        .filter((row) => isLiveOrderLine(row.status))
+        .reduce((sum, row) => sum + Number(row.lineTotal), 0);
+      const shipments = await this.prisma.orderShipment.findMany({
+        where: { orderId },
+      });
+      const shipment = shipments.find((row) => row.supplierId === supplierId);
+      const amount = shipment
+        ? remainingCodPayment({
+            shipment: {
+              supplierId: shipment.supplierId,
+              supplierName: shipment.supplierName,
+              merchandise: Number(shipment.merchandise),
+              deliveryFee: Number(shipment.deliveryFee),
+              merchandiseTax: Number(shipment.merchandiseTax),
+              deliveryTax: Number(shipment.deliveryTax),
+              paymentMerchandise: Number(shipment.paymentMerchandise),
+              paymentDelivery: Number(shipment.paymentDelivery),
+              paymentTax: Number(shipment.paymentTax),
+            },
+            liveMerchandise,
+          })
+        : roundMoney(liveOrderBase === 0 ? 0 : payment * (liveMerchandise / liveOrderBase));
       const currency = order.paymentCurrency || order.currency || 'USD';
-      const lineIds = supplierItems.map((row) => row.id);
+      const lineIds = liveSupplierItems.map((row) => row.id);
       try {
         await this.prisma.cashCollection.create({
           data: {
@@ -1993,9 +2515,15 @@ export class OrdersService {
     const collections = await this.prisma.cashCollection.findMany({
       where: { orderId },
     });
-    const supplierIds = new Set(order.items.map((row) => row.supplierId));
+    const supplierIds = new Set(
+      order.items
+        .filter((row) => isLiveOrderLine(row.status))
+        .map((row) => row.supplierId),
+    );
     const collectedIds = new Set(collections.map((row) => row.supplierId));
-    const allCollected = [...supplierIds].every((id) => collectedIds.has(id));
+    const allCollected =
+      supplierIds.size > 0 &&
+      [...supplierIds].every((id) => collectedIds.has(id));
     if (allCollected) {
       await this.prisma.order.updateMany({
         where: { id: orderId, paymentStatus: PaymentStatus.PENDING },
@@ -2003,7 +2531,7 @@ export class OrdersService {
       });
     }
 
-    for (const row of supplierItems) {
+    for (const row of liveSupplierItems) {
       await this.recognizeAndTransfer(row.id);
     }
   }
@@ -2198,35 +2726,55 @@ export class OrdersService {
     });
   }
 
-  private async reReserveStock(orderId: string, userId: string) {
+  private async reReserveStock(
+    orderId: string,
+    userId: string,
+  ): Promise<{ ok: true } | { ok: false }> {
     const items = await this.prisma.orderItem.findMany({ where: { orderId } });
-    await this.prisma.$transaction(async (tx) => {
-      for (const item of items) {
-        const eventId = `order-rereserve-${orderId}-${item.productId}`;
-        const already = await tx.inventoryLedger.findUnique({ where: { eventId } });
-        if (already) continue;
-        const product = await tx.product.findUnique({
-          where: { id: item.productId },
-        });
-        if (!product) continue;
-        const next = product.stock - item.quantity;
-        await tx.product.update({
-          where: { id: product.id },
-          data: { stock: next, stockStatus: stockStatusFor(next) },
-        });
-        await tx.inventoryLedger.create({
-          data: {
-            productId: product.id,
-            supplierId: product.supplierId,
-            delta: -item.quantity,
-            reason: 'ORDER_PAYMENT_RERESERVE',
-            eventId,
-            userId,
-            quantityAfter: next,
-          },
-        });
-      }
-    });
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        for (const item of items) {
+          const eventId = `order-rereserve-${orderId}-${item.productId}`;
+          const already = await tx.inventoryLedger.findUnique({
+            where: { eventId },
+          });
+          if (already) continue;
+          const reserved = await tx.product.updateMany({
+            where: { id: item.productId, stock: { gte: item.quantity } },
+            data: { stock: { decrement: item.quantity } },
+          });
+          if (reserved.count === 0) {
+            throw new Error(`Insufficient stock for ${item.productName}`);
+          }
+          const product = await tx.product.findUniqueOrThrow({
+            where: { id: item.productId },
+          });
+          await tx.product.update({
+            where: { id: product.id },
+            data: { stockStatus: stockStatusFor(product.stock) },
+          });
+          await tx.inventoryLedger.create({
+            data: {
+              productId: product.id,
+              supplierId: product.supplierId,
+              delta: -item.quantity,
+              reason: 'ORDER_PAYMENT_RERESERVE',
+              eventId,
+              userId,
+              quantityAfter: product.stock,
+            },
+          });
+        }
+      });
+      return { ok: true };
+    } catch (error) {
+      this.logger.warn(
+        `Could not re-reserve stock for ${orderId}: ${
+          error instanceof Error ? error.message : 'insufficient stock'
+        }`,
+      );
+      return { ok: false };
+    }
   }
 
   async handleStripeEvent(event: PaymentIntentEvent) {
@@ -2268,6 +2816,10 @@ export class OrdersService {
       return { received: true };
     }
 
+    if (order.paymentStatus === PaymentStatus.REFUNDED) {
+      return { received: true, ignored: true };
+    }
+
     if (
       order.paymentStatus === PaymentStatus.PAID &&
       order.stripePaymentIntentId === intent.id
@@ -2285,7 +2837,14 @@ export class OrdersService {
       order.paymentStatus === PaymentStatus.FAILED ||
       order.status === OrderStatus.CANCELLED
     ) {
-      await this.reReserveStock(order.id, order.customerId);
+      const recovered = await this.recoverStockForLatePayment(
+        order,
+        intent.id,
+        mode,
+      );
+      if (!recovered) {
+        return { received: true, unsellable: true };
+      }
     }
 
     await this.recordCardCharge(
@@ -2299,6 +2858,110 @@ export class OrdersService {
       actor,
     );
     return { received: true };
+  }
+
+  /**
+   * A late success after a failed/cancelled charge may fulfil the order only
+   * when every line can be reserved again. Otherwise refund and leave it cancelled.
+   */
+  private async recoverStockForLatePayment(
+    order: {
+      id: string;
+      paymentMode: string;
+      stripePaymentIntentId: string | null;
+      paymentAmount: Prisma.Decimal | null;
+      total: Prisma.Decimal;
+      customerId: string;
+    },
+    paymentIntentId: string,
+    mode: 'test' | 'live',
+  ): Promise<boolean> {
+    const unsellableId = `order-unsellable-${order.id}`;
+    const alreadyUnsellable = await this.prisma.inventoryLedger.findUnique({
+      where: { eventId: unsellableId },
+    });
+    if (alreadyUnsellable) {
+      await this.refundUnsellableCharge(order, paymentIntentId, mode);
+      return false;
+    }
+
+    const reserved = await this.reReserveStock(order.id, order.customerId);
+    if (reserved.ok) return true;
+
+    await this.markOrderUnsellable(order, unsellableId);
+    await this.refundUnsellableCharge(order, paymentIntentId, mode);
+    return false;
+  }
+
+  private async markOrderUnsellable(
+    order: { id: string; customerId: string },
+    eventId: string,
+  ) {
+    const items = await this.prisma.orderItem.findMany({
+      where: { orderId: order.id },
+    });
+    const marker = items[0];
+    if (marker) {
+      try {
+        await this.prisma.inventoryLedger.create({
+          data: {
+            productId: marker.productId,
+            supplierId: marker.supplierId,
+            delta: 0,
+            reason: 'ORDER_UNSELLABLE_REFUND',
+            eventId,
+            userId: order.customerId,
+            quantityAfter: 0,
+          },
+        });
+      } catch (error) {
+        if (!isUniqueConflict(error)) throw error;
+      }
+    }
+    await this.audit.record({
+      entityType: 'Order',
+      entityId: order.id,
+      action: 'ORDER_UNSELLABLE_REFUND',
+      actorUserId: order.customerId,
+      actorRole: UserRole.CUSTOMER,
+      after: { orderId: order.id, eventId },
+    });
+  }
+
+  private async refundUnsellableCharge(
+    order: {
+      id: string;
+      paymentMode: string;
+      stripePaymentIntentId: string | null;
+      paymentAmount: Prisma.Decimal | null;
+      total: Prisma.Decimal;
+    },
+    paymentIntentId: string,
+    mode: 'test' | 'live',
+  ) {
+    const refunded = await this.refundPaidCard({
+      paymentMode: order.paymentMode === 'live' || order.paymentMode === 'test'
+        ? order.paymentMode
+        : mode,
+      stripePaymentIntentId: order.stripePaymentIntentId || paymentIntentId,
+      amount: Number(order.paymentAmount ?? order.total),
+      orderId: order.id,
+      idempotencyKey: `winger-webhook-unsellable-${order.id}`,
+      reason: 'unsellable',
+    });
+    if (!refunded.ok) return;
+    await this.prisma.order.updateMany({
+      where: {
+        id: order.id,
+        paymentStatus: { notIn: [PaymentStatus.PAID, PaymentStatus.REFUNDED] },
+      },
+      data: {
+        paymentStatus: PaymentStatus.REFUNDED,
+        status: OrderStatus.CANCELLED,
+        stripePaymentIntentId: paymentIntentId,
+        paymentMode: mode,
+      },
+    });
   }
 
   /** Test and live card checkout must name a Stripe PaymentMethod. Demo does not. */
@@ -2318,33 +2981,74 @@ export class OrdersService {
     orderId: string,
     userId: string,
     reason = 'ORDER_PAYMENT_FAILED',
+    options?: { itemIds?: string[] },
   ) {
     const items = await this.prisma.orderItem.findMany({ where: { orderId } });
+    const selected = options?.itemIds
+      ? items.filter((item) => options.itemIds!.includes(item.id))
+      : items;
     await this.prisma.$transaction(async (tx) => {
-      for (const item of items) {
-        const eventId = `order-restore-${reason}-${orderId}-${item.productId}`;
+      for (const item of selected) {
+        const variantId =
+          (item as { variantId?: string | null }).variantId ?? null;
+        const eventId = `order-restore-${reason}-${orderId}-${item.productId}-${variantId ?? 'base'}`;
         const already = await tx.inventoryLedger.findUnique({ where: { eventId } });
         if (already) continue;
         const product = await tx.product.findUnique({
           where: { id: item.productId },
         });
         if (!product) continue;
-        const next = product.stock + item.quantity;
-        await tx.product.update({
-          where: { id: product.id },
-          data: { stock: next, stockStatus: stockStatusFor(next) },
-        });
-        await tx.inventoryLedger.create({
-          data: {
-            productId: product.id,
-            supplierId: product.supplierId,
-            delta: item.quantity,
-            reason,
-            eventId,
-            userId,
-            quantityAfter: next,
-          },
-        });
+        if (variantId) {
+          const variant = await tx.productVariant.findUnique({
+            where: { id: variantId },
+          });
+          if (!variant) continue;
+          const nextVariant = variant.stock + item.quantity;
+          await tx.productVariant.update({
+            where: { id: variant.id },
+            data: {
+              stock: nextVariant,
+              stockStatus: stockStatusFor(nextVariant),
+            },
+          });
+          const siblings = await tx.productVariant.findMany({
+            where: { productId: product.id },
+          });
+          const total = aggregateVariantStock(siblings);
+          await tx.product.update({
+            where: { id: product.id },
+            data: { stock: total, stockStatus: stockStatusFor(total) },
+          });
+          await tx.inventoryLedger.create({
+            data: {
+              productId: product.id,
+              variantId: variant.id,
+              supplierId: product.supplierId,
+              delta: item.quantity,
+              reason,
+              eventId,
+              userId,
+              quantityAfter: nextVariant,
+            },
+          });
+        } else {
+          const next = product.stock + item.quantity;
+          await tx.product.update({
+            where: { id: product.id },
+            data: { stock: next, stockStatus: stockStatusFor(next) },
+          });
+          await tx.inventoryLedger.create({
+            data: {
+              productId: product.id,
+              supplierId: product.supplierId,
+              delta: item.quantity,
+              reason,
+              eventId,
+              userId,
+              quantityAfter: next,
+            },
+          });
+        }
       }
     });
   }
@@ -2546,6 +3250,19 @@ export class OrdersService {
         id: item.id,
         productId: item.productId,
         productName: item.productName,
+        imageUrl:
+          (item as { imageUrl?: string | null }).imageUrl ||
+          (item as { variant?: { imageUrl?: string | null } | null }).variant
+            ?.imageUrl ||
+          (item as { product?: { imageUrl?: string | null } | null }).product
+            ?.imageUrl ||
+          null,
+        variantId:
+          (item as { variantId?: string | null }).variantId ?? null,
+        variantColor:
+          (item as { variantColor?: string | null }).variantColor ?? null,
+        variantSize:
+          (item as { variantSize?: string | null }).variantSize ?? null,
         supplierId: item.supplierId,
         supplierName: item.supplierName,
         unitPrice: Number(item.unitPrice),

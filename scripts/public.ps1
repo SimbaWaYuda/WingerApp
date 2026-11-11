@@ -34,7 +34,8 @@ function Start-PublicOrigin {
     Write-Host "Public origin already on 127.0.0.1:8088"
     return
   }
-  Start-Process -FilePath "node" -ArgumentList @($OriginJs, $WebRoot) -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
+  $originArgs = "`"$OriginJs`" `"$WebRoot`""
+  Start-Process -FilePath "node" -ArgumentList $originArgs -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
   Start-Sleep -Seconds 1
   Write-Host "Public origin http://127.0.0.1:8088"
 }

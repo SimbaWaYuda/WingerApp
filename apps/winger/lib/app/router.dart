@@ -111,6 +111,7 @@ GoRouter createRouter(AppSession session) {
           GoRoute(path: '/admin/orders', builder: (context, state) => const AdminOrdersScreen()),
           GoRoute(path: '/admin/returns', builder: (context, state) => const ReturnsInboxScreen()),
           GoRoute(path: '/admin/commissions', builder: (context, state) => const AdminCommissionsScreen()),
+          GoRoute(path: '/admin/payment-profiles', builder: (context, state) => const AdminPaymentProfilesScreen()),
           GoRoute(path: '/admin/delivery', builder: (context, state) => const AdminDeliveryScreen()),
           GoRoute(path: '/admin/currencies', builder: (context, state) => const AdminCurrencyScreen()),
         ],

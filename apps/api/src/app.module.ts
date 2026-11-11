@@ -13,6 +13,7 @@ import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FxModule } from './fx/fx.module';
 import { SyncModule } from './sync/sync.module';
+import { SupplierPaymentsModule } from './supplier-payments/supplier-payments.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { SyncModule } from './sync/sync.module';
     SyncModule,
     OrdersModule,
     CommissionsModule,
+    SupplierPaymentsModule,
     ReviewsModule,
     AnalyticsModule,
     OnboardingModule,

@@ -91,9 +91,12 @@ export function cityTaxRateFor(
   return match ? match.taxRatePercent : null;
 }
 
-export function taxForSupplier(deliveryFee: number, supplier: SupplierDeliveryQuote): number {
+export function taxPartsForSupplier(
+  deliveryFee: number,
+  supplier: SupplierDeliveryQuote,
+): { merchandiseTax: number; deliveryTax: number; tax: number } {
   const lines = supplier.lines;
-  const merchandiseTax =
+  const merchandiseTaxRaw =
     lines && lines.length > 0
       ? lines.reduce((sum, line) => {
           const rate = resolveTaxRate(
@@ -111,8 +114,18 @@ export function taxForSupplier(deliveryFee: number, supplier: SupplierDeliveryQu
     supplier.cityTaxRatePercent,
     supplier.taxRatePercent,
   );
-  const deliveryTax = supplier.taxOnDelivery ? (deliveryFee * deliveryRate) / 100 : 0;
-  return roundMoney(merchandiseTax + deliveryTax);
+  const deliveryTaxRaw = supplier.taxOnDelivery ? (deliveryFee * deliveryRate) / 100 : 0;
+  const tax = roundMoney(merchandiseTaxRaw + deliveryTaxRaw);
+  const merchandiseTax = roundMoney(merchandiseTaxRaw);
+  return {
+    merchandiseTax,
+    deliveryTax: roundMoney(tax - merchandiseTax),
+    tax,
+  };
+}
+
+export function taxForSupplier(deliveryFee: number, supplier: SupplierDeliveryQuote): number {
+  return taxPartsForSupplier(deliveryFee, supplier).tax;
 }
 
 export function estimateLabel(method: DeliveryMethod, city: string): string {
@@ -152,12 +165,16 @@ export function computeFulfillmentFees(input: {
   const shipments = suppliers.map((supplier) => {
     const fee = deliveryFeeForSupplier(method, supplier);
     const carrier = carrierForShipment(method, supplier);
+    const taxParts = taxPartsForSupplier(fee, supplier);
     return {
       supplierId: supplier.supplierId,
       supplierName: supplier.supplierName,
+      merchandise: roundMoney(supplier.merchandiseSubtotal),
       deliveryMethod: method,
       fee,
-      tax: taxForSupplier(fee, supplier),
+      tax: taxParts.tax,
+      merchandiseTax: taxParts.merchandiseTax,
+      deliveryTax: taxParts.deliveryTax,
       estimate: estimateLabel(method, city),
       carrier: carrier.carrier,
       courierName: carrier.courierName,

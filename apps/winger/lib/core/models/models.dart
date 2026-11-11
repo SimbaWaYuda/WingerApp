@@ -1,3 +1,64 @@
+/// Expands legacy size text into selectable options.
+/// Supports ranges (`36_42`, `36-42`) and lists (`S,M,L` / `36/37/38`).
+List<String> expandSizeOptions(String? raw) {
+  final value = (raw ?? '').trim();
+  if (value.isEmpty) return const [];
+  final lower = value.toLowerCase();
+  if (const {'standard', 'one size', 'onesize', '—', '-'}.contains(lower)) {
+    return const [];
+  }
+
+  final range = RegExp(
+    r'^(\d+)\s*(?:_|-|–|—|to)\s*(\d+)$',
+    caseSensitive: false,
+  ).firstMatch(value);
+  if (range != null) {
+    final a = int.parse(range.group(1)!);
+    final b = int.parse(range.group(2)!);
+    final start = a < b ? a : b;
+    final end = a < b ? b : a;
+    if (end - start > 30) return [value];
+    return [for (var i = start; i <= end; i++) '$i'];
+  }
+
+  final parts = value
+      .split(RegExp(r'[,/;|]'))
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList();
+  if (parts.length > 1) return parts;
+  return [value];
+}
+
+/// Splits legacy colour text into selectable swatches (`Pink,Black`).
+List<String> expandColorOptions(String? raw) {
+  final value = (raw ?? '').trim();
+  if (value.isEmpty) return const [];
+  final lower = value.toLowerCase();
+  if (const {'default', 'graphite', '—', '-'}.contains(lower)) {
+    return const [];
+  }
+  final parts = value
+      .split(RegExp(r'[,/;|]'))
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList();
+  return parts.isEmpty ? const [] : parts;
+}
+
+String cartLineKey(
+  String productId, {
+  String? variantId,
+  String? variantColor,
+  String? variantSize,
+}) {
+  final id = (variantId ?? '').trim();
+  if (id.isNotEmpty) return '$productId::$id';
+  final color = (variantColor ?? '').trim().toLowerCase();
+  final size = (variantSize ?? '').trim().toLowerCase();
+  return '$productId::$color|$size';
+}
+
 enum UserRole { customer, supplier, admin }
 
 enum OrderStatus {
@@ -17,11 +78,51 @@ class ProductImageRef {
     required this.id,
     required this.url,
     this.sortOrder = 0,
+    this.variantId,
+    this.colorKey,
   });
 
   final String id;
   final String url;
   final int sortOrder;
+  final String? variantId;
+  final String? colorKey;
+}
+
+class ProductVariant {
+  const ProductVariant({
+    required this.id,
+    this.color = '',
+    this.size = '',
+    this.colorHex,
+    this.sku,
+    this.stock = 0,
+    this.stockStatus = StockStatus.outOfStock,
+    this.enabled = true,
+    this.sortOrder = 0,
+    this.imageUrl,
+  });
+
+  final String id;
+  final String color;
+  final String size;
+  final String? colorHex;
+  final String? sku;
+  final int stock;
+  final StockStatus stockStatus;
+  final bool enabled;
+  final int sortOrder;
+  final String? imageUrl;
+
+  bool get isAvailable => enabled && stock > 0;
+
+  String get label {
+    final parts = <String>[
+      if (color.trim().isNotEmpty) color.trim(),
+      if (size.trim().isNotEmpty) size.trim(),
+    ];
+    return parts.isEmpty ? id : parts.join(' · ');
+  }
 }
 
 class ProductSpec {
@@ -54,6 +155,9 @@ class Product {
     this.taxRatePercent,
     this.stock = 24,
     this.stockStatus = StockStatus.inStock,
+    this.variants = const [],
+    this.optionColors = const [],
+    this.optionSizes = const [],
     this.supplierVerified = false,
     this.supplierRatingAvg = 0,
     this.supplierRatingCount = 0,
@@ -85,6 +189,50 @@ class Product {
   final double? taxRatePercent;
   final int stock;
   final StockStatus stockStatus;
+  final List<ProductVariant> variants;
+  final List<String> optionColors;
+  final List<String> optionSizes;
+
+  bool get hasVariants => variants.isNotEmpty;
+
+  List<ProductVariant> get enabledVariants =>
+      variants.where((row) => row.enabled).toList();
+
+  /// Sizes customers can pick: real variants first, else expand legacy
+  /// product.size values like `36_42` / `36-42` / `S,M,L`.
+  List<String> get selectableSizes {
+    if (optionSizes.isNotEmpty) return optionSizes;
+    if (hasVariants) {
+      final seen = <String>{};
+      final out = <String>[];
+      for (final row in enabledVariants) {
+        final value = row.size.trim();
+        if (value.isEmpty || !seen.add(value.toLowerCase())) continue;
+        out.add(value);
+      }
+      return out;
+    }
+    return expandSizeOptions(size);
+  }
+
+  /// Colours customers can pick: real variants first, else split legacy color.
+  List<String> get selectableColors {
+    if (optionColors.isNotEmpty) return optionColors;
+    if (hasVariants) {
+      final seen = <String>{};
+      final out = <String>[];
+      for (final row in enabledVariants) {
+        final value = row.color.trim();
+        if (value.isEmpty || !seen.add(value.toLowerCase())) continue;
+        out.add(value);
+      }
+      return out;
+    }
+    return expandColorOptions(color);
+  }
+
+  bool get offersOptionSelection =>
+      selectableSizes.isNotEmpty || selectableColors.isNotEmpty;
 
   List<String> get galleryUrls {
     if (images.isNotEmpty) {
@@ -97,7 +245,47 @@ class Product {
     return const [];
   }
 
+  List<String> galleryUrlsForColor(String? color) {
+    final key = (color ?? '').trim().toLowerCase();
+    if (key.isEmpty) return galleryUrls;
+    final matched = images
+        .where(
+          (image) =>
+              (image.colorKey ?? '').trim().toLowerCase() == key ||
+              variants.any(
+                (variant) =>
+                    variant.color.trim().toLowerCase() == key &&
+                    variant.id == image.variantId,
+              ),
+        )
+        .map((image) => image.url)
+        .where((url) => url.trim().isNotEmpty)
+        .toList();
+    if (matched.isNotEmpty) return matched;
+    final variantImage = enabledVariants
+        .where((row) => row.color.trim().toLowerCase() == key)
+        .map((row) => row.imageUrl)
+        .whereType<String>()
+        .where((url) => url.trim().isNotEmpty)
+        .toList();
+    if (variantImage.isNotEmpty) return variantImage;
+    return galleryUrls;
+  }
+
+  ProductVariant? variantFor({String color = '', String size = ''}) {
+    final c = color.trim().toLowerCase();
+    final s = size.trim().toLowerCase();
+    for (final row in enabledVariants) {
+      if (row.color.trim().toLowerCase() == c &&
+          row.size.trim().toLowerCase() == s) {
+        return row;
+      }
+    }
+    return null;
+  }
+
   /// Built-in + custom specs with empty / unused defaults removed.
+  /// Colour/size are omitted when offered as selectable options.
   List<ProductSpec> get visibleSpecs {
     bool filled(String value, {Set<String> ignore = const {}}) {
       final trimmed = value.trim();
@@ -110,9 +298,11 @@ class Product {
         ProductSpec(label: 'sku', value: model),
       if (filled(category, ignore: {'General'}))
         ProductSpec(label: 'categories', value: category),
-      if (filled(color, ignore: {'Default', 'Graphite'}))
+      if (selectableColors.isEmpty &&
+          filled(color, ignore: {'Default', 'Graphite'}))
         ProductSpec(label: 'color', value: color),
-      if (filled(size, ignore: {'Standard', 'One size'}))
+      if (selectableSizes.isEmpty &&
+          filled(size, ignore: {'Standard', 'One size'}))
         ProductSpec(label: 'size', value: size),
       if (filled(battery)) ProductSpec(label: 'battery', value: battery),
       if (filled(weight)) ProductSpec(label: 'weight', value: weight),
@@ -211,17 +401,60 @@ class ProductPage {
 }
 
 class CartItem {
-  const CartItem({required this.product, required this.quantity});
+  const CartItem({
+    required this.product,
+    required this.quantity,
+    this.variantId,
+    this.variantColor,
+    this.variantSize,
+  });
 
   final Product product;
   final int quantity;
+  final String? variantId;
+  final String? variantColor;
+  final String? variantSize;
+
+  String get lineKey => cartLineKey(
+    product.id,
+    variantId: variantId,
+    variantColor: variantColor,
+    variantSize: variantSize,
+  );
+
+  String? get optionLabel {
+    final parts = <String>[
+      if ((variantColor ?? '').trim().isNotEmpty) variantColor!.trim(),
+      if ((variantSize ?? '').trim().isNotEmpty) variantSize!.trim(),
+    ];
+    if (parts.isEmpty) return null;
+    return parts.join(' · ');
+  }
+
+  int get availableStock {
+    if (variantId == null || variantId!.isEmpty || !product.hasVariants) {
+      return product.stock;
+    }
+    final match = product.variants.where((row) => row.id == variantId);
+    if (match.isEmpty) return 0;
+    return match.first.stock;
+  }
 
   double get lineTotal => product.price * quantity;
 
-  CartItem copyWith({Product? product, int? quantity}) {
+  CartItem copyWith({
+    Product? product,
+    int? quantity,
+    String? variantId,
+    String? variantColor,
+    String? variantSize,
+  }) {
     return CartItem(
       product: product ?? this.product,
       quantity: quantity ?? this.quantity,
+      variantId: variantId ?? this.variantId,
+      variantColor: variantColor ?? this.variantColor,
+      variantSize: variantSize ?? this.variantSize,
     );
   }
 }
@@ -290,11 +523,17 @@ class CartValidationLine {
     required this.availableQty,
     required this.unitPrice,
     required this.lineTotal,
+    this.variantId,
+    this.variantColor,
+    this.variantSize,
     this.reason,
     this.product,
   });
 
   final String productId;
+  final String? variantId;
+  final String? variantColor;
+  final String? variantSize;
   final bool available;
   final String? reason;
   final int requestedQty;
@@ -309,6 +548,7 @@ class ShipmentLeg {
     required this.supplierName,
     required this.productName,
     required this.status,
+    this.imageUrl,
     this.trackingCode,
     this.pickupCode,
     this.carrier,
@@ -323,6 +563,7 @@ class ShipmentLeg {
   final String supplierName;
   final String productName;
   final OrderStatus status;
+  final String? imageUrl;
   final String? trackingCode;
   final String? pickupCode;
   final String? carrier;
@@ -460,12 +701,25 @@ class ReturnableItem {
     required this.productName,
     required this.supplierName,
     required this.quantity,
+    this.variantColor,
+    this.variantSize,
   });
 
   final String orderItemId;
   final String productName;
   final String supplierName;
   final int quantity;
+  final String? variantColor;
+  final String? variantSize;
+
+  String get displayName {
+    final parts = <String>[
+      if ((variantColor ?? '').trim().isNotEmpty) variantColor!.trim(),
+      if ((variantSize ?? '').trim().isNotEmpty) variantSize!.trim(),
+    ];
+    if (parts.isEmpty) return productName;
+    return '$productName (${parts.join(' · ')})';
+  }
 }
 
 class OrderReturnRequest {
@@ -584,6 +838,10 @@ class OrderItemRow {
     required this.quantity,
     required this.lineTotal,
     required this.status,
+    this.imageUrl,
+    this.variantId,
+    this.variantColor,
+    this.variantSize,
     this.trackingCode,
     this.pickupCode,
     this.carrier,
@@ -601,6 +859,10 @@ class OrderItemRow {
   final String id;
   final String productId;
   final String productName;
+  final String? imageUrl;
+  final String? variantId;
+  final String? variantColor;
+  final String? variantSize;
   final String supplierId;
   final String supplierName;
   final int quantity;
@@ -618,6 +880,15 @@ class OrderItemRow {
   final String? replacesOrderId;
   final String? replacesOrderItemId;
   final String? replacedByOrderId;
+
+  String get displayName {
+    final parts = <String>[
+      if ((variantColor ?? '').trim().isNotEmpty) variantColor!.trim(),
+      if ((variantSize ?? '').trim().isNotEmpty) variantSize!.trim(),
+    ];
+    if (parts.isEmpty) return productName;
+    return '$productName (${parts.join(' · ')})';
+  }
 
   bool get isReplacement =>
       (replacesOrderId != null && replacesOrderId!.isNotEmpty) ||
@@ -680,6 +951,13 @@ String? _bookingField(Map<String, dynamic> item, String key) {
   return text.isEmpty ? null : text;
 }
 
+String? _orderImageUrl(Map<String, dynamic> item) {
+  final raw = item['imageUrl'];
+  if (raw == null) return null;
+  final text = raw.toString().trim();
+  return text.isEmpty ? null : text;
+}
+
 double? _bookingFee(Map<String, dynamic> item) {
   final booking = item['courierBooking'];
   if (booking is! Map) return null;
@@ -721,6 +999,10 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           id: item['id'] as String,
           productId: item['productId'] as String? ?? '',
           productName: item['productName'] as String? ?? '',
+          imageUrl: _orderImageUrl(item),
+          variantId: item['variantId'] as String?,
+          variantColor: item['variantColor'] as String?,
+          variantSize: item['variantSize'] as String?,
           supplierId: item['supplierId'] as String? ?? '',
           supplierName: item['supplierName'] as String? ?? '',
           quantity: item['quantity'] as int? ?? 1,
@@ -745,6 +1027,7 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
         ShipmentLeg(
           supplierName: item['supplierName'] as String? ?? 'Supplier',
           productName: item['productName'] as String? ?? 'Product',
+          imageUrl: _orderImageUrl(item),
           status: orderStatusFromApi(item['status'] as String?),
           trackingCode: item['trackingCode'] as String?,
           pickupCode: item['pickupCode'] as String?,
