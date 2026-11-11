@@ -1,8 +1,9 @@
 # Bring the public shop back after this computer restarts.
 # Postgres stays on this computer (localhost:5433).
+# Signing in starts Postgres, the API, the web app, and the Cloudflare tunnel.
 # Usage (from repo root):
 #   .\scripts\boot.ps1            # start missing pieces
-#   .\scripts\boot.ps1 -Install   # start at Windows logon
+#   .\scripts\boot.ps1 -Install   # start at Windows logon, and retry if it fails
 #   .\scripts\boot.ps1 -Uninstall
 
 param(
@@ -103,10 +104,13 @@ if ($Install) {
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
-    -MultipleInstances IgnoreNew
+    -MultipleInstances IgnoreNew `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
   $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-  Write-BootLog "Windows will start the public shop at logon ($TaskName)"
+  Write-BootLog "Windows will start Postgres, the API, the web app, and the tunnel at logon ($TaskName). A failed start is tried again up to 3 times."
 }
 
 Write-BootLog "Starting Winger public shop from $Root"
@@ -147,7 +151,7 @@ if (-not (Test-Path $WebRoot)) {
 if (-not (Test-LocalPort 8088)) {
   Write-BootLog "Starting public origin on 8088"
   Start-Hidden -FilePath $Node -ArgumentList @($OriginJs, $WebRoot) -WorkingDirectory $Root
-  if (-not (Wait-LocalPort 8088 15)) {
+  if (-not (Wait-LocalPort 8088 30)) {
     Write-BootLog "Public origin did not open 8088"
     exit 1
   }
@@ -178,6 +182,16 @@ if (Test-CommandLine "tunnel run winger") {
   }
   Write-BootLog "Starting named tunnel for https://$savedHost"
   Start-Hidden -FilePath $Cloudflared -ArgumentList @("--config", $Config, "--no-autoupdate", "tunnel", "run", "winger") -WorkingDirectory $Root
+}
+
+$missing = @()
+foreach ($port in @(5433, 3000, 8088)) {
+  if (-not (Test-LocalPort $port)) { $missing += $port }
+}
+if (-not (Test-CommandLine "tunnel run winger")) { $missing += "tunnel" }
+if ($missing.Count -gt 0) {
+  Write-BootLog "Public shop is not fully up: $($missing -join ', ')"
+  exit 1
 }
 
 Write-BootLog "Public shop https://$savedHost"

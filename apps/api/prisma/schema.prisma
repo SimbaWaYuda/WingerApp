@@ -447,6 +447,8 @@ model Order {
   customer              User          @relation(fields: [customerId], references: [id])
   customerName          String
   customerEmail         String
+  /// Phone captured at checkout so the supplier can reach the customer.
+  customerPhone         String?
   status                OrderStatus   @default(PROCESSING)
   paymentStatus         PaymentStatus @default(PENDING)
   paymentMethod         String        @default("card")

@@ -400,6 +400,39 @@ class ProductPage {
   final SearchInterpretation? interpretation;
 }
 
+const _blankSpecs = {
+  '',
+  'default',
+  'standard',
+  '—',
+  '-',
+  'n/a',
+  'na',
+  'none',
+};
+
+/// Null when the catalogue value is a placeholder such as "Default" or "Standard".
+String? meaningfulSpec(String? value) {
+  final trimmed = (value ?? '').trim();
+  if (_blankSpecs.contains(trimmed.toLowerCase())) return null;
+  return trimmed;
+}
+
+String? contactPhone(String? value) {
+  final trimmed = (value ?? '').trim();
+  if (trimmed.isEmpty || trimmed == '—' || trimmed == '-') return null;
+  return trimmed;
+}
+
+String? orderSpecLabel({String? color, String? size}) {
+  final parts = <String>[
+    if (meaningfulSpec(color) != null) meaningfulSpec(color)!,
+    if (meaningfulSpec(size) != null) meaningfulSpec(size)!,
+  ];
+  if (parts.isEmpty) return null;
+  return parts.join(' · ');
+}
+
 class CartItem {
   const CartItem({
     required this.product,
@@ -423,12 +456,12 @@ class CartItem {
   );
 
   String? get optionLabel {
-    final parts = <String>[
-      if ((variantColor ?? '').trim().isNotEmpty) variantColor!.trim(),
-      if ((variantSize ?? '').trim().isNotEmpty) variantSize!.trim(),
-    ];
-    if (parts.isEmpty) return null;
-    return parts.join(' · ');
+    final selectedColor = meaningfulSpec(variantColor);
+    final selectedSize = meaningfulSpec(variantSize);
+    if (selectedColor != null || selectedSize != null) {
+      return orderSpecLabel(color: selectedColor, size: selectedSize);
+    }
+    return orderSpecLabel(color: product.color, size: product.size);
   }
 
   int get availableStock {
@@ -558,6 +591,8 @@ class ShipmentLeg {
     this.plateNumber,
     this.courierFee,
     this.trackingUrl,
+    this.variantColor,
+    this.variantSize,
   });
 
   final String supplierName;
@@ -573,6 +608,17 @@ class ShipmentLeg {
   final String? plateNumber;
   final double? courierFee;
   final String? trackingUrl;
+  final String? variantColor;
+  final String? variantSize;
+
+  String? get specLabel =>
+      orderSpecLabel(color: variantColor, size: variantSize);
+
+  String get displayName {
+    final spec = specLabel;
+    if (spec == null) return productName;
+    return '$productName ($spec)';
+  }
 }
 
 class CustomerOrder {
@@ -585,6 +631,7 @@ class CustomerOrder {
     this.paymentStatus = 'PAID',
     this.paymentMode = 'demo',
     this.customerName = '',
+    this.customerPhone,
     this.itemRows = const [],
     this.addressLine,
     this.city,
@@ -613,6 +660,7 @@ class CustomerOrder {
   final String? paymentCurrency;
   final double? paymentAmount;
   final String customerName;
+  final String? customerPhone;
   final List<OrderItemRow> itemRows;
   final String? addressLine;
   final String? city;
@@ -881,13 +929,13 @@ class OrderItemRow {
   final String? replacesOrderItemId;
   final String? replacedByOrderId;
 
+  String? get specLabel =>
+      orderSpecLabel(color: variantColor, size: variantSize);
+
   String get displayName {
-    final parts = <String>[
-      if ((variantColor ?? '').trim().isNotEmpty) variantColor!.trim(),
-      if ((variantSize ?? '').trim().isNotEmpty) variantSize!.trim(),
-    ];
-    if (parts.isEmpty) return productName;
-    return '$productName (${parts.join(' · ')})';
+    final spec = specLabel;
+    if (spec == null) return productName;
+    return '$productName ($spec)';
   }
 
   bool get isReplacement =>
@@ -989,6 +1037,7 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
     paymentCurrency: json['paymentCurrency'] as String?,
     paymentAmount: (json['paymentAmount'] as num?)?.toDouble(),
     customerName: json['customerName'] as String? ?? '',
+    customerPhone: contactPhone(json['customerPhone'] as String?),
     addressLine: json['addressLine'] as String?,
     city: json['city'] as String?,
     placedAt:
@@ -1038,6 +1087,8 @@ CustomerOrder customerOrderFromApi(Map<String, dynamic> json) {
           plateNumber: _bookingField(item, 'plateNumber'),
           courierFee: _bookingFee(item),
           trackingUrl: _bookingField(item, 'trackingUrl'),
+          variantColor: item['variantColor'] as String?,
+          variantSize: item['variantSize'] as String?,
         ),
     ],
     canRateSuppliers: [

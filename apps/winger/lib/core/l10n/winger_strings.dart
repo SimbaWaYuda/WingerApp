@@ -561,6 +561,8 @@ class WingerStrings {
       'obNextSteps': 'Next steps',
       'obName': 'Full name',
       'obPhone': 'Phone',
+      'contactPhoneRequired':
+          'Enter a phone number so the supplier can reach you.',
       'obCity': 'City',
       'obSaveProfile': 'Save profile',
       'obSaveBusiness': 'Save business profile',
@@ -1234,6 +1236,8 @@ class WingerStrings {
       'obNextSteps': 'Siguientes pasos',
       'obName': 'Nombre completo',
       'obPhone': 'Teléfono',
+      'contactPhoneRequired':
+          'Escribe un teléfono para que el proveedor pueda llamarte.',
       'obCity': 'Ciudad',
       'obSaveProfile': 'Guardar perfil',
       'obSaveBusiness': 'Guardar perfil del negocio',
@@ -1905,6 +1909,8 @@ class WingerStrings {
       'obNextSteps': 'Hatua zinazofuata',
       'obName': 'Jina kamili',
       'obPhone': 'Simu',
+      'contactPhoneRequired':
+          'Weka namba ya simu ili muuzaji akuwasiliane nawe.',
       'obCity': 'Jiji',
       'obSaveProfile': 'Hifadhi wasifu',
       'obSaveBusiness': 'Hifadhi wasifu wa biashara',

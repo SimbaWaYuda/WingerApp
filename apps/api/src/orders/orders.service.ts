@@ -69,6 +69,8 @@ export type CreateOrderDto = {
   stripePaymentMethodId?: string;
   /** Stable id for one pay tap. A retry with the same id does not create another order. */
   checkoutIdempotencyKey?: string;
+  /** Number the supplier can call about this order. */
+  phone?: string;
 };
 
 export type ValidateCartDto = {
@@ -108,13 +110,40 @@ const RETURN_REASONS = new Set([
   'other',
 ]);
 
+const BLANK_SPECS = new Set([
+  '',
+  'default',
+  'standard',
+  '—',
+  '-',
+  'n/a',
+  'na',
+  'none',
+]);
+
+/** Drop placeholder catalogue values so an order only shows a real choice. */
+export function meaningfulSpec(value?: string | null): string | null {
+  const trimmed = (value ?? '').trim();
+  if (BLANK_SPECS.has(trimmed.toLowerCase())) return null;
+  return trimmed;
+}
+
+/** Keep a dialable number. Returns the typed text, not just the digits. */
+export function customerContactPhone(value?: string | null): string | null {
+  const trimmed = (value ?? '').trim();
+  if (!trimmed || trimmed === '—' || trimmed === '-') return null;
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return null;
+  return trimmed;
+}
+
 const orderWithItems = {
   items: {
     include: {
       commission: true,
       courierBooking: true,
-      product: { select: { imageUrl: true } },
-      variant: { select: { imageUrl: true } },
+      product: { select: { imageUrl: true, color: true, size: true } },
+      variant: { select: { imageUrl: true, color: true, size: true } },
       replacesOrderItem: {
         select: {
           id: true,
@@ -130,6 +159,7 @@ const orderWithItems = {
     },
   },
   shipments: true,
+  customer: { select: { phone: true } },
 } as const;
 
 @Injectable()
@@ -497,8 +527,19 @@ export class OrdersService {
     const settlementCurrency = fxConfig.settlementCurrency;
     const profile = await this.prisma.user.findUnique({
       where: { id: user.sub },
-      select: { displayCurrency: true },
+      select: { displayCurrency: true, phone: true },
     });
+    const customerPhone =
+      customerContactPhone(dto.phone) || customerContactPhone(profile?.phone);
+    if (
+      customerPhone &&
+      customerPhone !== (profile?.phone ?? '').trim()
+    ) {
+      await this.prisma.user.update({
+        where: { id: user.sub },
+        data: { phone: customerPhone },
+      });
+    }
     const displayCurrency = this.fx.normalize(
       profile?.displayCurrency || settlementCurrency,
     );
@@ -542,6 +583,7 @@ export class OrdersService {
           customerId: user.sub,
           customerName: user.name,
           customerEmail: user.email,
+          customerPhone,
           status: OrderStatus.PROCESSING,
           paymentStatus: PaymentStatus.PENDING,
           paymentMethod: payOnDelivery
@@ -599,8 +641,13 @@ export class OrdersService {
                 null,
               variantId: line.variant?.id ?? null,
               variantColor:
-                line.variant?.color || line.selectedColor || null,
-              variantSize: line.variant?.size || line.selectedSize || null,
+                meaningfulSpec(line.variant?.color) ||
+                meaningfulSpec(line.selectedColor) ||
+                meaningfulSpec(line.product.color),
+              variantSize:
+                meaningfulSpec(line.variant?.size) ||
+                meaningfulSpec(line.selectedSize) ||
+                meaningfulSpec(line.product.size),
               supplierId: line.product.supplierId,
               supplierName: line.product.supplierName,
               unitPrice: line.unitPrice,
@@ -905,6 +952,8 @@ export class OrdersService {
       select: {
         id: true,
         productName: true,
+        variantColor: true,
+        variantSize: true,
         supplierName: true,
         status: true,
         lineTotal: true,
@@ -921,7 +970,15 @@ export class OrdersService {
             trackingUrl: true,
           },
         },
-        order: { select: { id: true, displayId: true, createdAt: true } },
+        order: {
+          select: {
+            id: true,
+            displayId: true,
+            createdAt: true,
+            customerPhone: true,
+            customer: { select: { phone: true } },
+          },
+        },
       },
     });
 
@@ -937,6 +994,9 @@ export class OrdersService {
       displayId: string;
       supplierName: string;
       productName: string;
+      variantColor: string | null;
+      variantSize: string | null;
+      customerPhone: string | null;
       quantity: number;
       status: OrderStatus;
       lineTotal: number;
@@ -978,6 +1038,11 @@ export class OrdersService {
           displayId: item.order.displayId,
           supplierName: item.supplierName,
           productName: item.productName,
+          variantColor: meaningfulSpec(item.variantColor),
+          variantSize: meaningfulSpec(item.variantSize),
+          customerPhone:
+            customerContactPhone(item.order.customerPhone) ||
+            customerContactPhone(item.order.customer?.phone),
           quantity: item.quantity,
           status: item.status,
           lineTotal: Math.round(amount * 100) / 100,
@@ -1408,6 +1473,7 @@ export class OrdersService {
           customerId: source.order.customerId,
           customerName: source.order.customerName,
           customerEmail: source.order.customerEmail,
+          customerPhone: source.order.customerPhone,
           status: OrderStatus.PROCESSING,
           paymentStatus: PaymentStatus.PAID,
           paymentMethod: 'replacement',
@@ -3139,6 +3205,8 @@ export class OrdersService {
       customerId: string;
       customerName: string;
       customerEmail: string;
+      customerPhone?: string | null;
+      customer?: { phone?: string | null } | null;
       status: OrderStatus;
       paymentStatus: PaymentStatus;
       paymentMethod: string;
@@ -3202,6 +3270,9 @@ export class OrdersService {
       customerId: order.customerId,
       customerName: order.customerName,
       customerEmail: order.customerEmail,
+      customerPhone:
+        customerContactPhone(order.customerPhone) ||
+        customerContactPhone(order.customer?.phone),
       status: order.status,
       paymentStatus: order.paymentStatus,
       paymentMethod: order.paymentMethod,
@@ -3260,9 +3331,21 @@ export class OrdersService {
         variantId:
           (item as { variantId?: string | null }).variantId ?? null,
         variantColor:
-          (item as { variantColor?: string | null }).variantColor ?? null,
+          meaningfulSpec(
+            (item as { variantColor?: string | null }).variantColor,
+          ) ||
+          meaningfulSpec(
+            (item as { product?: { color?: string | null } | null }).product
+              ?.color,
+          ),
         variantSize:
-          (item as { variantSize?: string | null }).variantSize ?? null,
+          meaningfulSpec(
+            (item as { variantSize?: string | null }).variantSize,
+          ) ||
+          meaningfulSpec(
+            (item as { product?: { size?: string | null } | null }).product
+              ?.size,
+          ),
         supplierId: item.supplierId,
         supplierName: item.supplierName,
         unitPrice: Number(item.unitPrice),

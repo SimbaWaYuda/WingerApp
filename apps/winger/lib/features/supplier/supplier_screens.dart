@@ -905,6 +905,28 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(order.customerName),
+                            if (contactPhone(order.customerPhone) != null) ...[
+                              const SizedBox(height: 4),
+                              InkWell(
+                                onTap: () {
+                                  final raw = order.customerPhone!.trim();
+                                  final dial = raw.replaceAll(
+                                    RegExp(r'[^\d+]'),
+                                    '',
+                                  );
+                                  unawaited(
+                                    launchUrl(Uri(scheme: 'tel', path: dial)),
+                                  );
+                                },
+                                child: Text(
+                                  '${s.t('obPhone')}: ${order.customerPhone}',
+                                  style: const TextStyle(
+                                    color: WingerColors.brand,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 8),
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -927,11 +949,20 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        '${item.displayName} × ${item.quantity}',
+                                        '${item.productName} × ${item.quantity}',
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w700,
                                         ),
                                       ),
+                                      if (item.specLabel != null) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          item.specLabel!,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
                                       const SizedBox(height: 4),
                                       Text(
                                         '\$${item.lineTotal.toStringAsFixed(2)}',

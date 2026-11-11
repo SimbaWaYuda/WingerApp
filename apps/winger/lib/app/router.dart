@@ -69,8 +69,11 @@ GoRouter createRouter(AppSession session) {
           GoRoute(path: '/customer/compare', builder: (context, state) => const CompareScreen()),
           GoRoute(
             path: '/customer/product/:id',
-            builder: (context, state) =>
-                ProductDetailScreen(productId: state.pathParameters['id']!),
+            builder: (context, state) => ProductDetailScreen(
+              productId: state.pathParameters['id']!,
+              initialColor: state.uri.queryParameters['color'],
+              initialSize: state.uri.queryParameters['size'],
+            ),
           ),
           GoRoute(path: '/customer/cart', builder: (context, state) => const CartScreen()),
           GoRoute(path: '/customer/wishlist', builder: (context, state) => const WishlistScreen()),

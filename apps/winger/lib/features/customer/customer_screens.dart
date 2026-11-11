@@ -554,27 +554,40 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 12),
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: products.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: wide ? 4 : 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: wide ? 0.68 : 0.64,
-                ),
-                itemBuilder: (context, index) {
-                  final product = products[index];
-                  return ProductCard(
-                    product: product,
-                    wishlisted: session.isWishlisted(product.id),
-                    compareSelected: session.compareIds.contains(product.id),
-                    onWishlist: () =>
-                        unawaited(session.toggleWishlist(product.id)),
-                    onCompare: () => session.toggleCompare(product.id),
-                    onAddToCart: () => unawaited(session.addToCart(product)),
-                    onTap: () => context.go('/customer/product/${product.id}'),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: products.length,
+                    gridDelegate: productGridDelegate(constraints.maxWidth),
+                    itemBuilder: (context, index) {
+                      final product = products[index];
+                      return ProductCard(
+                        product: product,
+                        wishlisted: session.isWishlisted(product.id),
+                        compareSelected: session.compareIds.contains(
+                          product.id,
+                        ),
+                        onWishlist: () =>
+                            unawaited(session.toggleWishlist(product.id)),
+                        onCompare: () => session.toggleCompare(product.id),
+                        onAddToCart: ({variantId, color, size}) => unawaited(
+                          session.addToCart(
+                            product,
+                            variantId: variantId,
+                            variantColor: color,
+                            variantSize: size,
+                          ),
+                        ),
+                        onTap: ({variantId, color, size}) => openProduct(
+                          context,
+                          product.id,
+                          color: color,
+                          size: size,
+                        ),
+                      );
+                    },
                   );
                 },
               ),
@@ -704,7 +717,7 @@ class _HomeProductCarouselState extends State<_HomeProductCarousel> {
 
   @override
   Widget build(BuildContext context) {
-    final height = widget.wide ? 320.0 : 300.0;
+    final height = productCardHeight(_cardWidth);
     final session = widget.session;
     return SizedBox(
       height: height,
@@ -728,8 +741,20 @@ class _HomeProductCarouselState extends State<_HomeProductCarousel> {
                   onWishlist: () =>
                       unawaited(session.toggleWishlist(product.id)),
                   onCompare: () => session.toggleCompare(product.id),
-                  onAddToCart: () => unawaited(session.addToCart(product)),
-                  onTap: () => context.go('/customer/product/${product.id}'),
+                  onAddToCart: ({variantId, color, size}) => unawaited(
+                    session.addToCart(
+                      product,
+                      variantId: variantId,
+                      variantColor: color,
+                      variantSize: size,
+                    ),
+                  ),
+                  onTap: ({variantId, color, size}) => openProduct(
+                    context,
+                    product.id,
+                    color: color,
+                    size: size,
+                  ),
                 ),
               );
             },
@@ -1707,9 +1732,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
 
   Widget _buildResults(
     WingerStrings s,
-    AppSession session, {
-    required bool wideGrid,
-  }) {
+    AppSession session,
+  ) {
     final future = _future;
     if (future == null) {
       return const Center(child: CircularProgressIndicator());
@@ -1790,27 +1814,38 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: items.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: wideGrid ? 3 : 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: wideGrid ? 0.68 : 0.64,
-              ),
-              itemBuilder: (context, index) {
-                final product = items[index];
-                return ProductCard(
-                  product: product,
-                  wishlisted: session.isWishlisted(product.id),
-                  compareSelected: session.compareIds.contains(product.id),
-                  onWishlist: () =>
-                      unawaited(session.toggleWishlist(product.id)),
-                  onCompare: () => session.toggleCompare(product.id),
-                  onAddToCart: () => unawaited(session.addToCart(product)),
-                  onTap: () => context.go('/customer/product/${product.id}'),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: items.length,
+                  gridDelegate: productGridDelegate(constraints.maxWidth),
+                  itemBuilder: (context, index) {
+                    final product = items[index];
+                    return ProductCard(
+                      product: product,
+                      wishlisted: session.isWishlisted(product.id),
+                      compareSelected: session.compareIds.contains(product.id),
+                      onWishlist: () =>
+                          unawaited(session.toggleWishlist(product.id)),
+                      onCompare: () => session.toggleCompare(product.id),
+                      onAddToCart: ({variantId, color, size}) => unawaited(
+                        session.addToCart(
+                          product,
+                          variantId: variantId,
+                          variantColor: color,
+                          variantSize: size,
+                        ),
+                      ),
+                      onTap: ({variantId, color, size}) => openProduct(
+                        context,
+                        product.id,
+                        color: color,
+                        size: size,
+                      ),
+                    );
+                  },
                 );
               },
             ),
@@ -1938,7 +1973,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                       children: [
                         _buildSortRow(s),
                         const SizedBox(height: 12),
-                        _buildResults(s, session, wideGrid: true),
+                        _buildResults(s, session),
                       ],
                     ),
                   ),
@@ -1959,7 +1994,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
         const SizedBox(height: 8),
         _buildSortRow(s),
         const SizedBox(height: 12),
-        _buildResults(s, session, wideGrid: width >= 900),
+        _buildResults(s, session),
       ],
     );
   }
@@ -1973,7 +2008,6 @@ class WishlistScreen extends StatelessWidget {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
     final catalog = context.read<CatalogRepository>();
-    final wide = MediaQuery.sizeOf(context).width >= 900;
 
     return FutureBuilder<List<Product>>(
       future: catalog.getProducts(),
@@ -2000,25 +2034,36 @@ class WishlistScreen extends StatelessWidget {
                 style: TextStyle(color: WingerColors.muted),
               )
             else
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: items.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: wide ? 4 : 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: wide ? 0.68 : 0.64,
-                ),
-                itemBuilder: (context, index) {
-                  final product = items[index];
-                  return ProductCard(
-                    product: product,
-                    wishlisted: true,
-                    onWishlist: () =>
-                        unawaited(session.toggleWishlist(product.id)),
-                    onAddToCart: () => unawaited(session.addToCart(product)),
-                    onTap: () => context.go('/customer/product/${product.id}'),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: items.length,
+                    gridDelegate: productGridDelegate(constraints.maxWidth),
+                    itemBuilder: (context, index) {
+                      final product = items[index];
+                      return ProductCard(
+                        product: product,
+                        wishlisted: true,
+                        onWishlist: () =>
+                            unawaited(session.toggleWishlist(product.id)),
+                        onAddToCart: ({variantId, color, size}) => unawaited(
+                          session.addToCart(
+                            product,
+                            variantId: variantId,
+                            variantColor: color,
+                            variantSize: size,
+                          ),
+                        ),
+                        onTap: ({variantId, color, size}) => openProduct(
+                          context,
+                          product.id,
+                          color: color,
+                          size: size,
+                        ),
+                      );
+                    },
                   );
                 },
               ),
@@ -2030,9 +2075,16 @@ class WishlistScreen extends StatelessWidget {
 }
 
 class ProductDetailScreen extends StatefulWidget {
-  const ProductDetailScreen({super.key, required this.productId});
+  const ProductDetailScreen({
+    super.key,
+    required this.productId,
+    this.initialColor,
+    this.initialSize,
+  });
 
   final String productId;
+  final String? initialColor;
+  final String? initialSize;
 
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
@@ -2184,13 +2236,33 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final colors = product.selectableColors;
     final sizes = product.selectableSizes;
     var changed = false;
-    if (colors.length == 1 && _selectedColor == null) {
-      _selectedColor = colors.first;
-      changed = true;
+    if (_selectedColor == null && colors.isNotEmpty) {
+      final initial = (widget.initialColor ?? '').trim().toLowerCase();
+      for (final color in colors) {
+        if (color.trim().toLowerCase() == initial) {
+          _selectedColor = color;
+          changed = true;
+          break;
+        }
+      }
+      if (_selectedColor == null && colors.length == 1) {
+        _selectedColor = colors.first;
+        changed = true;
+      }
     }
-    if (sizes.length == 1 && _selectedSize == null) {
-      _selectedSize = sizes.first;
-      changed = true;
+    if (_selectedSize == null && sizes.isNotEmpty) {
+      final initial = (widget.initialSize ?? '').trim().toLowerCase();
+      for (final size in sizes) {
+        if (size.trim().toLowerCase() == initial) {
+          _selectedSize = size;
+          changed = true;
+          break;
+        }
+      }
+      if (_selectedSize == null && sizes.length == 1) {
+        _selectedSize = sizes.first;
+        changed = true;
+      }
     }
     if (changed) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2621,7 +2693,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                           999,
                                         ),
                                         child: SizedBox(
-                                          width: 56,
+                                          width: 92,
                                           child: Column(
                                             children: [
                                               Container(
@@ -2675,7 +2747,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                               Text(
                                                 color,
                                                 textAlign: TextAlign.center,
-                                                maxLines: 1,
+                                                maxLines: 2,
                                                 overflow:
                                                     TextOverflow.ellipsis,
                                                 style: TextStyle(
@@ -3180,7 +3252,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           ),
                           const SizedBox(height: 10),
                           SizedBox(
-                            height: 300,
+                            height: productCardHeight(180),
                             child: ListView.separated(
                               scrollDirection: Axis.horizontal,
                               itemCount: moreRelated.length,
@@ -3196,11 +3268,22 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                     onWishlist: () => unawaited(
                                       session.toggleWishlist(item.id),
                                     ),
-                                    onAddToCart: () =>
-                                        unawaited(session.addToCart(item)),
-                                    onTap: () => context.go(
-                                      '/customer/product/${item.id}',
-                                    ),
+                                    onAddToCart: ({variantId, color, size}) =>
+                                        unawaited(
+                                          session.addToCart(
+                                            item,
+                                            variantId: variantId,
+                                            variantColor: color,
+                                            variantSize: size,
+                                          ),
+                                        ),
+                                    onTap: ({variantId, color, size}) =>
+                                        openProduct(
+                                          context,
+                                          item.id,
+                                          color: color,
+                                          size: size,
+                                        ),
                                   ),
                                 );
                               },
@@ -3726,6 +3809,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   late String _fulfillment;
   late final TextEditingController _city;
   late final TextEditingController _address;
+  late final TextEditingController _phone;
   final TextEditingController _cardNumber = TextEditingController();
   final TextEditingController _cardExpiry = TextEditingController();
   final TextEditingController _cardCvc = TextEditingController();
@@ -3763,6 +3847,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     _city = TextEditingController(text: session.city);
     _address = TextEditingController(text: session.addressLine);
+    _phone = TextEditingController(
+      text: session.phone == '—' ? '' : session.phone,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(context.read<ApiClient>().refreshCurrencyQuote());
@@ -3793,6 +3880,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   void dispose() {
     _city.dispose();
     _address.dispose();
+    _phone.dispose();
     _cardNumber.dispose();
     _cardExpiry.dispose();
     _cardCvc.dispose();
@@ -3800,25 +3888,32 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   Future<void> _saveAddressStep() async {
+    final s = WingerStrings.of(context);
     final session = context.read<AppSession>();
     final api = context.read<ApiClient>();
     final city = _city.text.trim();
     final address = _address.text.trim();
+    final phone = _phone.text.trim();
+    final phoneDigits = phone.replaceAll(RegExp(r'\D'), '');
     if (city.isEmpty || address.isEmpty) {
       setState(() => _payError = 'City and address are required');
+      return;
+    }
+    if (phoneDigits.length < 7) {
+      setState(() => _payError = s.t('contactPhoneRequired'));
       return;
     }
     if (session.accessToken != null && session.apiOnline) {
       await api.updateProfile(
         name: session.displayName,
-        phone: session.phone.isEmpty ? '—' : session.phone,
+        phone: phone,
         city: city,
         addressLine: address,
       );
     } else {
       session.applyProfile(
         name: session.displayName,
-        phoneNumber: session.phone,
+        phoneNumber: phone,
         cityName: city,
         address: address,
       );
@@ -3926,7 +4021,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                       subtitle: Text(
-                        '${session.formatMoney(item.product.price)} × ${item.quantity}',
+                        [
+                          if (item.optionLabel != null) item.optionLabel!,
+                          '${session.formatMoney(item.product.price)} × ${item.quantity}',
+                        ].join('\n'),
                       ),
                       trailing: Text(
                         session.formatMoney(item.lineTotal),
@@ -3982,6 +4080,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             TextField(
               controller: _city,
               decoration: InputDecoration(labelText: s.t('obCity')),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _phone,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(labelText: s.t('obPhone')),
             ),
             const SizedBox(height: 8),
             Text(
@@ -5013,7 +5117,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         ),
                       ),
                     ),
-                    title: Text(leg.productName),
+                    title: Text(leg.displayName),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -5658,7 +5762,6 @@ class RecentlyViewedScreen extends StatelessWidget {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
     final catalog = context.read<CatalogRepository>();
-    final wide = MediaQuery.sizeOf(context).width >= 900;
 
     return FutureBuilder<List<Product>>(
       future: catalog.getProducts(),
@@ -5685,25 +5788,36 @@ class RecentlyViewedScreen extends StatelessWidget {
                 style: TextStyle(color: WingerColors.muted),
               )
             else
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: items.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: wide ? 4 : 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: wide ? 0.68 : 0.64,
-                ),
-                itemBuilder: (context, index) {
-                  final product = items[index];
-                  return ProductCard(
-                    product: product,
-                    wishlisted: session.isWishlisted(product.id),
-                    onWishlist: () =>
-                        unawaited(session.toggleWishlist(product.id)),
-                    onAddToCart: () => unawaited(session.addToCart(product)),
-                    onTap: () => context.go('/customer/product/${product.id}'),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: items.length,
+                    gridDelegate: productGridDelegate(constraints.maxWidth),
+                    itemBuilder: (context, index) {
+                      final product = items[index];
+                      return ProductCard(
+                        product: product,
+                        wishlisted: session.isWishlisted(product.id),
+                        onWishlist: () =>
+                            unawaited(session.toggleWishlist(product.id)),
+                        onAddToCart: ({variantId, color, size}) => unawaited(
+                          session.addToCart(
+                            product,
+                            variantId: variantId,
+                            variantColor: color,
+                            variantSize: size,
+                          ),
+                        ),
+                        onTap: ({variantId, color, size}) => openProduct(
+                          context,
+                          product.id,
+                          color: color,
+                          size: size,
+                        ),
+                      );
+                    },
                   );
                 },
               ),

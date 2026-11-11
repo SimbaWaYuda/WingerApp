@@ -844,7 +844,13 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     subtitle: Text(
-                      '${order.customerName} · ${order.itemRows.length} line(s) · ${order.paymentStatus}',
+                      [
+                        order.customerName,
+                        if (contactPhone(order.customerPhone) != null)
+                          order.customerPhone!,
+                        '${order.itemRows.length} line(s)',
+                        order.paymentStatus,
+                      ].join(' · '),
                     ),
                     trailing: StatusBadge(status: order.status),
                   ),
@@ -1027,7 +1033,15 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
                                     style: TextStyle(color: WingerColors.muted),
                                   ),
                                 Text(
-                                  '${row['productName'] ?? ''} × ${row['quantity'] ?? 1}',
+                                  [
+                                    '${row['productName'] ?? ''} × ${row['quantity'] ?? 1}',
+                                    if (orderSpecLabel(
+                                          color: row['variantColor'] as String?,
+                                          size: row['variantSize'] as String?,
+                                        )
+                                        case final spec?)
+                                      spec,
+                                  ].join(' · '),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(

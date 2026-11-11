@@ -752,6 +752,18 @@ export class ProductsService {
       keys.add(key);
     }
 
+    const previousPhotos = await this.prisma.productVariant.findMany({
+      where: { productId: product.id },
+      select: { color: true, imageUrl: true },
+    });
+    const photoByColor = new Map<string, string>();
+    for (const row of previousPhotos) {
+      const key = row.color.trim().toLowerCase();
+      if (row.imageUrl && !photoByColor.has(key)) {
+        photoByColor.set(key, row.imageUrl);
+      }
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.productVariant.deleteMany({ where: { productId: product.id } });
       if (normalized.length > 0) {
@@ -766,7 +778,10 @@ export class ProductsService {
             stockStatus: row.stockStatus,
             enabled: row.enabled,
             sortOrder: row.sortOrder,
-            imageUrl: row.imageUrl,
+            imageUrl:
+              row.imageUrl ||
+              photoByColor.get(row.color.trim().toLowerCase()) ||
+              null,
           })),
         });
         const total = aggregateVariantStock(normalized);

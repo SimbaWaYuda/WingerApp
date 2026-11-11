@@ -594,6 +594,7 @@ class AppSession extends ChangeNotifier {
         deliveryMethod: deliveryMethod,
         stripePaymentMethodId: stripePaymentMethodId,
         checkoutIdempotencyKey: checkoutIdempotencyKey,
+        phone: phone,
       );
       lastOrder = order;
       _cart.clear();

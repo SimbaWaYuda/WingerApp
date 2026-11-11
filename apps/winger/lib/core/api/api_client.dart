@@ -778,6 +778,7 @@ class ApiClient {
     String? deliveryMethod,
     String? stripePaymentMethodId,
     String? checkoutIdempotencyKey,
+    String? phone,
   }) async {
     final response = await http
         .post(
@@ -794,6 +795,7 @@ class ApiClient {
             if (checkoutIdempotencyKey != null &&
                 checkoutIdempotencyKey.isNotEmpty)
               'checkoutIdempotencyKey': checkoutIdempotencyKey,
+            if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
             'items': [
               for (final item in items)
                 {
