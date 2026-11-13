@@ -3788,7 +3788,7 @@ class CheckoutScreen extends StatefulWidget {
   State<CheckoutScreen> createState() => _CheckoutScreenState();
 }
 
-enum _CheckoutPayMethod { card, payOnDelivery }
+enum _CheckoutPayMethod { card, lipa, payOnDelivery }
 
 bool _keepCheckoutAttempt(Object error) {
   final text = error.toString().toLowerCase();
@@ -3806,6 +3806,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String? _payError;
   String? _checkoutAttemptKey;
   _CheckoutPayMethod _payMethod = _CheckoutPayMethod.card;
+  List<LipaCheckoutTarget> _lipaTargets = const [];
+  bool _lipaReady = false;
   late String _fulfillment;
   late final TextEditingController _city;
   late final TextEditingController _address;
@@ -3854,7 +3856,39 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       if (!mounted) return;
       unawaited(context.read<ApiClient>().refreshCurrencyQuote());
       unawaited(context.read<AppSession>().refreshCartFromServer());
+      unawaited(_loadLipaTargets());
     });
+  }
+
+  Future<void> _loadLipaTargets() async {
+    final session = context.read<AppSession>();
+    final ids = session.cart
+        .map((item) => item.product.supplierId)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    try {
+      final rows = await context.read<ApiClient>().fetchCheckoutLipa(ids);
+      if (!mounted) return;
+      final ready =
+          ids.isNotEmpty &&
+          ids.every((id) => rows.any((row) => row.supplierId == id));
+      setState(() {
+        _lipaTargets = rows;
+        _lipaReady = ready;
+        if (!ready && _payMethod == _CheckoutPayMethod.lipa) {
+          _payMethod = _CheckoutPayMethod.card;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _lipaReady = false;
+        if (_payMethod == _CheckoutPayMethod.lipa) {
+          _payMethod = _CheckoutPayMethod.card;
+        }
+      });
+    }
   }
 
   Future<void> _selectFulfillment(String method) async {
@@ -4174,36 +4208,34 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 12),
-            SegmentedButton<_CheckoutPayMethod>(
-              segments: [
-                ButtonSegment(
-                  value: _CheckoutPayMethod.card,
-                  label: Text(s.t('payByCard')),
-                  icon: const Icon(Icons.credit_card_outlined),
-                ),
-                ButtonSegment(
-                  value: _CheckoutPayMethod.payOnDelivery,
-                  label: Text(s.t('payOnDelivery')),
-                  icon: const Icon(Icons.payments_outlined),
-                ),
-              ],
-              selected: {_payMethod},
-              onSelectionChanged: (value) {
-                setState(() => _payMethod = value.first);
-              },
+            _CheckoutPayChoices(
+              method: _payMethod,
+              lipaReady: _lipaReady,
+              cardLabel: s.t('payByCard'),
+              lipaLabel: s.t('payWithLipa'),
+              deliveryLabel: s.t('payOnDelivery'),
+              onChanged: (value) => setState(() => _payMethod = value),
             ),
             const SizedBox(height: 16),
-            Text(
-              _payMethod == _CheckoutPayMethod.payOnDelivery
-                  ? '${s.t('payOnDeliveryHint')}\n'
-                        '${session.showPaymentEstimate ? '${s.t('estimatedAmount').replaceAll('{amount}', session.formatMoney(session.cartGrandTotal))}\n' : ''}'
-                        '${s.t('payWhenArrives').replaceAll('{amount}', session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal))}\n'
-                        '${session.addressLine}, ${session.city}'
-                  : session.apiOnline && session.accessToken != null
-                  ? _cardCheckoutNote(s, session)
-                  : '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)} — '
-                        '${s.t('orderSavedOffline')}',
-            ),
+            if (_payMethod == _CheckoutPayMethod.lipa)
+              _LipaPayInstructions(
+                targets: _lipaTargets,
+                amountLabel: session.formatMoney(session.cartGrandTotal),
+                hint: s.t('payWithLipaHint'),
+                numberLabel: s.t('lipaOrTillNumber'),
+              )
+            else
+              Text(
+                _payMethod == _CheckoutPayMethod.payOnDelivery
+                    ? '${s.t('payOnDeliveryHint')}\n'
+                          '${session.showPaymentEstimate ? '${s.t('estimatedAmount').replaceAll('{amount}', session.formatMoney(session.cartGrandTotal))}\n' : ''}'
+                          '${s.t('payWhenArrives').replaceAll('{amount}', session.showPaymentEstimate ? session.formatMoney(session.cartGrandTotal, settlement: true) : session.formatMoney(session.cartGrandTotal))}\n'
+                          '${session.addressLine}, ${session.city}'
+                    : session.apiOnline && session.accessToken != null
+                    ? _cardCheckoutNote(s, session)
+                    : '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)} — '
+                          '${s.t('orderSavedOffline')}',
+              ),
             if (_payMethod == _CheckoutPayMethod.card &&
                 (session.stripeCheckoutMode == 'test' ||
                     session.stripeCheckoutMode == 'live')) ...[
@@ -4321,10 +4353,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             _payError = null;
                           });
                           try {
-                            final method =
-                                _payMethod == _CheckoutPayMethod.payOnDelivery
-                                ? 'pay_on_delivery'
-                                : 'card';
+                            final method = switch (_payMethod) {
+                              _CheckoutPayMethod.payOnDelivery =>
+                                'pay_on_delivery',
+                              _CheckoutPayMethod.lipa => 'lipa',
+                              _CheckoutPayMethod.card => 'card',
+                            };
                             if (method == 'pay_on_delivery' &&
                                 session.deliveryMethod != 'pickup' &&
                                 (session.addressLine.trim().isEmpty ||
@@ -4381,6 +4415,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 content: Text(
                                   method == 'pay_on_delivery'
                                       ? '${order.id} · ${s.t('payOnDelivery')} · ${order.paymentStatus}'
+                                      : method == 'lipa'
+                                      ? '${order.id} · ${s.t('payWithLipa')}'
                                       : '${order.id} · ${order.paymentMode} · ${order.paymentStatus}',
                                 ),
                               ),
@@ -4412,9 +4448,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         )
                       : Text(
                           step == 3
-                              ? (_payMethod == _CheckoutPayMethod.payOnDelivery
-                                    ? s.t('placeOrderCod')
-                                    : s.t('payment'))
+                              ? (_payMethod == _CheckoutPayMethod.card
+                                    ? s.t('payment')
+                                    : s.t('placeOrderCod'))
                               : s.t('continueRole'),
                         ),
                 ),
@@ -4439,7 +4475,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ? s.t('orderConfirmed')
                 : '${s.t('orderConfirmed')} · ${session.lastOrder!.id}',
           ),
-          if (session.lastOrder != null)
+          if (session.lastOrder?.paymentMethod == 'lipa') ...[
+            const SizedBox(height: 12),
+            _LipaPayInstructions(
+              targets: _lipaTargets,
+              amountLabel:
+                  session.lastOrder?.customerPayLabel() ??
+                  session.formatMoney(session.cartGrandTotal),
+              hint: s.t('payWithLipaHint'),
+              numberLabel: s.t('lipaOrTillNumber'),
+            ),
+          ] else if (session.lastOrder != null)
             Text(
               session.lastOrder!.isCodPending
                   ? s
@@ -4467,6 +4513,139 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _CheckoutPayChoices extends StatelessWidget {
+  const _CheckoutPayChoices({
+    required this.method,
+    required this.lipaReady,
+    required this.cardLabel,
+    required this.lipaLabel,
+    required this.deliveryLabel,
+    required this.onChanged,
+  });
+
+  final _CheckoutPayMethod method;
+  final bool lipaReady;
+  final String cardLabel;
+  final String lipaLabel;
+  final String deliveryLabel;
+  final ValueChanged<_CheckoutPayMethod> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final choices = <(_CheckoutPayMethod, String, IconData)>[
+      (_CheckoutPayMethod.card, cardLabel, Icons.credit_card_outlined),
+      if (lipaReady)
+        (_CheckoutPayMethod.lipa, lipaLabel, Icons.phone_android_outlined),
+      (_CheckoutPayMethod.payOnDelivery, deliveryLabel, Icons.payments_outlined),
+    ];
+    return Column(
+      children: [
+        for (final choice in choices) ...[
+          SizedBox(
+            width: double.infinity,
+            child: choice.$1 == method
+                ? FilledButton.icon(
+                    onPressed: () => onChanged(choice.$1),
+                    icon: Icon(choice.$3),
+                    label: Text(choice.$2),
+                  )
+                : OutlinedButton.icon(
+                    onPressed: () => onChanged(choice.$1),
+                    icon: Icon(choice.$3),
+                    label: Text(choice.$2),
+                  ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+class _LipaPayInstructions extends StatelessWidget {
+  const _LipaPayInstructions({
+    required this.targets,
+    required this.amountLabel,
+    required this.hint,
+    required this.numberLabel,
+  });
+
+  final List<LipaCheckoutTarget> targets;
+  final String amountLabel;
+  final String hint;
+  final String numberLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(hint.replaceAll('{amount}', amountLabel)),
+        const SizedBox(height: 12),
+        for (final target in targets)
+          Card(
+            child: ListTile(
+              title: Text(
+                target.merchantName.isEmpty
+                    ? target.supplierName
+                    : target.merchantName,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                '$numberLabel\n${target.lipaOrTillNumber}\n${target.networkLabel}',
+              ),
+              isThreeLine: true,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _OrderLipaNotice extends StatefulWidget {
+  const _OrderLipaNotice({required this.order});
+
+  final CustomerOrder order;
+
+  @override
+  State<_OrderLipaNotice> createState() => _OrderLipaNoticeState();
+}
+
+class _OrderLipaNoticeState extends State<_OrderLipaNotice> {
+  late final Future<List<LipaCheckoutTarget>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    final ids = widget.order.itemRows
+        .map((item) => item.supplierId)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    _future = context.read<ApiClient>().fetchCheckoutLipa(ids);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return FutureBuilder<List<LipaCheckoutTarget>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final rows = snapshot.data ?? const <LipaCheckoutTarget>[];
+        if (rows.isEmpty) {
+          return Text(s.t('payWithLipa'));
+        }
+        return _LipaPayInstructions(
+          targets: rows,
+          amountLabel: widget.order.customerPayLabel(),
+          hint: s.t('payWithLipaHint'),
+          numberLabel: s.t('lipaOrTillNumber'),
+        );
+      },
     );
   }
 }
@@ -5014,7 +5193,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text('${s.t('placedOn')}: ${order.placedAt.toLocal()}'),
-                    Text(
+                    if (order.paymentMethod == 'lipa')
+                      _OrderLipaNotice(order: order)
+                    else
+                      Text(
                       order.isCodPending
                           ? s
                                 .t(

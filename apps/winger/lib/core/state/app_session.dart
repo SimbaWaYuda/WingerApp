@@ -578,7 +578,8 @@ class AppSession extends ChangeNotifier {
 
     final cod = paymentMethod == 'pay_on_delivery' ||
         paymentMethod == 'cod' ||
-        paymentMethod == 'cash_on_delivery';
+        paymentMethod == 'cash_on_delivery' ||
+        paymentMethod == 'lipa';
     if (cod && deliveryMethod != 'pickup') {
       if (addressLine.trim().isEmpty || city.trim().isEmpty) {
         throw Exception('Address and city are required for pay on delivery');

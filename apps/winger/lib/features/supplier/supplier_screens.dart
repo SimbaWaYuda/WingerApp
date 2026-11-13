@@ -905,6 +905,15 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(order.customerName),
+                            if (order.paymentMethod == 'lipa') ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                s.t('payWithLipa'),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
                             if (contactPhone(order.customerPhone) != null) ...[
                               const SizedBox(height: 4),
                               InkWell(
@@ -986,7 +995,8 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                 style: TextStyle(color: WingerColors.muted),
                               ),
                             ],
-                            if (order.isPayOnDelivery &&
+                            if ((order.isPayOnDelivery ||
+                                    order.paymentMethod == 'lipa') &&
                                 order.customerPaysOtherCurrency) ...[
                               const SizedBox(height: 4),
                               Text(
@@ -1137,7 +1147,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                                         : null,
                                     child: Text(s.t('markDelivered')),
                                   ),
-                                  if (order.isCodPending)
+                                  if (order.awaitsSupplierCollection)
                                     OutlinedButton(
                                       onPressed: () => _updateItem(
                                         order: order,

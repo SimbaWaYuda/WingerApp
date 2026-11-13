@@ -458,6 +458,9 @@ class WingerStrings {
       'cardHostedNote':
           'The card is entered in Stripe. Winger does not receive the card number.',
       'payOnDelivery': 'Pay on delivery',
+      'payWithLipa': 'Pay with Lipa',
+      'payWithLipaHint':
+          'Send {amount} to this Lipa number, then place the order. The supplier confirms when the money arrives.',
       'payOnDeliveryHint':
           'No charge now — pay cash or mobile money when your order arrives.',
       'placeOrderCod': 'Place order',
@@ -1132,6 +1135,9 @@ class WingerStrings {
       'cardHostedNote':
           'La tarjeta se escribe en Stripe. Winger no recibe el número.',
       'payOnDelivery': 'Pagar al entregar',
+      'payWithLipa': 'Pagar con Lipa',
+      'payWithLipaHint':
+          'Envía {amount} a este número Lipa y luego haz el pedido. El proveedor confirma cuando llega el dinero.',
       'payOnDeliveryHint':
           'Sin cargo ahora — paga en efectivo o móvil al recibir el pedido.',
       'placeOrderCod': 'Hacer pedido',
@@ -1806,6 +1812,9 @@ class WingerStrings {
       'cardHostedNote':
           'Kadi inaandikwa kwa Stripe. Winger haipokei nambari ya kadi.',
       'payOnDelivery': 'Lipa unapopokea',
+      'payWithLipa': 'Lipa kwa namba ya Lipa',
+      'payWithLipaHint':
+          'Tuma {amount} kwenye namba hii ya Lipa, kisha weka oda. Msambazaji atathibitisha pesa zikifika.',
       'payOnDeliveryHint':
           'Hakuna malipo sasa — lipa pesa taslimu au mobile money unapopokea.',
       'placeOrderCod': 'Weka oda',

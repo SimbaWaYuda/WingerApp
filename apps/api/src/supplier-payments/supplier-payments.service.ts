@@ -307,6 +307,41 @@ export class SupplierPaymentsService {
     return this.buildSupplierView(updated.supplierId, updated.id);
   }
 
+  /** Approved Lipa numbers a customer can pay. Unapproved profiles are omitted. */
+  async checkoutLipa(supplierIds: string[]) {
+    const ids = [
+      ...new Set(
+        supplierIds
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0 && id.length <= 80),
+      ),
+    ].slice(0, 20);
+    if (ids.length === 0) return { suppliers: [] };
+
+    const profiles = await this.prisma.supplierPaymentProfile.findMany({
+      where: {
+        supplierId: { in: ids },
+        status: SupplierPaymentProfileStatus.APPROVED,
+        preference: PaymentArrangementPreference.SUPPLIER_DIRECT,
+      },
+      include: { supplier: { select: { name: true } } },
+      orderBy: { version: 'desc' },
+    });
+    const latest = new Map<string, (typeof profiles)[number]>();
+    for (const row of profiles) {
+      if (!latest.has(row.supplierId)) latest.set(row.supplierId, row);
+    }
+    return {
+      suppliers: [...latest.values()].map((row) => ({
+        supplierId: row.supplierId,
+        supplierName: row.supplier.name,
+        merchantName: row.merchantName,
+        lipaOrTillNumber: row.lipaOrTillNumber,
+        network: row.network,
+      })),
+    };
+  }
+
   /** Public-safe display fields for an approved direct profile (Phase 2+). */
   customerVisibleInstructions(profile: {
     preference: PaymentArrangementPreference;

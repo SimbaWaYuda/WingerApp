@@ -510,6 +510,47 @@ class CartShipmentQuote {
   final String? courierName;
 }
 
+class LipaCheckoutTarget {
+  const LipaCheckoutTarget({
+    required this.supplierId,
+    required this.supplierName,
+    required this.merchantName,
+    required this.lipaOrTillNumber,
+    required this.network,
+  });
+
+  final String supplierId;
+  final String supplierName;
+  final String merchantName;
+  final String lipaOrTillNumber;
+  final String network;
+
+  String get networkLabel {
+    switch (network.toUpperCase()) {
+      case 'M_PESA':
+        return 'M-Pesa';
+      case 'TIGO':
+        return 'Tigo Pesa';
+      case 'AIRTEL':
+        return 'Airtel Money';
+      case 'HALO':
+        return 'Halopesa';
+      default:
+        return 'Mobile money';
+    }
+  }
+}
+
+LipaCheckoutTarget lipaCheckoutTargetFromApi(Map<String, dynamic> json) {
+  return LipaCheckoutTarget(
+    supplierId: json['supplierId'] as String? ?? '',
+    supplierName: json['supplierName'] as String? ?? '',
+    merchantName: json['merchantName'] as String? ?? '',
+    lipaOrTillNumber: json['lipaOrTillNumber'] as String? ?? '',
+    network: json['network'] as String? ?? '',
+  );
+}
+
 String? carrierCaption({
   String? carrier,
   String? courierName,
@@ -696,6 +737,11 @@ class CustomerOrder {
 
   bool get isCodPending =>
       paymentMode == 'cod' && paymentStatus.toUpperCase() == 'PENDING';
+
+  /// Cash on delivery or a Lipa payment the supplier has not confirmed yet.
+  bool get awaitsSupplierCollection =>
+      paymentStatus.toUpperCase() == 'PENDING' &&
+      (paymentMode == 'cod' || paymentMode == 'lipa');
 
   bool get isPayOnDelivery =>
       paymentMode == 'cod' ||

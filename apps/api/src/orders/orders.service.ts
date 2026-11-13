@@ -23,6 +23,7 @@ import { FxService } from '../fx/fx.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SupplierPaymentsService } from '../supplier-payments/supplier-payments.service';
 import {
   cityTaxRateFor,
   computeFulfillmentFees,
@@ -175,6 +176,7 @@ export class OrdersService {
     private readonly fx: FxService,
     private readonly audit: AuditService,
     private readonly payouts: PayoutsService,
+    private readonly supplierPayments: SupplierPaymentsService,
   ) {}
 
   /**
@@ -511,17 +513,24 @@ export class OrdersService {
     });
     const total = new Prisma.Decimal(fees.total.toFixed(2));
     const payOnDelivery = isPayOnDelivery(dto.paymentMethod);
-    const stripePaymentMethodId = this.requireCardPaymentMethod(dto, payOnDelivery);
+    const payWithLipa = isLipaPayment(dto.paymentMethod);
+    const stripePaymentMethodId = this.requireCardPaymentMethod(
+      dto,
+      payOnDelivery || payWithLipa,
+    );
     const deliveryMethod = normalizeDeliveryMethod(dto.deliveryMethod);
     const addressLine = (dto.addressLine ?? '').trim();
     const city = (dto.city ?? '').trim();
-    if (payOnDelivery && deliveryMethod !== 'pickup') {
+    if ((payOnDelivery || payWithLipa) && deliveryMethod !== 'pickup') {
       if (!addressLine || !city) {
         throw new BadRequestException(
           'Address and city are required for pay on delivery',
         );
       }
     }
+    const lipaSuppliers = payWithLipa
+      ? await this.requireLipaForLines(lines.map((line) => line.product.supplierId))
+      : [];
 
     const fxConfig = await this.fx.publicConfig();
     const settlementCurrency = fxConfig.settlementCurrency;
@@ -588,8 +597,14 @@ export class OrdersService {
           paymentStatus: PaymentStatus.PENDING,
           paymentMethod: payOnDelivery
             ? 'pay_on_delivery'
-            : (dto.paymentMethod ?? 'card'),
-          paymentMode: payOnDelivery ? 'cod' : this.stripe.checkoutMode,
+            : payWithLipa
+              ? 'lipa'
+              : (dto.paymentMethod ?? 'card'),
+          paymentMode: payOnDelivery
+            ? 'cod'
+            : payWithLipa
+              ? 'lipa'
+              : this.stripe.checkoutMode,
           currency: settlementCurrency,
           settlementCurrency,
           displayCurrency,
@@ -759,19 +774,24 @@ export class OrdersService {
       throw error;
     }
 
-    if (payOnDelivery) {
-      // COD: snapshot at confirmation as PENDING; settle later on delivery + payment.
+    if (payOnDelivery || payWithLipa) {
+      // No card charge. The supplier confirms when the customer pays.
       await this.commissions.createSnapshotsForOrder({
         orderId: order.id,
-        paymentMode: 'cod',
+        paymentMode: payWithLipa ? 'lipa' : 'cod',
         isDemo: false,
         initialStatus: CommissionRecognitionStatus.PENDING,
       });
       await this.onboarding.onOrderPlaced(user.sub, user.role);
-      return this.toResponse(
-        order,
-        'Pay on delivery — collect payment when the order is delivered',
-      );
+      return {
+        ...this.toResponse(
+          order,
+          payWithLipa
+            ? 'Pay the Lipa number, then the supplier confirms the payment'
+            : 'Pay on delivery — collect payment when the order is delivered',
+        ),
+        lipaPayments: payWithLipa ? lipaSuppliers : undefined,
+      };
     }
 
     return this.chargeAndRecord(order, stripePaymentMethodId, user);
@@ -2737,7 +2757,8 @@ export class OrdersService {
     }
     if (
       existing.paymentStatus === PaymentStatus.PAID ||
-      existing.paymentMode === 'cod'
+      existing.paymentMode === 'cod' ||
+      existing.paymentMode === 'lipa'
     ) {
       return this.toResponse(existing);
     }
@@ -3028,6 +3049,18 @@ export class OrdersService {
         paymentMode: mode,
       },
     });
+  }
+
+  /** Every supplier on a Lipa order must have an approved supplier-direct number. */
+  private async requireLipaForLines(supplierIds: string[]) {
+    const ids = [...new Set(supplierIds.filter(Boolean))];
+    const lipa = await this.supplierPayments.checkoutLipa(ids);
+    if (lipa.suppliers.length !== ids.length) {
+      throw new BadRequestException(
+        'Lipa payment needs an approved Lipa number for every supplier in the cart',
+      );
+    }
+    return lipa.suppliers;
   }
 
   /** Test and live card checkout must name a Stripe PaymentMethod. Demo does not. */
@@ -3471,6 +3504,12 @@ export class OrdersService {
       }),
     });
   }
+}
+
+function isLipaPayment(method?: string): boolean {
+  if (!method) return false;
+  const normalized = method.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return normalized === 'lipa' || normalized === 'pay_with_lipa';
 }
 
 function isPayOnDelivery(method?: string): boolean {

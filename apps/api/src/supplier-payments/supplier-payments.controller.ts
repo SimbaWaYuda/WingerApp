@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
@@ -22,6 +23,16 @@ import {
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SupplierPaymentsController {
   constructor(private readonly payments: SupplierPaymentsService) {}
+
+  @Get('checkout')
+  @Roles(UserRole.CUSTOMER)
+  checkoutLipa(@Query('supplierIds') supplierIds?: string) {
+    const ids = (supplierIds ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    return this.payments.checkoutLipa(ids);
+  }
 
   @Get('me')
   @Roles(UserRole.SUPPLIER)

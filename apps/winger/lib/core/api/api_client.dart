@@ -1695,6 +1695,34 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<List<LipaCheckoutTarget>> fetchCheckoutLipa(
+    List<String> supplierIds,
+  ) async {
+    final ids = supplierIds.where((id) => id.trim().isNotEmpty).toSet();
+    if (ids.isEmpty) return const [];
+    _requireAccessToken();
+    final response = await http
+        .get(
+          _uri(
+            '/supplier-payments/checkout?supplierIds=${Uri.encodeQueryComponent(ids.join(','))}',
+          ),
+          headers: session.authHeaders,
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode != 200) return const [];
+    final body = jsonDecode(response.body);
+    if (body is! Map<String, dynamic>) return const [];
+    final rows = body['suppliers'];
+    if (rows is! List) return const [];
+    return rows
+        .whereType<Map>()
+        .map(
+          (row) => lipaCheckoutTargetFromApi(Map<String, dynamic>.from(row)),
+        )
+        .where((row) => row.lipaOrTillNumber.isNotEmpty)
+        .toList();
+  }
+
   Future<Map<String, dynamic>> fetchSupplierPaymentProfile() async {
     _requireAccessToken();
     final response = await http

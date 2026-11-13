@@ -4,6 +4,7 @@ import { CommissionsModule } from '../commissions/commissions.module';
 import { FxModule } from '../fx/fx.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
+import { SupplierPaymentsModule } from '../supplier-payments/supplier-payments.module';
 import { CardElementController } from './card-element.controller';
 import { ConnectController, SupplierConnectController } from './connect.controller';
 import { OrdersController } from './orders.controller';
@@ -19,6 +20,7 @@ import { StripeWebhookController } from './stripe-webhook.controller';
     CommissionsModule,
     NotificationsModule,
     FxModule,
+    SupplierPaymentsModule,
   ],
   controllers: [
     OrdersController,

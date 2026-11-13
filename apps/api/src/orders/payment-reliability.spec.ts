@@ -160,6 +160,7 @@ describe('payment and commission reliability', () => {
       {} as FxService,
       audit as unknown as AuditService,
       payouts as never,
+      { checkoutLipa: jest.fn().mockResolvedValue({ suppliers: [] }) } as never,
     );
   });
 
