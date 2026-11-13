@@ -1642,6 +1642,118 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> _commissionJson(
+    String method,
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
+    _requireAccessToken();
+    final uri = _uri(path);
+    final response = await (method == 'GET'
+            ? http.get(uri, headers: session.authHeaders)
+            : http.post(
+                uri,
+                headers: session.authHeaders,
+                body: jsonEncode(body ?? const {}),
+              ))
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final err = _tryJson(response.body);
+      throw Exception(
+        err?['message']?.toString() ??
+            'Commission request failed (${response.statusCode})',
+      );
+    }
+    if (response.body.isEmpty) return const {};
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) return decoded;
+    return {'items': decoded};
+  }
+
+  Future<Map<String, dynamic>> fetchSupplierCommissionAccount() {
+    return _commissionJson('GET', '/commissions/supplier/account');
+  }
+
+  Future<Map<String, dynamic>> fetchSupplierReceivingAccounts() {
+    return _commissionJson('GET', '/commissions/supplier/receiving-accounts');
+  }
+
+  Future<List<dynamic>> fetchSupplierRemittances() async {
+    final body = await _commissionJson('GET', '/commissions/supplier/remittances');
+    return (body['items'] as List?) ?? const [];
+  }
+
+  Future<void> submitCommissionRemittance({
+    required String method,
+    required double claimedAmount,
+    required String claimedCurrency,
+    required String reference,
+    String? note,
+  }) async {
+    await _commissionJson('POST', '/commissions/supplier/remittances', {
+      'method': method,
+      'claimedAmount': claimedAmount,
+      'claimedCurrency': claimedCurrency,
+      'reference': reference,
+      if (note != null) 'note': note,
+    });
+  }
+
+  Future<void> submitLipaEvidence({
+    required String orderId,
+    required String reference,
+    String? note,
+  }) async {
+    await _commissionJson('POST', '/commissions/supplier/lipa-evidence', {
+      'orderId': orderId,
+      'reference': reference,
+      if (note != null) 'note': note,
+    });
+  }
+
+  Future<Map<String, dynamic>> fetchAdminCommissionAccounts() {
+    return _commissionJson('GET', '/commissions/admin/accounts');
+  }
+
+  Future<List<dynamic>> fetchAdminRemittances() async {
+    final body = await _commissionJson('GET', '/commissions/admin/remittances');
+    return (body['items'] as List?) ?? const [];
+  }
+
+  Future<Map<String, dynamic>> fetchHeldFunds() {
+    return _commissionJson('GET', '/commissions/admin/held-funds');
+  }
+
+  Future<Map<String, dynamic>> fetchReceivingAccounts() {
+    return _commissionJson('GET', '/commissions/admin/receiving-accounts');
+  }
+
+  Future<void> saveReceivingAccounts(Map<String, dynamic> body) async {
+    await _commissionJson('POST', '/commissions/admin/receiving-accounts', body);
+  }
+
+  Future<Map<String, dynamic>> previewRemittanceFx(String id) {
+    return _commissionJson('GET', '/commissions/admin/remittances/$id/fx-preview');
+  }
+
+  Future<void> verifyCommissionRemittance(String id, {bool confirmExchange = false}) async {
+    await _commissionJson('POST', '/commissions/admin/remittances/$id/verify', {
+      'confirmExchange': confirmExchange,
+    });
+  }
+
+  Future<void> rejectCommissionRemittance(String id, String reviewNote) async {
+    await _commissionJson('POST', '/commissions/admin/remittances/$id/reject', {
+      'reviewNote': reviewNote,
+    });
+  }
+
+  Future<void> reverseCommissionRemittance(String id, String reason) async {
+    await _commissionJson('POST', '/commissions/admin/remittances/$id/reverse', {
+      'reason': reason,
+    });
+  }
+
   Future<Map<String, dynamic>> fetchConnectStatus() async {
     _requireAccessToken();
     final response = await http

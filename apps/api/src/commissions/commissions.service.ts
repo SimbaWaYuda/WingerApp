@@ -16,6 +16,7 @@ import { AuthUser } from '../auth/auth.types';
 import { cardCheckoutMode } from '../orders/checkout-mode';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from './audit.service';
+import { CommissionLedgerService } from './commission-ledger.service';
 import {
   assertValidRatePercent,
   buildSnapshotValues,
@@ -46,6 +47,7 @@ export class CommissionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly ledger: CommissionLedgerService,
   ) {}
 
   async getSettings() {
@@ -469,26 +471,31 @@ export class CommissionsService {
       return { clawedBack: false, reason: 'already_clawed_back' as const, snapshot: snap };
     }
 
-    const updated = await this.prisma.orderItemCommission.update({
-      where: { id: snap.id },
-      data: { status: CommissionRecognitionStatus.CLAWED_BACK },
-    });
-    await this.audit.record({
-      entityType: 'OrderItemCommission',
-      entityId: snap.id,
-      action: 'COMMISSION_CLAWED_BACK',
-      actorUserId: params.actor.sub,
-      actorRole: params.actor.role,
-      before: {
-        status: snap.status,
-        commissionAmount: Number(snap.commissionAmount),
-        orderItemId: params.orderItemId,
-      },
-      after: {
-        status: updated.status,
-        commissionAmount: Number(updated.commissionAmount),
-        returnRequestId: params.returnRequestId ?? null,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.orderItemCommission.update({
+        where: { id: snap.id },
+        data: { status: CommissionRecognitionStatus.CLAWED_BACK },
+      });
+      await this.audit.record({
+        entityType: 'OrderItemCommission',
+        entityId: snap.id,
+        action: 'COMMISSION_CLAWED_BACK',
+        actorUserId: params.actor.sub,
+        actorRole: params.actor.role,
+        before: {
+          status: snap.status,
+          commissionAmount: Number(snap.commissionAmount),
+          orderItemId: params.orderItemId,
+        },
+        after: {
+          status: row.status,
+          commissionAmount: Number(row.commissionAmount),
+          returnRequestId: params.returnRequestId ?? null,
+        },
+        tx,
+      });
+      await this.ledger.restoreAfterClawback(tx, snap.id, params.actor);
+      return row;
     });
     return { clawedBack: true, reason: 'ok' as const, snapshot: updated };
   }

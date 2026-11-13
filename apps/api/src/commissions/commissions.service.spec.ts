@@ -12,6 +12,7 @@ import {
 import { AuthUser } from '../auth/auth.types';
 import { cardCheckoutMode } from '../orders/checkout-mode';
 import { AuditService } from './audit.service';
+import { CommissionLedgerService } from './commission-ledger.service';
 import { CommissionsService } from './commissions.service';
 
 function admin(): AuthUser {
@@ -70,7 +71,14 @@ describe('CommissionsService', () => {
       record: jest.fn().mockResolvedValue({}),
       listForEntity: jest.fn().mockResolvedValue([]),
     };
-    service = new CommissionsService(prisma, audit as unknown as AuditService);
+    const ledger = {
+      restoreAfterClawback: jest.fn().mockResolvedValue({ restored: true }),
+    };
+    service = new CommissionsService(
+      prisma,
+      audit as unknown as AuditService,
+      ledger as unknown as CommissionLedgerService,
+    );
   });
 
   describe('updateDefaultCommission', () => {
@@ -409,6 +417,95 @@ describe('CommissionsService', () => {
           recognizedAt: null,
         },
         order: { paymentStatus: PaymentStatus.PAID, paymentMode: 'demo' },
+      });
+      prisma.orderItemCommission.update.mockImplementation(async ({ data }: any) => ({
+        id: 'c1',
+        ...data,
+      }));
+
+      const updated = await service.advanceRecognitionForItem('item-1');
+      expect(updated?.status).toBe(CommissionRecognitionStatus.RECOGNIZED);
+      expect(updated?.status).not.toBe(CommissionRecognitionStatus.SETTLEABLE);
+    });
+
+    it('recognises a paid undelivered Lipa line and leaves it there on retry', async () => {
+      const item = {
+        id: 'item-1',
+        supplierId: 'sup-1',
+        status: OrderStatus.PROCESSING,
+        commission: {
+          id: 'c1',
+          status: CommissionRecognitionStatus.PENDING,
+          isDemo: false,
+          recognizedAt: null,
+        },
+        order: {
+          id: 'ord-1',
+          paymentStatus: PaymentStatus.PAID,
+          paymentMode: 'lipa',
+        },
+      };
+      prisma.orderItem.findUnique.mockResolvedValue(item);
+      prisma.orderItemCommission.update.mockImplementation(async ({ data }: any) => {
+        item.commission = { ...item.commission, ...data };
+        return item.commission;
+      });
+
+      const first = await service.advanceRecognitionForItem('item-1');
+      expect(first?.status).toBe(CommissionRecognitionStatus.RECOGNIZED);
+      prisma.orderItemCommission.update.mockClear();
+      const second = await service.advanceRecognitionForItem('item-1');
+      expect(second?.status).toBe(CommissionRecognitionStatus.RECOGNIZED);
+      expect(prisma.orderItemCommission.update).not.toHaveBeenCalled();
+    });
+
+    it('settles a delivered paid card line and does not move a settleable line again', async () => {
+      const item = {
+        id: 'item-1',
+        supplierId: 'sup-1',
+        status: OrderStatus.DELIVERED,
+        commission: {
+          id: 'c1',
+          status: CommissionRecognitionStatus.PENDING,
+          isDemo: false,
+          recognizedAt: null,
+        },
+        order: {
+          id: 'ord-1',
+          paymentStatus: PaymentStatus.PAID,
+          paymentMode: 'card',
+        },
+      };
+      prisma.orderItem.findUnique.mockResolvedValue(item);
+      prisma.orderItemCommission.update.mockImplementation(async ({ data }: any) => {
+        item.commission = { ...item.commission, ...data };
+        return item.commission;
+      });
+
+      const first = await service.advanceRecognitionForItem('item-1');
+      expect(first?.status).toBe(CommissionRecognitionStatus.SETTLEABLE);
+      prisma.orderItemCommission.update.mockClear();
+      const second = await service.advanceRecognitionForItem('item-1');
+      expect(second?.status).toBe(CommissionRecognitionStatus.SETTLEABLE);
+      expect(prisma.orderItemCommission.update).not.toHaveBeenCalled();
+    });
+
+    it('never marks a delivered paid demo Lipa line SETTLEABLE', async () => {
+      prisma.orderItem.findUnique.mockResolvedValue({
+        id: 'item-1',
+        supplierId: 'sup-1',
+        status: OrderStatus.DELIVERED,
+        commission: {
+          id: 'c1',
+          status: CommissionRecognitionStatus.PENDING,
+          isDemo: true,
+          recognizedAt: null,
+        },
+        order: {
+          id: 'ord-1',
+          paymentStatus: PaymentStatus.PAID,
+          paymentMode: 'lipa',
+        },
       });
       prisma.orderItemCommission.update.mockImplementation(async ({ data }: any) => ({
         id: 'c1',

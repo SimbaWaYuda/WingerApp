@@ -76,6 +76,61 @@ enum CommissionAgreementStatus {
   SUPERSEDED
 }
 
+enum CommissionRemittanceMethod {
+  WINGER_LIPA
+  BANK_TRANSFER
+  ADMIN_RECORDED
+}
+
+enum CommissionRemittanceStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+  REVERSED
+}
+
+enum CommissionEvidenceStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum CommissionAllocationReason {
+  AUTO
+  MANUAL
+  SWEEP
+}
+
+/// Distinguishes a human user from Winger's own ledger worker.
+/// System rows do not point at a User.
+enum CommissionActorType {
+  USER
+  SYSTEM
+}
+
+enum CommissionRecognitionJobStatus {
+  PENDING
+  AWAITING_SWEEP
+  COMPLETED
+}
+
+enum CommissionCreditReason {
+  CLAWBACK_AFTER_COLLECTION
+}
+
+enum CommissionCreditApplicationReason {
+  AUTO
+  MANUAL
+}
+
+enum CommissionApplicationReversalReason {
+  CUSTOMER_REFUND
+  REMITTANCE_REVERSED
+  MANUAL
+}
+
 /// Who should receive customer funds for this supplier's merchandise.
 enum PaymentArrangementPreference {
   WINGER_MANAGED
@@ -133,6 +188,11 @@ model User {
   commissionAgreementsAccepted SupplierCommissionAgreement[] @relation("AgreementAcceptedBy")
   paymentProfilesSubmitted SupplierPaymentProfile[] @relation("PaymentProfileSubmittedBy")
   paymentProfilesReviewed  SupplierPaymentProfile[] @relation("PaymentProfileReviewedBy")
+  remittancesSubmitted CommissionRemittance[] @relation("RemittanceSubmittedBy")
+  remittancesReviewed  CommissionRemittance[] @relation("RemittanceReviewedBy")
+  remittancesReversed  CommissionRemittanceReversal[] @relation("RemittanceReversedBy")
+  lipaEvidenceSubmitted CustomerPaymentEvidence[] @relation("LipaEvidenceSubmittedBy")
+  lipaEvidenceReviewed  CustomerPaymentEvidence[] @relation("LipaEvidenceReviewedBy")
 
   @@index([role])
   @@index([supplierId])
@@ -179,6 +239,9 @@ model Supplier {
   commissionAgreements SupplierCommissionAgreement[]
   cashCollections      CashCollection[]
   paymentProfiles      SupplierPaymentProfile[]
+  commissionRemittances CommissionRemittance[]
+  commissionCredits    CommissionCredit[]
+  lipaEvidence         CustomerPaymentEvidence[]
 }
 
 /// Versioned Lipa/Till registration. SUPPLIER_DIRECT is live only when status=APPROVED.
@@ -281,6 +344,12 @@ model PlatformSettings {
   commissionsConfigured     Boolean  @default(false)
   /// Default marketplace commission % (admin-configurable). Slice 5a default: 10.
   defaultCommissionPercent  Decimal  @default(10) @db.Decimal(5, 2)
+  /// Winger receiving accounts for supplier commission remittances. Empty until an admin sets them.
+  wingerLipaNumber          String   @default("")
+  wingerLipaNetwork         String   @default("")
+  wingerBankName            String   @default("")
+  wingerBankAccountName     String   @default("")
+  wingerBankAccountNumber   String   @default("")
   updatedAt                 DateTime @updatedAt
 }
 
@@ -488,6 +557,7 @@ model Order {
   supplierReviews       SupplierReview[]
   returnRequests        ReturnRequest[]
   cashCollections       CashCollection[]
+  lipaEvidence          CustomerPaymentEvidence[]
 
   @@index([customerId])
   @@index([status])
@@ -627,6 +697,9 @@ model OrderItemCommission {
   transferReversed Boolean                     @default(false)
   createdAt        DateTime                    @default(now())
   updatedAt        DateTime                    @updatedAt
+  cashAllocations  CommissionAllocation[]
+  creditApplications CommissionCreditApplication[]
+  clawbackCredits  CommissionCredit[]
 
   @@index([status])
   @@index([agreementId])
@@ -713,4 +786,295 @@ model SyncEvent {
 
   @@index([operation, receivedAt])
   @@index([deviceId])
+}
+
+/// Supplier payment of commission to Winger. Verified money fields are written once.
+model CommissionRemittance {
+  id                  String                      @id @default(cuid())
+  supplierId          String
+  supplier            Supplier                    @relation(fields: [supplierId], references: [id])
+  method              CommissionRemittanceMethod
+  status              CommissionRemittanceStatus  @default(SUBMITTED)
+  claimedAmount       Decimal                     @db.Decimal(12, 2)
+  claimedCurrency     String
+  verifiedAmountUsd   Decimal?                    @db.Decimal(12, 2)
+  fxBaseCurrency      String?
+  fxQuoteCurrency     String?
+  fxRate              Decimal?                    @db.Decimal(18, 8)
+  fxSource            String?
+  fxFetchedAt         DateTime?
+  fxExpiresAt         DateTime?
+  referenceRaw        String
+  referenceNormalized String
+  provider            String
+  merchantAccountKey  String
+  proofStorageKey     String?
+  autoApply           Boolean                     @default(true)
+  supplierNote        String?
+  reviewNote          String?
+  submittedByUserId   String
+  submittedBy         User                        @relation("RemittanceSubmittedBy", fields: [submittedByUserId], references: [id])
+  reviewedByUserId    String?
+  reviewedBy          User?                       @relation("RemittanceReviewedBy", fields: [reviewedByUserId], references: [id])
+  verifiedAt          DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+  paymentReference    CommissionPaymentReference?
+  allocations         CommissionAllocation[]
+  reversal            CommissionRemittanceReversal?
+
+  @@index([supplierId, status])
+  @@index([status, createdAt])
+}
+
+/// Non-null unique key. Rejected submissions delete this row. Verified and reversed rows stay.
+model CommissionPaymentReference {
+  id                   String                     @id @default(cuid())
+  remittanceId         String                     @unique
+  remittance           CommissionRemittance       @relation(fields: [remittanceId], references: [id], onDelete: Cascade)
+  method               CommissionRemittanceMethod
+  provider             String
+  merchantAccountKey   String
+  currency             String
+  referenceNormalized  String
+  createdAt            DateTime                   @default(now())
+
+  @@unique([method, provider, merchantAccountKey, currency, referenceNormalized])
+}
+
+/// One apply of a remittance to a snapshot. Later applies insert new rows.
+model CommissionAllocation {
+  id                    String                      @id @default(cuid())
+  remittanceId          String
+  remittance            CommissionRemittance        @relation(fields: [remittanceId], references: [id])
+  orderItemCommissionId String
+  orderItemCommission   OrderItemCommission         @relation(fields: [orderItemCommissionId], references: [id])
+  amountUsd             Decimal                     @db.Decimal(12, 2)
+  reason                CommissionAllocationReason
+  actorUserId           String
+  actorType             CommissionActorType         @default(USER)
+  /// Set when actorType is SYSTEM. Null for a human administrator or supplier.
+  systemActorKey        String?
+  createdAt             DateTime                    @default(now())
+  reversals             CommissionAllocationReversal[]
+  creditSources         CommissionCreditSource[]
+
+  @@index([remittanceId])
+  @@index([orderItemCommissionId])
+}
+
+model CommissionAllocationReversal {
+  id                   String                     @id @default(cuid())
+  allocationId         String
+  allocation           CommissionAllocation       @relation(fields: [allocationId], references: [id])
+  remittanceReversalId String?
+  remittanceReversal   CommissionRemittanceReversal? @relation(fields: [remittanceReversalId], references: [id])
+  amountUsd            Decimal                    @db.Decimal(12, 2)
+  reason               String
+  reversalKey          String                     @unique
+  actorUserId          String
+  createdAt            DateTime                   @default(now())
+
+  @@index([allocationId])
+}
+
+model CommissionRemittanceReversal {
+  id                  String                     @id @default(cuid())
+  remittanceId        String                     @unique
+  remittance          CommissionRemittance       @relation(fields: [remittanceId], references: [id])
+  amountUsd           Decimal                    @db.Decimal(12, 2)
+  reason              String
+  originalReference   String
+  actorUserId         String
+  actor               User                       @relation("RemittanceReversedBy", fields: [actorUserId], references: [id])
+  createdAt           DateTime                   @default(now())
+  allocationReversals CommissionAllocationReversal[]
+  creditOffsets       CommissionCreditOffset[]
+  providerEvent       CommissionProviderEvent?
+
+  @@index([createdAt])
+}
+
+/// Present only when a provider sends an event id. eventId is never null.
+model CommissionProviderEvent {
+  id                   String                       @id @default(cuid())
+  eventId              String                       @unique
+  remittanceReversalId String?                      @unique
+  remittanceReversal   CommissionRemittanceReversal? @relation(fields: [remittanceReversalId], references: [id])
+  createdAt            DateTime                     @default(now())
+}
+
+model CommissionCredit {
+  id                    String                      @id @default(cuid())
+  supplierId            String
+  supplier              Supplier                    @relation(fields: [supplierId], references: [id])
+  orderItemCommissionId String
+  orderItemCommission   OrderItemCommission         @relation(fields: [orderItemCommissionId], references: [id])
+  amountUsd             Decimal                     @db.Decimal(12, 2)
+  reason                CommissionCreditReason
+  sourceEventKey        String                      @unique
+  actorUserId           String
+  createdAt             DateTime                    @default(now())
+  sources               CommissionCreditSource[]
+  applications          CommissionCreditApplication[]
+  offsets               CommissionCreditOffset[]
+
+  @@index([supplierId])
+  @@index([orderItemCommissionId])
+}
+
+model CommissionCreditSource {
+  id           String                   @id @default(cuid())
+  creditId     String
+  credit       CommissionCredit         @relation(fields: [creditId], references: [id])
+  allocationId String
+  allocation   CommissionAllocation     @relation(fields: [allocationId], references: [id])
+  amountUsd    Decimal                  @db.Decimal(12, 2)
+  createdAt    DateTime                 @default(now())
+  applicationSources CommissionCreditApplicationSource[]
+  offsetSources      CommissionCreditOffsetSource[]
+
+  @@index([creditId, createdAt])
+  @@index([allocationId])
+}
+
+model CommissionCreditApplication {
+  id                    String                              @id @default(cuid())
+  creditId              String
+  credit                CommissionCredit                    @relation(fields: [creditId], references: [id])
+  orderItemCommissionId String
+  orderItemCommission   OrderItemCommission                 @relation(fields: [orderItemCommissionId], references: [id])
+  amountUsd             Decimal                             @db.Decimal(12, 2)
+  reason                CommissionCreditApplicationReason
+  actorUserId           String
+  actorType             CommissionActorType                 @default(USER)
+  systemActorKey        String?
+  createdAt             DateTime                            @default(now())
+  sources               CommissionCreditApplicationSource[]
+
+  @@index([creditId])
+  @@index([orderItemCommissionId])
+}
+
+model CommissionCreditApplicationSource {
+  id             String                     @id @default(cuid())
+  applicationId  String
+  application    CommissionCreditApplication @relation(fields: [applicationId], references: [id])
+  creditSourceId String
+  creditSource   CommissionCreditSource     @relation(fields: [creditSourceId], references: [id])
+  amountUsd      Decimal                    @db.Decimal(12, 2)
+  createdAt      DateTime                   @default(now())
+  reversals      CommissionCreditApplicationSourceReversal[]
+
+  @@unique([applicationId, creditSourceId])
+  @@index([creditSourceId])
+}
+
+model CommissionCreditApplicationSourceReversal {
+  id                  String                                @id @default(cuid())
+  applicationSourceId String
+  applicationSource   CommissionCreditApplicationSource     @relation(fields: [applicationSourceId], references: [id])
+  amountUsd           Decimal                               @db.Decimal(12, 2)
+  reason              CommissionApplicationReversalReason
+  reversalKey         String                                @unique
+  remittanceReversalId String?
+  actorUserId         String
+  createdAt           DateTime                              @default(now())
+
+  @@index([applicationSourceId])
+}
+
+model CommissionCreditOffset {
+  id                   String                       @id @default(cuid())
+  creditId             String
+  credit               CommissionCredit             @relation(fields: [creditId], references: [id])
+  amountUsd            Decimal                      @db.Decimal(12, 2)
+  reason               String
+  remittanceReversalId String?
+  remittanceReversal   CommissionRemittanceReversal? @relation(fields: [remittanceReversalId], references: [id])
+  actorUserId          String
+  createdAt            DateTime                     @default(now())
+  sources              CommissionCreditOffsetSource[]
+
+  @@index([creditId])
+  @@index([remittanceReversalId])
+}
+
+model CommissionCreditOffsetSource {
+  id             String                 @id @default(cuid())
+  offsetId       String
+  offset         CommissionCreditOffset @relation(fields: [offsetId], references: [id])
+  creditSourceId String
+  creditSource   CommissionCreditSource @relation(fields: [creditSourceId], references: [id])
+  amountUsd      Decimal                @db.Decimal(12, 2)
+
+  @@unique([offsetId, creditSourceId])
+  @@index([creditSourceId])
+}
+
+/// Customer paid the supplier's own Lipa number. This is not a commission remittance.
+model CustomerPaymentEvidence {
+  id                   String                    @id @default(cuid())
+  orderId              String
+  order                Order                     @relation(fields: [orderId], references: [id])
+  supplierId           String
+  supplier             Supplier                  @relation(fields: [supplierId], references: [id])
+  referenceRaw         String
+  referenceNormalized  String
+  proofStorageKey      String?
+  note                 String?
+  status               CommissionEvidenceStatus  @default(SUBMITTED)
+  submittedByUserId    String
+  submittedBy          User                      @relation("LipaEvidenceSubmittedBy", fields: [submittedByUserId], references: [id])
+  reviewedByUserId     String?
+  reviewedBy           User?                     @relation("LipaEvidenceReviewedBy", fields: [reviewedByUserId], references: [id])
+  reviewedAt           DateTime?
+  reviewNote           String?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  openClaim            CustomerPaymentEvidenceOpen?
+
+  @@index([supplierId, status])
+  @@index([orderId])
+}
+
+/// One open Lipa claim per order and supplier. Deleted when the claim is verified or rejected.
+model CustomerPaymentEvidenceOpen {
+  orderId     String
+  supplierId  String
+  evidenceId  String                 @unique
+  evidence    CustomerPaymentEvidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@id([orderId, supplierId])
+}
+
+/// Written in the same transaction that marks a Lipa order paid.
+/// A crash after payment can resume recognition without verifying the evidence again.
+model CommissionRecognitionJob {
+  id          String                          @id @default(cuid())
+  orderId     String
+  orderItemId String                          @unique
+  supplierId  String
+  status      CommissionRecognitionJobStatus  @default(PENDING)
+  createdAt   DateTime                        @default(now())
+  completedAt DateTime?
+
+  @@index([orderId, status])
+  @@index([status, createdAt])
+}
+
+/// Sweep and other system ledger actions. This table has no User foreign key.
+model CommissionSystemEvent {
+  id             String              @id @default(cuid())
+  actorType      CommissionActorType @default(SYSTEM)
+  systemActorKey String
+  entityType     String
+  entityId       String
+  action         String
+  supplierId     String?
+  afterJson      Json?
+  createdAt      DateTime            @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([supplierId, createdAt])
 }

@@ -25,6 +25,7 @@ import '../../core/widgets/role_shell.dart';
 import '../../core/widgets/status_badge.dart';
 import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
+import 'commission_account_panel.dart';
 
 List<ShellDestination> supplierDestinations({int openReturns = 0}) => [
   const ShellDestination(
@@ -2465,6 +2466,7 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
               style: TextStyle(color: WingerColors.muted),
             ),
             const SizedBox(height: 20),
+            const SupplierCommissionAccountPanel(),
             Text(
               s.t('mobileMoneyPayments'),
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),

@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { AuditService } from '../commissions/audit.service';
+import { CommissionLedgerService } from '../commissions/commission-ledger.service';
 import { CommissionsService } from '../commissions/commissions.service';
 import { commissionReportRow, sumCommissionBuckets } from '../commissions/commission.math';
 import { FxService } from '../fx/fx.service';
@@ -177,6 +178,7 @@ export class OrdersService {
     private readonly audit: AuditService,
     private readonly payouts: PayoutsService,
     private readonly supplierPayments: SupplierPaymentsService,
+    private readonly ledger: CommissionLedgerService,
   ) {}
 
   /**
@@ -2626,6 +2628,11 @@ export class OrdersService {
     const snap = await this.commissions.advanceRecognitionForItem(orderItemId);
     if (snap?.status === CommissionRecognitionStatus.SETTLEABLE) {
       await this.payouts.transferIfSettleable(orderItemId);
+      const item = await this.prisma.orderItem.findUnique({
+        where: { id: orderItemId },
+        select: { supplierId: true },
+      });
+      if (item) await this.ledger.sweepSupplier(item.supplierId);
     }
   }
 

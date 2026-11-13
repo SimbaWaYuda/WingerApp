@@ -15,6 +15,7 @@ import '../../core/widgets/status_badge.dart';
 import '../../core/widgets/password_field.dart';
 import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
+import 'commission_collection_panel.dart';
 
 List<ShellDestination> adminDestinations({int returnsAttention = 0}) => [
   const ShellDestination(
@@ -1312,6 +1313,7 @@ class _AdminCommissionsScreenState extends State<AdminCommissionsScreen> {
               ),
             ],
             const SizedBox(height: 16),
+            const AdminCommissionCollectionPanel(),
             Text(
               s.t('commissionBySupplier'),
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
