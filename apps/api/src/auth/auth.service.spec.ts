@@ -121,3 +121,23 @@ describe('AuthService password reset', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('AuthService public registration', () => {
+  const prisma = {
+    user: { findUnique: jest.fn(), create: jest.fn() },
+    supplier: { findUnique: jest.fn(), create: jest.fn() },
+  };
+  const service = new AuthService(prisma as never, { sign: jest.fn() } as never);
+
+  it('rejects public administrator registration', async () => {
+    await expect(
+      service.register({
+        email: 'new-admin@example.com',
+        password: 'secret1',
+        name: 'New Admin',
+        role: UserRole.ADMIN,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+});

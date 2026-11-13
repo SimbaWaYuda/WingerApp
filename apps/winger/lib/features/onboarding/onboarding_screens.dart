@@ -225,6 +225,8 @@ class _SupplierOnboardingScreenState extends State<SupplierOnboardingScreen> {
 
   Future<void> _load() async {
     try {
+      await context.read<ApiClient>().refreshProfile();
+      if (!mounted) return;
       final progress = await context.read<ApiClient>().startOnboarding();
       if (!mounted) return;
       setState(() => _progress = progress);
@@ -255,10 +257,33 @@ class _SupplierOnboardingScreenState extends State<SupplierOnboardingScreen> {
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final api = context.read<ApiClient>();
+    final pending = context.watch<AppSession>().supplierApproved == false;
 
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        if (pending) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: WingerColors.brandMuted,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  s.t('supplierPendingTitle'),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                Text(s.t('supplierPendingBody')),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         Text(s.t('obSupplierJourney'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
         const SizedBox(height: 8),
         Text(s.t('obSupplierJourneyBody'), style: TextStyle(color: WingerColors.muted)),

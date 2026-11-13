@@ -10,6 +10,7 @@ import {
 import { Response } from 'express';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { ApprovedSupplierGuard } from '../auth/approved-supplier.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -38,7 +39,7 @@ export class ConnectController {
 }
 
 @Controller('suppliers/me/connect')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
 @Roles(UserRole.SUPPLIER)
 export class SupplierConnectController {
   constructor(private readonly payouts: PayoutsService) {}

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../app/access_gate.dart';
 import '../../core/api/api_client.dart';
 import '../../core/auth/login_credentials_store.dart';
 import '../../core/l10n/winger_strings.dart';
@@ -84,6 +85,8 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
 
+    final resumeCheckout =
+        context.read<AppSession>().resumeCheckoutAfterAuth;
     try {
       await api.login(
         email: _email.text.trim(),
@@ -106,15 +109,7 @@ class _LoginScreenState extends State<LoginScreen> {
         // Sign-in already succeeded; local remember storage is optional.
       }
       if (!mounted) return;
-      if (context.read<AppSession>().mustChangePassword) {
-        context.go('/choose-password');
-        return;
-      }
-      context.go(switch (_role) {
-        UserRole.customer => '/customer',
-        UserRole.supplier => '/supplier',
-        UserRole.admin => '/admin',
-      });
+      _openSignedInHome(resumeCheckout);
     } catch (error) {
       final apiReachable = await api.healthCheck();
       if (!mounted) return;
@@ -127,6 +122,27 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  void _openSignedInHome(bool resumeCheckout) {
+    final session = context.read<AppSession>();
+    final decision = customerAccessGate(
+      signedIn: true,
+      guest: false,
+      mustChangePassword: session.mustChangePassword,
+      role: session.role,
+      supplierApproved: session.supplierApproved,
+      resumeCheckout: resumeCheckout,
+      location: '/login',
+    );
+    session.resumeCheckoutAfterAuth = decision.resumeCheckout;
+    session.authPrompt = decision.authPrompt;
+    context.go(decision.location ?? '/customer');
+  }
+
+  void _continueAsGuest() {
+    context.read<AppSession>().continueAsGuest();
+    context.go('/customer');
   }
 
   @override
@@ -146,6 +162,8 @@ class _LoginScreenState extends State<LoginScreen> {
       onLocale: (code) => session.setLocale(code),
       localeCode: session.localeCode,
       onContinue: _busy ? null : _continue,
+      onGuest: _busy || _role != UserRole.customer ? null : _continueAsGuest,
+      authPrompt: session.authPrompt,
     );
 
     if (!wide) {
@@ -256,6 +274,8 @@ class _LoginForm extends StatelessWidget {
     required this.onLocale,
     required this.localeCode,
     required this.onContinue,
+    required this.onGuest,
+    required this.authPrompt,
   });
 
   final UserRole role;
@@ -269,6 +289,8 @@ class _LoginForm extends StatelessWidget {
   final ValueChanged<LocaleCode> onLocale;
   final LocaleCode localeCode;
   final VoidCallback? onContinue;
+  final VoidCallback? onGuest;
+  final String? authPrompt;
 
   @override
   Widget build(BuildContext context) {
@@ -299,6 +321,18 @@ class _LoginForm extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 20),
+        if (authPrompt == 'account') ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: WingerColors.brandMuted,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(s.t('signInToAccount')),
+          ),
+          const SizedBox(height: 16),
+        ],
         _RoleCard(
           selected: role == UserRole.customer,
           title: s.t('shopAsCustomer'),
@@ -359,6 +393,21 @@ class _LoginForm extends StatelessWidget {
                 : Text('${s.t('continueRole')} →'),
           ),
         ),
+        if (onGuest != null) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: onGuest,
+              child: Text(s.t('continueAsGuest')),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            s.t('continueAsGuestHint'),
+            style: const TextStyle(color: WingerColors.muted, fontSize: 12),
+          ),
+        ],
         const SizedBox(height: 12),
         Center(
           child: TextButton(

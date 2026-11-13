@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { ApprovedSupplierGuard } from '../auth/approved-supplier.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -12,21 +13,21 @@ export class SuppliersController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Get('me/dashboard')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   dashboard(@CurrentUser() user: AuthUser) {
     return this.productsService.getSupplierDashboard(user);
   }
 
   @Get('me/delivery')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   deliveryFees(@CurrentUser() user: AuthUser) {
     return this.productsService.getMyDeliveryFees(user);
   }
 
   @Patch('me/delivery')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   updateDeliveryFees(
     @CurrentUser() user: AuthUser,

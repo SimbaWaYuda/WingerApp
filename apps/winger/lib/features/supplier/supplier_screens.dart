@@ -77,7 +77,13 @@ class _SupplierShellState extends State<SupplierShell> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshBadge());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        await context.read<ApiClient>().refreshProfile();
+      } catch (_) {}
+      if (mounted) _refreshBadge();
+    });
     _badgeTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       if (mounted) _refreshBadge();
     });
@@ -92,7 +98,9 @@ class _SupplierShellState extends State<SupplierShell> {
   Future<void> _refreshBadge() async {
     if (_loadingBadge || !mounted) return;
     final session = context.read<AppSession>();
-    if (session.accessToken == null || session.accessToken!.isEmpty) {
+    if (session.accessToken == null ||
+        session.accessToken!.isEmpty ||
+        session.supplierApproved == false) {
       if (_openReturns != 0) setState(() => _openReturns = 0);
       return;
     }
@@ -114,10 +122,20 @@ class _SupplierShellState extends State<SupplierShell> {
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    final pending = session.supplierApproved == false;
     return RoleShell(
       title: s.t('dashboard'),
       roleLabel: 'Supplier',
-      destinations: supplierDestinations(openReturns: _openReturns),
+      destinations: pending
+          ? const [
+              ShellDestination(
+                labelKey: 'supplierPendingNav',
+                icon: Icons.hourglass_top,
+                path: '/supplier/onboarding',
+              ),
+            ]
+          : supplierDestinations(openReturns: _openReturns),
       child: widget.child,
     );
   }

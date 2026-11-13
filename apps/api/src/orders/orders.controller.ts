@@ -16,6 +16,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { ApprovedSupplierGuard } from '../auth/approved-supplier.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -30,7 +31,7 @@ import {
 } from './orders.service';
 
 @Controller('orders')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 

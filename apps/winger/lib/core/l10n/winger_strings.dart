@@ -31,6 +31,22 @@ class WingerStrings {
       'showPassword': 'Show password',
       'hidePassword': 'Hide password',
       'continueRole': 'Continue',
+      'continueAsGuest': 'Continue shopping as a guest',
+      'continueAsGuestHint':
+          'Browse and add items to your cart. Sign in when you are ready to check out.',
+      'guestShopper': 'Guest',
+      'signInToCheckout':
+          'Sign in or create an account to check out. Your cart is saved.',
+      'continuePurchaseTitle': 'Continue with your purchase',
+      'continuePurchaseBody':
+          'Create an account or sign in to complete your order. Your shopping cart will be saved.',
+      'continuePurchaseCreate': 'Create an Account →',
+      'continuePurchaseSignIn': 'Sign In',
+      'signInToAccount': 'Sign in to open your orders and account.',
+      'supplierPendingNav': 'Approval',
+      'supplierPendingTitle': 'Waiting for Winger approval',
+      'supplierPendingBody':
+          'Finish your business details and submit them. Product publishing, orders, delivery, and payments open after an administrator approves your supplier account.',
       'back': 'Back',
       'languageHint':
           'Language follows your account. Choose English, Español or Kiswahili.',
@@ -706,6 +722,22 @@ class WingerStrings {
       'showPassword': 'Mostrar contraseña',
       'hidePassword': 'Ocultar contraseña',
       'continueRole': 'Continuar',
+      'continueAsGuest': 'Seguir comprando como invitado',
+      'continueAsGuestHint':
+          'Explora y añade productos al carrito. Inicia sesión al pagar.',
+      'guestShopper': 'Invitado',
+      'signInToCheckout':
+          'Inicia sesión o crea una cuenta para pagar. Tu carrito se conserva.',
+      'continuePurchaseTitle': 'Continúa con tu compra',
+      'continuePurchaseBody':
+          'Crea una cuenta o inicia sesión para completar tu pedido. Tu carrito se guardará.',
+      'continuePurchaseCreate': 'Crear una cuenta →',
+      'continuePurchaseSignIn': 'Iniciar sesión',
+      'signInToAccount': 'Inicia sesión para ver tus pedidos y tu cuenta.',
+      'supplierPendingNav': 'Aprobación',
+      'supplierPendingTitle': 'Esperando la aprobación de Winger',
+      'supplierPendingBody':
+          'Completa los datos del negocio y envíalos. Publicar productos, pedidos, entrega y pagos se abre cuando un administrador aprueba la cuenta.',
       'back': 'Atrás',
       'languageHint':
           'El idioma sigue tu cuenta. Elige English, Español o Kiswahili.',
@@ -1384,6 +1416,22 @@ class WingerStrings {
       'showPassword': 'Onyesha nenosiri',
       'hidePassword': 'Ficha nenosiri',
       'continueRole': 'Endelea',
+      'continueAsGuest': 'Endelea kununua kama mgeni',
+      'continueAsGuestHint':
+          'Vinjari na uweke bidhaa kwenye kikapu. Ingia unapolipa.',
+      'guestShopper': 'Mgeni',
+      'signInToCheckout':
+          'Ingia au fungua akaunti ili ulipe. Kikapu chako kinabaki.',
+      'continuePurchaseTitle': 'Endelea na ununuzi wako',
+      'continuePurchaseBody':
+          'Fungua akaunti au ingia ili ukamilishe oda yako. Kikapu chako kitahifadhiwa.',
+      'continuePurchaseCreate': 'Fungua akaunti →',
+      'continuePurchaseSignIn': 'Ingia',
+      'signInToAccount': 'Ingia ili uone oda na akaunti yako.',
+      'supplierPendingNav': 'Idhini',
+      'supplierPendingTitle': 'Inasubiri idhini ya Winger',
+      'supplierPendingBody':
+          'Kamilisha taarifa za biashara kisha uzitume. Kuchapisha bidhaa, oda, usafirishaji na malipo hufunguka baada ya msimamizi kuidhinisha akaunti.',
       'back': 'Rudi',
       'languageHint':
           'Lugha inafuata akaunti yako. Chagua English, Español au Kiswahili.',

@@ -85,7 +85,9 @@ class RoleShell extends StatelessWidget {
               roleLabel: roleLabel,
               destinations: destinations,
               selectedIndex: index,
-              userName: session.displayName,
+              userName: session.browsingAsGuest
+                  ? s.t('guestShopper')
+                  : session.displayName,
               languageLabel: s.languageLabel,
               onSelect: (i) => context.go(destinations[i].path),
             ),

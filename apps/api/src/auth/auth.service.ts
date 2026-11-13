@@ -208,11 +208,18 @@ export class AuthService {
   async me(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
+    const supplier = user.supplierId
+      ? await this.prisma.supplier.findUnique({
+          where: { id: user.supplierId },
+          select: { verificationStatus: true },
+        })
+      : null;
     return {
       id: user.id,
       email: user.email,
       role: user.role,
       supplierId: user.supplierId,
+      supplierVerificationStatus: supplier?.verificationStatus ?? null,
       name: user.name,
       phone: user.phone,
       city: user.city,

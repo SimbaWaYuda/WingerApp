@@ -284,6 +284,9 @@ class ApiClient {
         address: user['addressLine'] as String? ?? 'Westlands',
       );
       session.setMustChangePassword(user['mustChangePassword'] == true);
+      session.setSupplierVerification(
+        user['supplierVerificationStatus'] as String?,
+      );
       final preferred = user['displayCurrency'] as String?;
       if (preferred != null && preferred.isNotEmpty) {
         session.displayCurrency = preferred.toUpperCase();

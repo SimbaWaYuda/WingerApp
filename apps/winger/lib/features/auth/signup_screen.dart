@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../app/access_gate.dart';
 import '../../core/api/api_client.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/models/models.dart';
@@ -10,7 +11,9 @@ import '../../core/theme/winger_colors.dart';
 import '../../core/widgets/password_field.dart';
 
 class SignupScreen extends StatefulWidget {
-  const SignupScreen({super.key});
+  const SignupScreen({super.key, this.customerOnly = false});
+
+  final bool customerOnly;
 
   @override
   State<SignupScreen> createState() => _SignupScreenState();
@@ -42,6 +45,8 @@ class _SignupScreenState extends State<SignupScreen> {
       _busy = true;
       _error = null;
     });
+    final resumeCheckout =
+        context.read<AppSession>().resumeCheckoutAfterAuth;
     try {
       await api.register(
         email: _email.text.trim(),
@@ -55,11 +60,19 @@ class _SignupScreenState extends State<SignupScreen> {
                 : null,
       );
       if (!mounted) return;
-      context.go(switch (_role) {
-        UserRole.customer => '/customer',
-        UserRole.supplier => '/supplier',
-        UserRole.admin => '/admin',
-      });
+      final session = context.read<AppSession>();
+      final decision = customerAccessGate(
+        signedIn: true,
+        guest: false,
+        mustChangePassword: session.mustChangePassword,
+        role: session.role,
+        supplierApproved: session.supplierApproved,
+        resumeCheckout: resumeCheckout,
+        location: '/signup',
+      );
+      session.resumeCheckoutAfterAuth = decision.resumeCheckout;
+      session.authPrompt = decision.authPrompt;
+      context.go(decision.location ?? '/customer');
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
@@ -94,21 +107,22 @@ class _SignupScreenState extends State<SignupScreen> {
         const SizedBox(height: 8),
         Text(s.t('signupBody'), style: TextStyle(color: WingerColors.muted)),
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 8,
-          children: [
-            ChoiceChip(
-              label: Text(s.t('shopAsCustomer')),
-              selected: _role == UserRole.customer,
-              onSelected: (_) => setState(() => _role = UserRole.customer),
-            ),
-            ChoiceChip(
-              label: Text(s.t('manageSupplier')),
-              selected: _role == UserRole.supplier,
-              onSelected: (_) => setState(() => _role = UserRole.supplier),
-            ),
-          ],
-        ),
+        if (!widget.customerOnly)
+          Wrap(
+            spacing: 8,
+            children: [
+              ChoiceChip(
+                label: Text(s.t('shopAsCustomer')),
+                selected: _role == UserRole.customer,
+                onSelected: (_) => setState(() => _role = UserRole.customer),
+              ),
+              ChoiceChip(
+                label: Text(s.t('manageSupplier')),
+                selected: _role == UserRole.supplier,
+                onSelected: (_) => setState(() => _role = UserRole.supplier),
+              ),
+            ],
+          ),
         const SizedBox(height: 16),
         TextField(
           controller: _name,

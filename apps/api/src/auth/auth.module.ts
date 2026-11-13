@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { ApprovedSupplierGuard } from './approved-supplier.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -14,7 +15,7 @@ import { RolesGuard } from './roles.guard';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard, RolesGuard],
-  exports: [AuthService, JwtAuthGuard, RolesGuard, JwtModule],
+  providers: [AuthService, JwtAuthGuard, RolesGuard, ApprovedSupplierGuard],
+  exports: [AuthService, JwtAuthGuard, RolesGuard, ApprovedSupplierGuard, JwtModule],
 })
 export class AuthModule {}

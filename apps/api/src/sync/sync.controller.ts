@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { ApprovedSupplierGuard } from '../auth/approved-supplier.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -18,6 +19,7 @@ export class SyncController {
   }
 
   @Get('events')
+  @UseGuards(ApprovedSupplierGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPPLIER)
   list(@CurrentUser() user: AuthUser) {
     return this.syncService.list(user);

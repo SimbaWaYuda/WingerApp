@@ -1,9 +1,10 @@
 import 'package:go_router/go_router.dart';
 
-import '../core/models/models.dart';
 import '../core/state/app_session.dart';
+import 'access_gate.dart';
 import '../features/admin/admin_screens.dart';
 import '../features/auth/choose_password_screen.dart';
+import '../features/auth/continue_purchase_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/signup_screen.dart';
 import '../features/customer/customer_screens.dart';
@@ -16,34 +17,19 @@ GoRouter createRouter(AppSession session) {
     initialLocation: '/login',
     refreshListenable: session.authSignal,
     redirect: (context, state) {
-      final loc = state.matchedLocation;
-      final onAuth = loc == '/login' || loc == '/signup';
-      final home = switch (session.role) {
-        UserRole.customer => '/customer',
-        UserRole.supplier => '/supplier',
-        UserRole.admin => '/admin',
-        null => '/login',
-      };
-      if (!session.isSignedIn && !onAuth) return '/login';
-      if (session.isSignedIn && session.mustChangePassword) {
-        return loc == '/choose-password' ? null : '/choose-password';
-      }
-      if (session.isSignedIn && (onAuth || loc == '/choose-password')) {
-        return home;
-      }
-      if (session.role == UserRole.customer &&
-          (loc.startsWith('/supplier') || loc.startsWith('/admin'))) {
-        return '/customer';
-      }
-      if (session.role == UserRole.supplier &&
-          (loc.startsWith('/customer') || loc.startsWith('/admin'))) {
-        return '/supplier';
-      }
-      if (session.role == UserRole.admin &&
-          (loc.startsWith('/customer') || loc.startsWith('/supplier'))) {
-        return '/admin';
-      }
-      return null;
+      final decision = customerAccessGate(
+        signedIn: session.isSignedIn,
+        guest: session.browsingAsGuest,
+        mustChangePassword: session.mustChangePassword,
+        role: session.role,
+        supplierApproved: session.supplierApproved,
+        resumeCheckout: session.resumeCheckoutAfterAuth,
+        location: state.matchedLocation,
+        authPrompt: session.authPrompt,
+      );
+      session.resumeCheckoutAfterAuth = decision.resumeCheckout;
+      session.authPrompt = decision.authPrompt;
+      return decision.location;
     },
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
@@ -51,7 +37,16 @@ GoRouter createRouter(AppSession session) {
         path: '/choose-password',
         builder: (context, state) => const ChoosePasswordScreen(),
       ),
-      GoRoute(path: '/signup', builder: (context, state) => const SignupScreen()),
+      GoRoute(
+        path: '/continue-purchase',
+        builder: (context, state) => const ContinuePurchaseScreen(),
+      ),
+      GoRoute(
+        path: '/signup',
+        builder: (context, state) => SignupScreen(
+          customerOnly: state.uri.queryParameters['from'] == 'checkout',
+        ),
+      ),
       ShellRoute(
         builder: (context, state, child) => CustomerShell(child: child),
         routes: [

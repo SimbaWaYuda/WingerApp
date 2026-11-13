@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../app/access_gate.dart';
 import '../../core/api/api_client.dart';
 import '../../core/l10n/winger_strings.dart';
-import '../../core/models/models.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
 import '../../core/widgets/password_field.dart';
@@ -41,18 +41,27 @@ class _ChoosePasswordScreenState extends State<ChoosePasswordScreen> {
       _busy = true;
       _error = null;
     });
+    final resumeCheckout =
+        context.read<AppSession>().resumeCheckoutAfterAuth;
     try {
       await context.read<ApiClient>().changePassword(
         currentPassword: _current.text,
         newPassword: _next.text,
       );
       if (!mounted) return;
-      final role = context.read<AppSession>().role;
-      context.go(switch (role) {
-        UserRole.supplier => '/supplier',
-        UserRole.admin => '/admin',
-        _ => '/customer',
-      });
+      final session = context.read<AppSession>();
+      final decision = customerAccessGate(
+        signedIn: true,
+        guest: false,
+        mustChangePassword: session.mustChangePassword,
+        role: session.role,
+        supplierApproved: session.supplierApproved,
+        resumeCheckout: resumeCheckout,
+        location: '/choose-password',
+      );
+      session.resumeCheckoutAfterAuth = decision.resumeCheckout;
+      session.authPrompt = decision.authPrompt;
+      context.go(decision.location ?? '/customer');
     } catch (error) {
       if (!mounted) return;
       setState(() {

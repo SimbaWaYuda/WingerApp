@@ -34,6 +34,11 @@ class AppSession extends ChangeNotifier {
   ApiClient? _api;
 
   UserRole? role;
+  bool browsingAsGuest = false;
+  bool resumeCheckoutAfterAuth = false;
+  String? authPrompt;
+  /// Null until the profile loads. False keeps a pending supplier on onboarding.
+  bool? supplierApproved;
   String displayName = 'Amina Mwangi';
   String email = 'amina.mwangi@example.com';
   String userId = 'user-amina';
@@ -290,6 +295,8 @@ class AppSession extends ChangeNotifier {
     email = mail;
     role = selectedRole;
     supplierId = supplier;
+    browsingAsGuest = false;
+    if (selectedRole != UserRole.supplier) supplierApproved = null;
     mustChangePassword = passwordChangeRequired;
     if (phoneNumber != null) phone = phoneNumber;
     if (cityName != null && cityName.isNotEmpty) city = cityName;
@@ -319,11 +326,43 @@ class AppSession extends ChangeNotifier {
     authSignal.ping();
   }
 
+  void setSupplierVerification(String? status) {
+    if (role != UserRole.supplier) {
+      if (supplierApproved == null) return;
+      supplierApproved = null;
+      notifyListeners();
+      authSignal.ping();
+      return;
+    }
+    final upper = (status ?? '').toUpperCase();
+    final next = upper == 'APPROVED' || upper == 'VERIFIED';
+    if (supplierApproved == next) return;
+    supplierApproved = next;
+    notifyListeners();
+    authSignal.ping();
+  }
+
+  void continueAsGuest() {
+    role = null;
+    accessToken = null;
+    supplierId = null;
+    mustChangePassword = false;
+    supplierApproved = null;
+    browsingAsGuest = true;
+    displayName = '';
+    notifyListeners();
+    authSignal.ping();
+  }
+
   void signOut() {
     role = null;
     accessToken = null;
     mustChangePassword = false;
     supplierId = null;
+    browsingAsGuest = false;
+    supplierApproved = null;
+    resumeCheckoutAfterAuth = false;
+    authPrompt = null;
     phone = '';
     city = 'Nairobi';
     addressLine = 'Westlands';

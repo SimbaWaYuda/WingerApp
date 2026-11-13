@@ -129,7 +129,7 @@ class _CustomerShellState extends State<CustomerShell> {
 
     return RoleShell(
       title: _customerTitle(s, location),
-      roleLabel: 'Customer',
+      roleLabel: session.browsingAsGuest ? s.t('guestShopper') : 'Customer',
       destinations: customerDestinations(
         unreadNotifications: _unreadNotifications,
       ),
@@ -329,9 +329,11 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
   Future<void> _stampBrowse() async {
     final session = context.read<AppSession>();
     final api = context.read<ApiClient>();
-    if (session.accessToken == null) return;
     try {
       await api.refreshCurrencyQuote();
+    } catch (_) {}
+    if (session.accessToken == null) return;
+    try {
       await api.stampOnboardingActivity('browsed_catalog');
     } catch (_) {}
   }
@@ -3841,6 +3843,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   void initState() {
     super.initState();
     final session = context.read<AppSession>();
+    if (session.isSignedIn) {
+      session.resumeCheckoutAfterAuth = false;
+      session.authPrompt = null;
+    }
     _fulfillment = session.deliveryMethod;
     if (_fulfillment != 'express' &&
         _fulfillment != 'standard' &&

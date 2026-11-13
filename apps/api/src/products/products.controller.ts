@@ -22,6 +22,7 @@ import { UserRole } from '@prisma/client';
 import { memoryStorage } from 'multer';
 import { extname } from 'path';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { ApprovedSupplierGuard } from '../auth/approved-supplier.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -98,14 +99,14 @@ export class ProductsController {
   }
 
   @Get('mine')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   listMine(@CurrentUser() user: AuthUser) {
     return this.productsService.listMine(user);
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   create(
     @CurrentUser() user: AuthUser,
@@ -115,7 +116,7 @@ export class ProductsController {
   }
 
   @Post('bulk')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   bulkImport(
     @CurrentUser() user: AuthUser,
@@ -194,7 +195,7 @@ export class ProductsController {
   }
 
   @Post(':id/images')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   @UseInterceptors(
     FilesInterceptor('files', 8, {
@@ -231,7 +232,7 @@ export class ProductsController {
   }
 
   @Delete(':id/images/:imageId')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   removeImage(
     @CurrentUser() user: AuthUser,
@@ -242,7 +243,7 @@ export class ProductsController {
   }
 
   @Put(':id/variants')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   replaceVariants(
     @CurrentUser() user: AuthUser,
@@ -258,7 +259,7 @@ export class ProductsController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
   update(
     @CurrentUser() user: AuthUser,
