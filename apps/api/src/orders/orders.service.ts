@@ -1218,9 +1218,14 @@ export class OrdersService {
     }
 
     const quantity = dto.quantity != null ? Number(dto.quantity) : item.quantity;
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > item.quantity) {
+    const alreadyReturned = Number(item.returnedQuantity ?? 0);
+    if (
+      !Number.isInteger(quantity) ||
+      quantity < 1 ||
+      alreadyReturned + quantity > item.quantity
+    ) {
       throw new BadRequestException(
-        `Quantity must be an integer from 1 to ${item.quantity}`,
+        `Quantity must be an integer from 1 to ${item.quantity - alreadyReturned}`,
       );
     }
 
@@ -1650,54 +1655,79 @@ export class OrdersService {
       this.assertReturnTransition(row.status, next);
 
       if (next === ReturnRequestStatus.APPROVED) {
-        if (row.orderItem.status !== OrderStatus.DELIVERED) {
+        if (
+          row.orderItem.status !== OrderStatus.DELIVERED &&
+          row.status !== ReturnRequestStatus.APPROVED
+        ) {
           throw new BadRequestException(
             'Only delivered items can be approved for return',
           );
         }
         await this.prisma.$transaction(async (tx) => {
-          await tx.returnRequest.update({
+          await tx.$queryRaw`
+            SELECT id FROM "OrderItem" WHERE id = ${row.orderItemId} FOR UPDATE
+          `;
+          const currentReturn = await tx.returnRequest.findUnique({
             where: { id: row.id },
+          });
+          if (!currentReturn || currentReturn.status === ReturnRequestStatus.APPROVED) {
+            return;
+          }
+          const item = await tx.orderItem.findUnique({
+            where: { id: row.orderItemId },
+          });
+          if (!item || item.status !== OrderStatus.DELIVERED) {
+            throw new BadRequestException(
+              'Only delivered items can be approved for return',
+            );
+          }
+          const nextReturned = item.returnedQuantity + currentReturn.quantity;
+          if (nextReturned > item.quantity) {
+            throw new BadRequestException(
+              'Return quantity exceeds the units still delivered',
+            );
+          }
+          await this.ledger.reserveReturnClawback(tx, {
+            orderItemId: item.id,
+            returnRequestId: currentReturn.id,
+            quantity: currentReturn.quantity,
+            unitPrice: Number(item.unitPrice),
+            lineQuantity: item.quantity,
+          });
+          await this.restoreReturnedStock(tx, {
+            returnRequestId: currentReturn.id,
+            productId: item.productId,
+            variantId: item.variantId,
+            quantity: currentReturn.quantity,
+            userId: user.sub,
+          });
+          await tx.orderItem.update({
+            where: { id: item.id },
+            data: {
+              returnedQuantity: nextReturned,
+              status:
+                nextReturned >= item.quantity
+                  ? OrderStatus.RETURNED
+                  : OrderStatus.DELIVERED,
+            },
+          });
+          await tx.returnRequest.update({
+            where: { id: currentReturn.id },
             data: {
               status: next,
               refundStatus:
-                row.refundStatus === ReturnRefundStatus.NONE
+                currentReturn.refundStatus === ReturnRefundStatus.NONE
                   ? ReturnRefundStatus.PENDING
-                  : row.refundStatus,
+                  : currentReturn.refundStatus,
             },
           });
-          await tx.orderItem.update({
-            where: { id: row.orderItemId },
-            data: { status: OrderStatus.RETURNED },
-          });
-          const product = await tx.product.findUnique({
-            where: { id: row.orderItem.productId },
-          });
-          if (product) {
-            const nextStock = product.stock + row.quantity;
-            await tx.product.update({
-              where: { id: product.id },
-              data: { stock: nextStock, stockStatus: stockStatusFor(nextStock) },
-            });
-            await tx.inventoryLedger.create({
-              data: {
-                productId: product.id,
-                supplierId: product.supplierId,
-                delta: row.quantity,
-                reason: 'RETURN_APPROVED',
-                eventId: `return-restore-${row.id}-${Date.now()}`,
-                userId: user.sub,
-                quantityAfter: nextStock,
-              },
-            });
-          }
           const items = await tx.orderItem.findMany({
             where: { orderId: row.orderId },
             select: { status: true },
           });
           await tx.order.update({
             where: { id: row.orderId },
-            data: { status: rollupStatus(items.map((item) => item.status)) },
+            data: { status: rollupStatus(items.map((line) => line.status)) },
           });
         });
       } else {
@@ -1732,24 +1762,51 @@ export class OrdersService {
         dto.refundStatus === ReturnRefundStatus.ISSUED &&
         current.refundStatus !== ReturnRefundStatus.ISSUED;
       if (becameIssued) {
-        await this.payouts.reverseIfTransferred(current.orderItemId);
+        let reverseTransfer = true;
+        if (this.prisma.commissionClawback) {
+          const reserved = await this.prisma.commissionClawback.findUnique({
+            where: { returnRequestId: current.id },
+          });
+          if (reserved) {
+            const itemNow = await this.prisma.orderItem.findUnique({
+              where: { id: current.orderItemId },
+              select: { quantity: true, returnedQuantity: true },
+            });
+            reverseTransfer =
+              itemNow != null &&
+              Number(itemNow.returnedQuantity) >= itemNow.quantity;
+          }
+        }
+        if (reverseTransfer) {
+          await this.payouts.reverseIfTransferred(current.orderItemId);
+        }
         await this.refundCardForReturn(row, current.quantity);
       }
-      await this.prisma.returnRequest.update({
-        where: { id: row.id },
-        data: {
-          refundStatus: dto.refundStatus,
-          refundNote:
-            dto.refundNote != null
-              ? dto.refundNote.trim() || null
-              : current.refundNote,
-          refundedAt:
-            dto.refundStatus === ReturnRefundStatus.ISSUED
-              ? current.refundedAt ?? new Date()
-              : null,
-        },
+      let legacyClawback = false;
+      await this.prisma.$transaction(async (tx) => {
+        await tx.returnRequest.update({
+          where: { id: row.id },
+          data: {
+            refundStatus: dto.refundStatus,
+            refundNote:
+              dto.refundNote != null
+                ? dto.refundNote.trim() || null
+                : current.refundNote,
+            refundedAt:
+              dto.refundStatus === ReturnRefundStatus.ISSUED
+                ? current.refundedAt ?? new Date()
+                : null,
+          },
+        });
+        if (becameIssued) {
+          const applied = await this.ledger.applyReturnClawback(tx, {
+            returnRequestId: current.id,
+            actor: user,
+          });
+          legacyClawback = applied.legacy;
+        }
       });
-      if (becameIssued) {
+      if (legacyClawback) {
         await this.commissions.clawbackForOrderItem({
           orderItemId: current.orderItemId,
           actor: user,
@@ -3081,6 +3138,72 @@ export class OrdersService {
       throw new BadRequestException('Enter a card to pay');
     }
     return id;
+  }
+
+  /** One ledger event per return. A second attempt finds it and leaves stock unchanged. */
+  private async restoreReturnedStock(
+    tx: Prisma.TransactionClient,
+    params: {
+      returnRequestId: string;
+      productId: string;
+      variantId: string | null;
+      quantity: number;
+      userId: string;
+    },
+  ) {
+    const eventId = `return-restore-${params.returnRequestId}`;
+    const already = await tx.inventoryLedger.findUnique({ where: { eventId } });
+    if (already) return;
+    const product = await tx.product.findUnique({ where: { id: params.productId } });
+    if (!product) return;
+    if (params.variantId) {
+      const variant = await tx.productVariant.findUnique({
+        where: { id: params.variantId },
+      });
+      if (!variant) return;
+      const nextVariant = variant.stock + params.quantity;
+      await tx.productVariant.update({
+        where: { id: variant.id },
+        data: { stock: nextVariant, stockStatus: stockStatusFor(nextVariant) },
+      });
+      const siblings = await tx.productVariant.findMany({
+        where: { productId: product.id },
+      });
+      const total = aggregateVariantStock(siblings);
+      await tx.product.update({
+        where: { id: product.id },
+        data: { stock: total, stockStatus: stockStatusFor(total) },
+      });
+      await tx.inventoryLedger.create({
+        data: {
+          productId: product.id,
+          variantId: variant.id,
+          supplierId: product.supplierId,
+          delta: params.quantity,
+          reason: 'RETURN_APPROVED',
+          eventId,
+          userId: params.userId,
+          quantityAfter: nextVariant,
+        },
+      });
+      return;
+    }
+    const next = product.stock + params.quantity;
+    await tx.product.update({
+      where: { id: product.id },
+      data: { stock: next, stockStatus: stockStatusFor(next) },
+    });
+    await tx.inventoryLedger.create({
+      data: {
+        productId: product.id,
+        supplierId: product.supplierId,
+        delta: params.quantity,
+        reason: 'RETURN_APPROVED',
+        eventId,
+        userId: params.userId,
+        quantityAfter: next,
+      },
+    });
   }
 
   private async restoreStock(

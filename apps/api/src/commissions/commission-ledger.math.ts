@@ -126,6 +126,8 @@ export type ActiveApplicationSource = {
 
 export type ClawbackPlan = {
   applicationSourceReversals: { applicationSourceId: string; amount: number; reversalKey: string }[];
+  /** Same dollars as the cash credit, so collected cash no longer includes them. */
+  allocationReversals: { allocationId: string; amount: number; reversalKey: string }[];
   cashCredit: {
     sourceEventKey: string;
     amount: number;
@@ -138,6 +140,140 @@ export type ClawbackPlan = {
  * credit only for cash still allocated to it. Does not create a second credit
  * for the restored amount.
  */
+/**
+ * Slice of the original snapshot for this return. The return that completes
+ * the line quantity takes whatever commission is still unrecorded, so the
+ * slices sum to the snapshot and never pass it.
+ */
+export function proportionalCommissionSlice(input: {
+  commissionAmount: number;
+  lineQuantity: number;
+  alreadyReturned: number;
+  quantity: number;
+  alreadyClawed: number;
+}): number {
+  if (!Number.isInteger(input.lineQuantity) || input.lineQuantity < 1) {
+    throw new Error('Line quantity is required');
+  }
+  if (!Number.isInteger(input.quantity) || input.quantity < 1) {
+    throw new Error('Return quantity is required');
+  }
+  if (
+    input.alreadyReturned < 0 ||
+    input.alreadyReturned + input.quantity > input.lineQuantity
+  ) {
+    throw new Error('Return quantity exceeds the line');
+  }
+  const remaining = roundMoney(input.commissionAmount - input.alreadyClawed);
+  if (remaining < 0) {
+    throw new Error('Clawbacks exceed the snapshot');
+  }
+  if (input.alreadyReturned + input.quantity === input.lineQuantity) {
+    return remaining;
+  }
+  const share = roundMoney(
+    (input.commissionAmount * input.quantity) / input.lineQuantity,
+  );
+  return roundMoney(Math.min(Math.max(share, 0), remaining));
+}
+
+export function netCommissionAmount(
+  commissionAmount: number,
+  appliedClawbacks: number[],
+): number {
+  const clawed = appliedClawbacks.reduce((sum, amount) => sum + amount, 0);
+  return roundMoney(Math.max(0, commissionAmount - clawed));
+}
+
+export type PartialClawbackPlan = {
+  applicationSourceReversals: {
+    applicationSourceId: string;
+    amount: number;
+    reversalKey: string;
+  }[];
+  /** Reduces active collected cash by the same amount that becomes a credit. */
+  allocationReversals: {
+    allocationId: string;
+    amount: number;
+    reversalKey: string;
+  }[];
+  cashCredit: {
+    sourceEventKey: string;
+    amount: number;
+    sources: { allocationId: string; amount: number }[];
+  } | null;
+};
+
+/**
+ * Releases only the settled coverage that no longer belongs on the kept units.
+ * Credit applications go first, then cash. Cash that becomes a credit is also
+ * reversed on the allocation, so it is not still counted as collected.
+ * Unpaid commission produces no credit and no allocation reversal.
+ */
+export function planPartialClawback(input: {
+  eventKey: string;
+  retainedAfter: number;
+  activeApplicationSources: { id: string; active: number; createdAt: string }[];
+  activeCashAllocations: { allocationId: string; amount: number; createdAt: string }[];
+}): PartialClawbackPlan {
+  const retained = roundMoney(Math.max(0, input.retainedAfter));
+  const applications = input.activeApplicationSources
+    .filter((row) => row.active > 0)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const allocations = input.activeCashAllocations
+    .filter((row) => row.amount > 0)
+    .sort(
+      (a, b) =>
+        a.createdAt.localeCompare(b.createdAt) ||
+        a.allocationId.localeCompare(b.allocationId),
+    );
+  const settled = roundMoney(
+    applications.reduce((sum, row) => sum + row.active, 0) +
+      allocations.reduce((sum, row) => sum + row.amount, 0),
+  );
+  let excess = roundMoney(Math.max(0, settled - retained));
+  const applicationSourceReversals: PartialClawbackPlan['applicationSourceReversals'] =
+    [];
+  for (const row of applications) {
+    if (!(excess > 0)) break;
+    const take = roundMoney(Math.min(excess, row.active));
+    if (!(take > 0)) continue;
+    applicationSourceReversals.push({
+      applicationSourceId: row.id,
+      amount: take,
+      reversalKey: `return-clawback:${input.eventKey}:application-source:${row.id}`,
+    });
+    excess = roundMoney(excess - take);
+  }
+  const allocationReversals: PartialClawbackPlan['allocationReversals'] = [];
+  const sources: { allocationId: string; amount: number }[] = [];
+  for (const row of allocations) {
+    if (!(excess > 0)) break;
+    const take = roundMoney(Math.min(excess, row.amount));
+    if (!(take > 0)) continue;
+    allocationReversals.push({
+      allocationId: row.allocationId,
+      amount: take,
+      reversalKey: `return-clawback:${input.eventKey}:allocation:${row.allocationId}`,
+    });
+    sources.push({ allocationId: row.allocationId, amount: take });
+    excess = roundMoney(excess - take);
+  }
+  const amount = roundMoney(sources.reduce((sum, row) => sum + row.amount, 0));
+  return {
+    applicationSourceReversals,
+    allocationReversals,
+    cashCredit:
+      amount > 0
+        ? {
+            sourceEventKey: `return-clawback:${input.eventKey}`,
+            amount,
+            sources,
+          }
+        : null,
+  };
+}
+
 export function planClawbackRestoration(input: {
   snapshotId: string;
   activeApplicationSources: { id: string; active: number }[];
@@ -159,6 +295,11 @@ export function planClawbackRestoration(input: {
   const amount = roundMoney(sources.reduce((sum, row) => sum + row.amount, 0));
   return {
     applicationSourceReversals,
+    allocationReversals: sources.map((source) => ({
+      allocationId: source.allocationId,
+      amount: source.amount,
+      reversalKey: `clawback:${input.snapshotId}:allocation:${source.allocationId}`,
+    })),
     cashCredit:
       amount > 0
         ? {
@@ -241,6 +382,27 @@ export function planRemittanceCreditInvalidation(input: {
   };
 }
 
+export type SettleableCommissionPlacement = 'retained' | 'cash' | 'none';
+
+/**
+ * One settleable line belongs to one balance.
+ * Card commission Winger kept (stripe, test, or live) is earned and retained.
+ * Cash on delivery and Lipa stay in the outstanding cash balance.
+ */
+export function settleableCommissionPlacement(
+  paymentMode: string,
+): SettleableCommissionPlacement {
+  if (paymentMode === 'cod' || paymentMode === 'lipa') return 'cash';
+  if (
+    paymentMode === 'stripe' ||
+    paymentMode === 'test' ||
+    paymentMode === 'live'
+  ) {
+    return 'retained';
+  }
+  return 'none';
+}
+
 export function grossCommissionOutstanding(
   lines: { commissionAmount: number; cashAllocated: number }[],
 ): number {
@@ -267,12 +429,22 @@ export function unappliedRefundCredit(
   );
 }
 
+/**
+ * Verified cash that can still be allocated. creditHeld is cash already
+ * turned into a credit by an allocation reversal. A manual release has no
+ * credit source, so it stays allocatable.
+ */
 export function unappliedVerifiedCash(
-  remittances: { verifiedAmountUsd: number; cashAllocated: number }[],
+  remittances: { verifiedAmountUsd: number; cashAllocated: number; creditHeld?: number }[],
 ): number {
   return roundMoney(
     remittances.reduce(
-      (sum, row) => sum + Math.max(0, row.verifiedAmountUsd - row.cashAllocated),
+      (sum, row) =>
+        sum +
+        Math.max(
+          0,
+          row.verifiedAmountUsd - row.cashAllocated - Number(row.creditHeld ?? 0),
+        ),
       0,
     ),
   );

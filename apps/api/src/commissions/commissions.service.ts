@@ -17,6 +17,7 @@ import { cardCheckoutMode } from '../orders/checkout-mode';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from './audit.service';
 import { CommissionLedgerService } from './commission-ledger.service';
+import { netCommissionAmount } from './commission-ledger.math';
 import {
   assertValidRatePercent,
   buildSnapshotValues,
@@ -458,6 +459,7 @@ export class CommissionsService {
     orderItemId: string;
     actor: AuthUser;
     returnRequestId?: string;
+    tx?: Prisma.TransactionClient;
   }) {
     const item = await this.prisma.orderItem.findUnique({
       where: { id: params.orderItemId },
@@ -471,7 +473,7 @@ export class CommissionsService {
       return { clawedBack: false, reason: 'already_clawed_back' as const, snapshot: snap };
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const apply = async (tx: Prisma.TransactionClient) => {
       const row = await tx.orderItemCommission.update({
         where: { id: snap.id },
         data: { status: CommissionRecognitionStatus.CLAWED_BACK },
@@ -496,7 +498,8 @@ export class CommissionsService {
       });
       await this.ledger.restoreAfterClawback(tx, snap.id, params.actor);
       return row;
-    });
+    };
+    const updated = params.tx ? await apply(params.tx) : await this.prisma.$transaction(apply);
     return { clawedBack: true, reason: 'ok' as const, snapshot: updated };
   }
 
@@ -615,6 +618,7 @@ export class CommissionsService {
         commissionAmount: true,
         status: true,
         isDemo: true,
+        clawbacks: { select: { commissionAmount: true, appliedAt: true } },
         orderItem: {
           select: {
             supplierId: true,
@@ -655,7 +659,12 @@ export class CommissionsService {
     for (const row of rows) {
       const supplierId = row.orderItem.supplierId;
       const bucket = bySupplier.get(supplierId) ?? emptyBucket();
-      const amount = Number(row.commissionAmount);
+      const amount = netCommissionAmount(
+        Number(row.commissionAmount),
+        (row.clawbacks ?? [])
+          .filter((entry) => entry.appliedAt)
+          .map((entry) => Number(entry.commissionAmount)),
+      );
       if (row.isDemo) {
         bucket.demoTotal += amount;
         bucket.demoLineCount += 1;
@@ -758,10 +767,21 @@ export class CommissionsService {
             },
           },
         },
+        clawbacks: { select: { commissionAmount: true, appliedAt: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
-    const reportRows = rows.map((row) => commissionReportRow(row));
+    const reportRows = rows.map((row) =>
+      commissionReportRow({
+        ...row,
+        commissionAmount: netCommissionAmount(
+          Number(row.commissionAmount),
+          (row.clawbacks ?? [])
+            .filter((entry) => entry.appliedAt)
+            .map((entry) => Number(entry.commissionAmount)),
+        ),
+      }),
+    );
     const buckets = sumCommissionBuckets(reportRows);
     const payoutSplit = sumSupplierPayoutSplit(
       rows.map((row, index) => ({

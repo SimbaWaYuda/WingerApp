@@ -161,7 +161,11 @@ describe('payment and commission reliability', () => {
       audit as unknown as AuditService,
       payouts as never,
       { checkoutLipa: jest.fn().mockResolvedValue({ suppliers: [] }) } as never,
-      { sweepSupplier: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        sweepSupplier: jest.fn().mockResolvedValue(undefined),
+        applyReturnClawback: jest.fn().mockResolvedValue({ legacy: true, applied: false }),
+        reserveReturnClawback: jest.fn().mockResolvedValue(null),
+      } as never,
     );
   });
 

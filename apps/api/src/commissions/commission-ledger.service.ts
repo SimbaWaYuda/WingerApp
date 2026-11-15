@@ -33,10 +33,14 @@ import {
   lipaSuppliersReadyForPayment,
   netAmountDue,
   normalizePaymentReference,
+  netCommissionAmount,
   planClawbackRestoration,
+  planPartialClawback,
   planRemittanceCreditInvalidation,
+  proportionalCommissionSlice,
   remainingCredit,
   roundMoney,
+  settleableCommissionPlacement,
   unappliedRefundCredit,
   unappliedVerifiedCash,
   verifiedUsdFromClaim,
@@ -872,6 +876,21 @@ export class CommissionLedgerService {
         amount: this.activeAllocation(allocation),
       })),
     });
+    for (const reversal of plan.allocationReversals) {
+      const already = await tx.commissionAllocationReversal.findUnique({
+        where: { reversalKey: reversal.reversalKey },
+      });
+      if (already) continue;
+      await tx.commissionAllocationReversal.create({
+        data: {
+          allocationId: reversal.allocationId,
+          amountUsd: new Prisma.Decimal(reversal.amount.toFixed(2)),
+          reason: 'CLAWBACK',
+          reversalKey: reversal.reversalKey,
+          actorUserId: actor.sub,
+        },
+      });
+    }
     for (const reversal of plan.applicationSourceReversals) {
       const already = await tx.commissionCreditApplicationSourceReversal.findUnique({
         where: { reversalKey: reversal.reversalKey },
@@ -918,11 +937,192 @@ export class CommissionLedgerService {
       actorRole: actor.role,
       after: {
         restoredApplications: plan.applicationSourceReversals.length,
+        allocationReversals: plan.allocationReversals.length,
         cashCredit: plan.cashCredit?.amount ?? 0,
       },
       tx,
     });
     return { restored: true };
+  }
+
+  /**
+   * Fixes this return's commission slice from the original snapshot.
+   * A repeated approval finds the same row and does not take another slice.
+   */
+  async reserveReturnClawback(
+    tx: Prisma.TransactionClient,
+    params: {
+      orderItemId: string;
+      returnRequestId: string;
+      quantity: number;
+      unitPrice: number;
+      lineQuantity: number;
+    },
+  ) {
+    const existing = await tx.commissionClawback.findUnique({
+      where: { returnRequestId: params.returnRequestId },
+    });
+    if (existing) return existing;
+    const item = await tx.orderItem.findUnique({
+      where: { id: params.orderItemId },
+      include: { commission: { include: { clawbacks: true } } },
+    });
+    if (!item?.commission) return null;
+    const prior = item.commission.clawbacks;
+    const slice = proportionalCommissionSlice({
+      commissionAmount: Number(item.commission.commissionAmount),
+      lineQuantity: params.lineQuantity,
+      alreadyReturned: prior.reduce((sum, row) => sum + row.quantity, 0),
+      quantity: params.quantity,
+      alreadyClawed: roundMoney(
+        prior.reduce((sum, row) => sum + Number(row.commissionAmount), 0),
+      ),
+    });
+    return tx.commissionClawback.create({
+      data: {
+        orderItemCommissionId: item.commission.id,
+        returnRequestId: params.returnRequestId,
+        quantity: params.quantity,
+        merchandiseAmount: new Prisma.Decimal(
+          roundMoney(params.unitPrice * params.quantity).toFixed(2),
+        ),
+        commissionAmount: new Prisma.Decimal(slice.toFixed(2)),
+      },
+    });
+  }
+
+  /**
+   * Applies a reserved slice. Cash that becomes a credit is reversed on the
+   * allocation, so collected commission no longer includes it. No reservation
+   * means a return approved before slices existed: the caller uses the
+   * full-line clawback.
+   */
+  async applyReturnClawback(
+    tx: Prisma.TransactionClient,
+    params: { returnRequestId: string; actor: AuthUser },
+  ): Promise<{ legacy: boolean; applied: boolean }> {
+    const reserved = await tx.commissionClawback.findUnique({
+      where: { returnRequestId: params.returnRequestId },
+    });
+    if (!reserved) return { legacy: true, applied: false };
+    if (reserved.appliedAt) return { legacy: false, applied: false };
+    const snapshot = await tx.orderItemCommission.findUnique({
+      where: { id: reserved.orderItemCommissionId },
+      include: {
+        orderItem: true,
+        clawbacks: true,
+        cashAllocations: { include: { reversals: true, remittance: true } },
+        creditApplications: {
+          include: { sources: { include: { reversals: true } } },
+        },
+      },
+    });
+    if (!snapshot) return { legacy: false, applied: false };
+    await this.lockSupplierCredits(tx, snapshot.orderItem.supplierId);
+    const current = await tx.commissionClawback.findUnique({
+      where: { id: reserved.id },
+    });
+    if (!current || current.appliedAt) return { legacy: false, applied: false };
+    const otherApplied = roundMoney(
+      snapshot.clawbacks
+        .filter((row) => row.id !== current.id && row.appliedAt)
+        .reduce((sum, row) => sum + Number(row.commissionAmount), 0),
+    );
+    const slice = Number(current.commissionAmount);
+    const retainedAfter = roundMoney(
+      Math.max(0, Number(snapshot.commissionAmount) - otherApplied - slice),
+    );
+    const plan = planPartialClawback({
+      eventKey: params.returnRequestId,
+      retainedAfter,
+      activeApplicationSources: snapshot.creditApplications.flatMap((application) =>
+        application.sources.map((source) => ({
+          id: source.id,
+          active: this.activeApplicationSource(source),
+          createdAt: source.createdAt.toISOString(),
+        })),
+      ),
+      activeCashAllocations: snapshot.cashAllocations
+        .filter((allocation) => allocation.remittance.status === CommissionRemittanceStatus.VERIFIED)
+        .map((allocation) => ({
+          allocationId: allocation.id,
+          amount: this.activeAllocation(allocation),
+          createdAt: allocation.createdAt.toISOString(),
+        })),
+    });
+    for (const reversal of plan.applicationSourceReversals) {
+      await tx.commissionCreditApplicationSourceReversal.create({
+        data: {
+          applicationSourceId: reversal.applicationSourceId,
+          amountUsd: new Prisma.Decimal(reversal.amount.toFixed(2)),
+          reason: CommissionApplicationReversalReason.CUSTOMER_REFUND,
+          reversalKey: reversal.reversalKey,
+          actorUserId: params.actor.sub,
+        },
+      });
+    }
+    for (const reversal of plan.allocationReversals) {
+      await tx.commissionAllocationReversal.create({
+        data: {
+          allocationId: reversal.allocationId,
+          amountUsd: new Prisma.Decimal(reversal.amount.toFixed(2)),
+          reason: 'CUSTOMER_REFUND',
+          reversalKey: reversal.reversalKey,
+          actorUserId: params.actor.sub,
+        },
+      });
+    }
+    if (plan.cashCredit) {
+      await tx.commissionCredit.create({
+        data: {
+          supplierId: snapshot.orderItem.supplierId,
+          orderItemCommissionId: snapshot.id,
+          amountUsd: new Prisma.Decimal(plan.cashCredit.amount.toFixed(2)),
+          reason: CommissionCreditReason.CLAWBACK_AFTER_COLLECTION,
+          sourceEventKey: plan.cashCredit.sourceEventKey,
+          actorUserId: params.actor.sub,
+          sources: {
+            create: plan.cashCredit.sources.map((source) => ({
+              allocationId: source.allocationId,
+              amountUsd: new Prisma.Decimal(source.amount.toFixed(2)),
+            })),
+          },
+        },
+      });
+    }
+    await tx.commissionClawback.update({
+      where: { id: current.id },
+      data: { appliedAt: new Date() },
+    });
+    const appliedSum = roundMoney(otherApplied + slice);
+    if (
+      appliedSum >= Number(snapshot.commissionAmount) - 0.001 &&
+      snapshot.status !== 'CLAWED_BACK'
+    ) {
+      await tx.orderItemCommission.update({
+        where: { id: snapshot.id },
+        data: { status: 'CLAWED_BACK' },
+      });
+    }
+    await this.audit.record({
+      entityType: 'OrderItemCommission',
+      entityId: snapshot.id,
+      action: 'COMMISSION_PARTIALLY_CLAWED_BACK',
+      actorUserId: params.actor.sub,
+      actorRole: params.actor.role,
+      after: {
+        returnRequestId: params.returnRequestId,
+        commissionSlice: slice,
+        retainedAfter,
+        cashCredit: plan.cashCredit?.amount ?? 0,
+        allocationReversals: plan.allocationReversals.length,
+        creditRestored: roundMoney(
+          plan.applicationSourceReversals.reduce((sum, row) => sum + row.amount, 0),
+        ),
+      },
+      tx,
+    });
+    return { legacy: false, applied: true };
   }
 
   async sweepSupplier(supplierId: string) {
@@ -1072,12 +1272,15 @@ export class CommissionLedgerService {
       where: owner ? { supplierId: owner } : undefined,
       orderBy: { createdAt: 'desc' },
       take: 200,
-      include: { allocations: { include: { reversals: true } }, reversal: true },
+      include: {
+        allocations: {
+          include: { reversals: true, creditSources: { include: { offsetSources: true } } },
+        },
+        reversal: true,
+      },
     });
     return rows.map((row) => {
-      const allocated = roundMoney(
-        row.allocations.reduce((sum, allocation) => sum + this.activeAllocation(allocation), 0),
-      );
+      const allocated = this.activeAllocated(row.allocations);
       const verified = row.verifiedAmountUsd == null ? null : Number(row.verifiedAmountUsd);
       return {
         id: row.id,
@@ -1091,9 +1294,10 @@ export class CommissionLedgerService {
         provider: row.provider,
         merchantAccountKey: row.merchantAccountKey,
         allocated,
-        unapplied: verified == null || row.status !== CommissionRemittanceStatus.VERIFIED
-          ? 0
-          : roundMoney(verified - allocated),
+        unapplied:
+          verified == null || row.status !== CommissionRemittanceStatus.VERIFIED
+            ? 0
+            : this.freeVerifiedCash(verified, row.allocations),
         createdAt: row.createdAt.toISOString(),
         reversalReason: row.reversal?.reason ?? null,
       };
@@ -1108,6 +1312,7 @@ export class CommissionLedgerService {
       this.prisma.orderItemCommission.findMany({
         where: { isDemo: false },
         include: {
+          clawbacks: { select: { commissionAmount: true, appliedAt: true } },
           orderItem: {
             include: {
               order: { include: { cashCollections: { select: { supplierId: true } } } },
@@ -1137,9 +1342,12 @@ export class CommissionLedgerService {
       if (
         row.status === 'SETTLEABLE' &&
         isReportableSettleable(report) &&
-        (row.paymentMode === 'test' || row.paymentMode === 'live')
+        settleableCommissionPlacement(row.paymentMode) === 'retained'
       ) {
-        retained += Number(row.commissionAmount);
+        retained += netCommissionAmount(
+          Number(row.commissionAmount),
+          this.appliedClawbackAmounts(row),
+        );
       }
     }
     return {
@@ -1163,11 +1371,16 @@ export class CommissionLedgerService {
         },
         cashAllocations: { include: { reversals: true, remittance: true } },
         creditApplications: { include: { sources: { include: { reversals: true } } } },
+        clawbacks: { select: { commissionAmount: true, appliedAt: true } },
       },
     });
     const remittances = await this.prisma.commissionRemittance.findMany({
       where: { supplierId, status: CommissionRemittanceStatus.VERIFIED },
-      include: { allocations: { include: { reversals: true } } },
+      include: {
+        allocations: {
+          include: { reversals: true, creditSources: { include: { offsetSources: true } } },
+        },
+      },
     });
     const credits = await this.prisma.commissionCredit.findMany({
       where: { supplierId },
@@ -1181,20 +1394,19 @@ export class CommissionLedgerService {
     let retained = 0;
     const grossLines: { commissionAmount: number; cashAllocated: number }[] = [];
     for (const row of snapshots) {
-      const amount = Number(row.commissionAmount);
+      const amount = netCommissionAmount(
+        Number(row.commissionAmount),
+        this.appliedClawbackAmounts(row),
+      );
       const report = commissionReportRow(row);
       if (row.status === 'PENDING') pending += amount;
       if (row.status === 'RECOGNIZED') recognised += amount;
-      const eligible =
-        row.status === 'SETTLEABLE' &&
-        isReportableSettleable(report) &&
-        (row.paymentMode === 'cod' || row.paymentMode === 'lipa');
-      const cardRetained =
-        row.status === 'SETTLEABLE' &&
-        isReportableSettleable(report) &&
-        (row.paymentMode === 'test' || row.paymentMode === 'live');
-      if (cardRetained) retained += amount;
-      if (!eligible) continue;
+      const placement =
+        row.status === 'SETTLEABLE' && isReportableSettleable(report)
+          ? settleableCommissionPlacement(row.paymentMode)
+          : 'none';
+      if (placement === 'retained') retained += amount;
+      if (placement !== 'cash') continue;
       const cashAllocated = roundMoney(
         row.cashAllocations
           .filter((allocation) => allocation.remittance.status === CommissionRemittanceStatus.VERIFIED)
@@ -1212,12 +1424,8 @@ export class CommissionLedgerService {
     const unappliedCash = unappliedVerifiedCash(
       remittances.map((remittance) => ({
         verifiedAmountUsd: Number(remittance.verifiedAmountUsd ?? 0),
-        cashAllocated: roundMoney(
-          remittance.allocations.reduce(
-            (sum, allocation) => sum + this.activeAllocation(allocation),
-            0,
-          ),
-        ),
+        cashAllocated: this.activeAllocated(remittance.allocations),
+        creditHeld: this.creditHeld(remittance.allocations),
       })),
     );
     const collected = cashCommissionCollected(
@@ -1265,16 +1473,17 @@ export class CommissionLedgerService {
   ) {
     const remittance = await tx.commissionRemittance.findUnique({
       where: { id: remittanceId },
-      include: { allocations: { include: { reversals: true } } },
+      include: {
+        allocations: {
+          include: { reversals: true, creditSources: { include: { offsetSources: true } } },
+        },
+      },
     });
     if (!remittance?.verifiedAmountUsd) return;
-    const allocated = roundMoney(
-      remittance.allocations.reduce(
-        (sum, allocation) => sum + this.activeAllocation(allocation),
-        0,
-      ),
+    const left = this.freeVerifiedCash(
+      Number(remittance.verifiedAmountUsd),
+      remittance.allocations,
     );
-    const left = roundMoney(Number(remittance.verifiedAmountUsd) - allocated);
     if (!(left > 0)) return;
     const lines = await this.eligibleLines(tx, remittance.supplierId);
     const slices = allocateOldestFirst(lines, left);
@@ -1312,17 +1521,18 @@ export class CommissionLedgerService {
   ) {
     const remittance = await tx.commissionRemittance.findUnique({
       where: { id: remittanceId },
-      include: { allocations: { include: { reversals: true } } },
+      include: {
+        allocations: {
+          include: { reversals: true, creditSources: { include: { offsetSources: true } } },
+        },
+      },
     });
     if (!remittance?.verifiedAmountUsd) {
       throw new BadRequestException('This remittance has no verified amount');
     }
-    let unapplied = roundMoney(
-      Number(remittance.verifiedAmountUsd) -
-        remittance.allocations.reduce(
-          (sum, allocation) => sum + this.activeAllocation(allocation),
-          0,
-        ),
+    let unapplied = this.freeVerifiedCash(
+      Number(remittance.verifiedAmountUsd),
+      remittance.allocations,
     );
     const lines = await this.eligibleLines(tx, supplierId);
     const remaining = new Map(lines.map((line) => [line.id, line.remaining]));
@@ -1491,6 +1701,7 @@ export class CommissionLedgerService {
         },
         cashAllocations: { include: { reversals: true, remittance: true } },
         creditApplications: { include: { sources: { include: { reversals: true } } } },
+        clawbacks: { select: { commissionAmount: true, appliedAt: true } },
       },
       orderBy: [{ settleableAt: 'asc' }, { id: 'asc' }],
     });
@@ -1515,7 +1726,9 @@ export class CommissionLedgerService {
         ),
       );
       const remaining = roundMoney(
-        Number(row.commissionAmount) - cashAllocated - creditApplied,
+        netCommissionAmount(Number(row.commissionAmount), this.appliedClawbackAmounts(row)) -
+          cashAllocated -
+          creditApplied,
       );
       if (remaining > 0 && row.settleableAt) {
         lines.push({
@@ -1682,6 +1895,67 @@ export class CommissionLedgerService {
       SELECT id FROM "CommissionRemittance" WHERE id = ${id} FOR UPDATE
     `;
     if (!rows.length) throw new NotFoundException('Remittance not found');
+  }
+
+  private appliedClawbackAmounts(row: {
+    clawbacks?: { appliedAt: Date | null; commissionAmount: Prisma.Decimal | number }[];
+  }): number[] {
+    return (row.clawbacks ?? [])
+      .filter((entry) => entry.appliedAt)
+      .map((entry) => Number(entry.commissionAmount));
+  }
+
+  private activeAllocated(
+    allocations: {
+      amountUsd: Prisma.Decimal | number;
+      reversals: { amountUsd: Prisma.Decimal | number }[];
+    }[],
+  ) {
+    return roundMoney(
+      allocations.reduce((sum, allocation) => sum + this.activeAllocation(allocation), 0),
+    );
+  }
+
+  /** Credit sourced from these allocations and not yet offset. Applied credit stays held. */
+  private creditHeld(
+    allocations: {
+      creditSources?: {
+        amountUsd: Prisma.Decimal | number;
+        offsetSources?: { amountUsd: Prisma.Decimal | number }[];
+      }[];
+    }[],
+  ) {
+    return roundMoney(
+      allocations.reduce((sum, allocation) => {
+        for (const source of allocation.creditSources ?? []) {
+          const offset = (source.offsetSources ?? []).reduce(
+            (inner, row) => inner + Number(row.amountUsd),
+            0,
+          );
+          sum += Math.max(0, Number(source.amountUsd) - offset);
+        }
+        return sum;
+      }, 0),
+    );
+  }
+
+  private freeVerifiedCash(
+    verifiedAmountUsd: number,
+    allocations: {
+      amountUsd: Prisma.Decimal | number;
+      reversals: { amountUsd: Prisma.Decimal | number }[];
+      creditSources?: {
+        amountUsd: Prisma.Decimal | number;
+        offsetSources?: { amountUsd: Prisma.Decimal | number }[];
+      }[];
+    }[],
+  ) {
+    return roundMoney(
+      Math.max(
+        0,
+        verifiedAmountUsd - this.activeAllocated(allocations) - this.creditHeld(allocations),
+      ),
+    );
   }
 
   private activeAllocation(allocation: {

@@ -5,9 +5,14 @@ import {
   consumeCreditSources,
   grossCommissionOutstanding,
   netAmountDue,
+  netCommissionAmount,
+  roundMoney,
+  settleableCommissionPlacement,
   normalizePaymentReference,
   planClawbackRestoration,
+  planPartialClawback,
   planRemittanceCreditInvalidation,
+  proportionalCommissionSlice,
   remainingCredit,
   unappliedRefundCredit,
   unappliedVerifiedCash,
@@ -133,6 +138,21 @@ describe('commission ledger math', () => {
       amount: 70,
       sources: [{ allocationId: 'alloc-70', amount: 70 }],
     });
+    expect(plan.allocationReversals).toEqual([
+      {
+        allocationId: 'alloc-70',
+        amount: 70,
+        reversalKey: 'clawback:snap-1:allocation:alloc-70',
+      },
+    ]);
+    const activeCollected = 70 - plan.allocationReversals[0].amount;
+    expect(activeCollected).toBe(0);
+    expect(activeCollected + plan.cashCredit!.amount).toBe(70);
+    expect(
+      unappliedVerifiedCash([
+        { verifiedAmountUsd: 70, cashAllocated: activeCollected, creditHeld: 70 },
+      ]),
+    ).toBe(0);
     expect(
       unappliedRefundCredit([
         { amount: 30, offsets: 0, applied: 0 },
@@ -148,6 +168,7 @@ describe('commission ledger math', () => {
       activeCashAllocations: [],
     });
     expect(plan.cashCredit).toBeNull();
+    expect(plan.allocationReversals).toEqual([]);
     expect(plan.applicationSourceReversals).toHaveLength(1);
   });
 
@@ -228,5 +249,202 @@ describe('commission ledger math', () => {
   it('floors net amount due when unapplied cash exceeds the balance', () => {
     expect(netAmountDue(100, 30, 90)).toBe(0);
     expect(unappliedVerifiedCash([{ verifiedAmountUsd: 150, cashAllocated: 0 }])).toBe(150);
+  });
+});
+
+describe('partial return commission slices', () => {
+  it('returns a $1.00 commission one unit at a time as 0.33, 0.33 and 0.34', () => {
+    const first = proportionalCommissionSlice({
+      commissionAmount: 1,
+      lineQuantity: 3,
+      alreadyReturned: 0,
+      quantity: 1,
+      alreadyClawed: 0,
+    });
+    const second = proportionalCommissionSlice({
+      commissionAmount: 1,
+      lineQuantity: 3,
+      alreadyReturned: 1,
+      quantity: 1,
+      alreadyClawed: first,
+    });
+    const last = proportionalCommissionSlice({
+      commissionAmount: 1,
+      lineQuantity: 3,
+      alreadyReturned: 2,
+      quantity: 1,
+      alreadyClawed: first + second,
+    });
+    expect(first).toBe(0.33);
+    expect(second).toBe(0.33);
+    expect(last).toBe(0.34);
+    expect(netCommissionAmount(1, [first, second, last])).toBe(0);
+  });
+
+  it('releases the $4 credit and $1 of the $6 cash when half of a $10 line is returned', () => {
+    const slice = proportionalCommissionSlice({
+      commissionAmount: 10,
+      lineQuantity: 2,
+      alreadyReturned: 0,
+      quantity: 1,
+      alreadyClawed: 0,
+    });
+    expect(slice).toBe(5);
+    const plan = planPartialClawback({
+      eventKey: 'ret-half',
+      retainedAfter: 5,
+      activeApplicationSources: [
+        {
+          id: 'app-source-4',
+          active: 4,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      activeCashAllocations: [
+        {
+          allocationId: 'alloc-6',
+          amount: 6,
+          createdAt: '2026-01-02T00:00:00.000Z',
+        },
+      ],
+    });
+    expect(plan.applicationSourceReversals).toEqual([
+      {
+        applicationSourceId: 'app-source-4',
+        amount: 4,
+        reversalKey: 'return-clawback:ret-half:application-source:app-source-4',
+      },
+    ]);
+    expect(plan.allocationReversals).toEqual([
+      {
+        allocationId: 'alloc-6',
+        amount: 1,
+        reversalKey: 'return-clawback:ret-half:allocation:alloc-6',
+      },
+    ]);
+    expect(plan.cashCredit).toEqual({
+      sourceEventKey: 'return-clawback:ret-half',
+      amount: 1,
+      sources: [{ allocationId: 'alloc-6', amount: 1 }],
+    });
+    const collected = 6 - plan.allocationReversals[0].amount;
+    expect(collected).toBe(5);
+    expect(collected + plan.cashCredit!.amount).toBe(6);
+    expect(grossCommissionOutstanding([{ commissionAmount: 5, cashAllocated: collected }])).toBe(0);
+  });
+
+  it('does not open a cash credit for unpaid commission', () => {
+    const plan = planPartialClawback({
+      eventKey: 'ret-unpaid',
+      retainedAfter: 5,
+      activeApplicationSources: [],
+      activeCashAllocations: [],
+    });
+    expect(plan.cashCredit).toBeNull();
+    expect(plan.allocationReversals).toEqual([]);
+    expect(grossCommissionOutstanding([{ commissionAmount: 5, cashAllocated: 0 }])).toBe(5);
+  });
+
+  it('leaves another remittance allocation untouched', () => {
+    const plan = planPartialClawback({
+      eventKey: 'ret-one-source',
+      retainedAfter: 5,
+      activeApplicationSources: [],
+      activeCashAllocations: [
+        {
+          allocationId: 'older',
+          amount: 6,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          allocationId: 'newer',
+          amount: 4,
+          createdAt: '2026-02-01T00:00:00.000Z',
+        },
+      ],
+    });
+    expect(plan.allocationReversals.map((row) => row.allocationId)).toEqual(['older']);
+    expect(plan.allocationReversals[0].amount).toBe(5);
+  });
+});
+
+describe('retained card commission', () => {
+  it.each(['stripe', 'test', 'live'])(
+    'keeps %s commission in the retained balance',
+    (paymentMode) => {
+      expect(settleableCommissionPlacement(paymentMode)).toBe('retained');
+    },
+  );
+
+  it.each(['cod', 'lipa'])(
+    'keeps %s commission in the cash outstanding balance',
+    (paymentMode) => {
+      expect(settleableCommissionPlacement(paymentMode)).toBe('cash');
+    },
+  );
+
+  it.each(['demo', 'card', ''])(
+    'leaves %s commission out of both balances',
+    (paymentMode) => {
+      expect(settleableCommissionPlacement(paymentMode)).toBe('none');
+    },
+  );
+
+  it('counts stripe, test, and live once and leaves cash due unchanged', () => {
+    const lines = [
+      { paymentMode: 'stripe', amount: 31.9, allocated: 0 },
+      { paymentMode: 'test', amount: 10, allocated: 0 },
+      { paymentMode: 'live', amount: 5, allocated: 0 },
+      { paymentMode: 'cod', amount: 12, allocated: 1 },
+      { paymentMode: 'cod', amount: 5, allocated: 0 },
+      { paymentMode: 'cod', amount: 7, allocated: 0 },
+      { paymentMode: 'cod', amount: 12, allocated: 0 },
+      { paymentMode: 'cod', amount: 4.8, allocated: 0 },
+      { paymentMode: 'lipa', amount: 4.8, allocated: 0 },
+    ];
+    let retained = 0;
+    const cashLines: { commissionAmount: number; cashAllocated: number }[] = [];
+    for (const line of lines) {
+      const placement = settleableCommissionPlacement(line.paymentMode);
+      const selected = ['retained', 'cash'].filter((bucket) => bucket === placement);
+      expect(selected).toHaveLength(placement === 'none' ? 0 : 1);
+      if (placement === 'retained') retained = roundMoney(retained + line.amount);
+      if (placement === 'cash') {
+        cashLines.push({
+          commissionAmount: line.amount,
+          cashAllocated: line.allocated,
+        });
+      }
+    }
+    const due = netAmountDue(grossCommissionOutstanding(cashLines), 0, 0);
+    expect(retained).toBe(46.9);
+    expect(due).toBe(44.6);
+    expect(roundMoney(retained + due)).toBe(91.5);
+    expect(cashLines.some((line) => line.commissionAmount === 31.9)).toBe(false);
+  });
+
+  it('keeps the delivered Stripe commission retained and the cash due at 39.80', () => {
+    const lines = [
+      { paymentMode: 'stripe', amount: 31.9, allocated: 0 },
+      { paymentMode: 'cod', amount: 12, allocated: 1 },
+      { paymentMode: 'cod', amount: 5, allocated: 0 },
+      { paymentMode: 'cod', amount: 7, allocated: 0 },
+      { paymentMode: 'cod', amount: 12, allocated: 0 },
+      { paymentMode: 'cod', amount: 4.8, allocated: 0 },
+    ];
+    let retained = 0;
+    const cashLines: { commissionAmount: number; cashAllocated: number }[] = [];
+    for (const line of lines) {
+      const placement = settleableCommissionPlacement(line.paymentMode);
+      if (placement === 'retained') retained = roundMoney(retained + line.amount);
+      if (placement === 'cash') {
+        cashLines.push({
+          commissionAmount: line.amount,
+          cashAllocated: line.allocated,
+        });
+      }
+    }
+    expect(retained).toBe(31.9);
+    expect(netAmountDue(grossCommissionOutstanding(cashLines), 0, 0)).toBe(39.8);
   });
 });
