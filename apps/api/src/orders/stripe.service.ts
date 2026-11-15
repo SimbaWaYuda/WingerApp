@@ -25,6 +25,41 @@ export type CardRefundResult =
   | { ok: true; refundId: string }
   | { ok: false; message: string };
 
+/** Normalized Stripe refund fields used by RefundAttempt reconciliation (S2.1). */
+export type StripeRefundListItem = {
+  id: string;
+  amount: number;
+  currency: string;
+  status: string | null;
+  failureReason: string | null;
+  metadata: Record<string, string>;
+};
+
+export type ListRefundsResult =
+  | { ok: true; refunds: StripeRefundListItem[]; exhausted: true }
+  | {
+      ok: false;
+      message: string;
+      exhausted: false;
+      refunds: StripeRefundListItem[];
+    };
+
+export type CreateRefundForAttemptResult =
+  | {
+      ok: true;
+      refund: {
+        id: string;
+        status: string | null;
+        failureReason: string | null;
+      };
+    }
+  | {
+      ok: false;
+      message: string;
+      /** True when the create may have reached Stripe (must reconcile, never blind retry-create). */
+      uncertain: boolean;
+    };
+
 /**
  * Share of the customer charge for a returned line, in payment currency.
  * Tax and delivery are split by the line's share of the settlement subtotal,
@@ -216,6 +251,115 @@ export class StripeService {
     }
   }
 
+  /**
+   * Lists every refund on a PaymentIntent (paginated to exhaustion).
+   * Used by RefundAttempt reconcile — never call inside a DB transaction.
+   */
+  async listRefundsForPaymentIntent(
+    paymentIntentId: string,
+  ): Promise<ListRefundsResult> {
+    if (!this.stripe) {
+      return {
+        ok: false,
+        message: 'Stripe is not configured',
+        exhausted: false,
+        refunds: [],
+      };
+    }
+    const refunds: StripeRefundListItem[] = [];
+    try {
+      let startingAfter: string | undefined;
+      for (;;) {
+        const page = await this.stripe.refunds.list({
+          payment_intent: paymentIntentId,
+          limit: 100,
+          ...(startingAfter ? { starting_after: startingAfter } : {}),
+        });
+        for (const refund of page.data) {
+          refunds.push(normalizeStripeRefund(refund));
+        }
+        if (!page.has_more) {
+          return { ok: true, refunds, exhausted: true };
+        }
+        const last = page.data[page.data.length - 1];
+        if (!last?.id) {
+          return {
+            ok: false,
+            message: 'Stripe refund list page missing cursor',
+            exhausted: false,
+            refunds,
+          };
+        }
+        startingAfter = last.id;
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Stripe refund list failed';
+      this.logger.warn(`Stripe refund list failed: ${message}`);
+      return { ok: false, message, exhausted: false, refunds };
+    }
+  }
+
+  /**
+   * V1 RefundAttempt submission create. Includes operationKey in metadata.
+   * Does not change legacy refundCardCharge behaviour.
+   * Never call inside a DB transaction.
+   */
+  async createRefundForAttempt(params: {
+    paymentIntentId: string;
+    amountCents: number;
+    currency: string;
+    orderId: string;
+    operationKey: string;
+    idempotencyKey: string;
+    returnRequestId?: string | null;
+  }): Promise<CreateRefundForAttemptResult> {
+    if (!this.stripe) {
+      return {
+        ok: false,
+        message: 'Stripe is not configured',
+        uncertain: false,
+      };
+    }
+    if (!(params.amountCents > 0)) {
+      return {
+        ok: false,
+        message: 'Refund amount must be greater than zero',
+        uncertain: false,
+      };
+    }
+    try {
+      const refund = await this.stripe.refunds.create(
+        {
+          payment_intent: params.paymentIntentId,
+          amount: params.amountCents,
+          currency: params.currency.toLowerCase(),
+          metadata: {
+            orderId: params.orderId,
+            operationKey: params.operationKey,
+            ...(params.returnRequestId
+              ? { returnRequestId: params.returnRequestId }
+              : {}),
+          },
+        },
+        { idempotencyKey: params.idempotencyKey },
+      );
+      return {
+        ok: true,
+        refund: {
+          id: refund.id,
+          status: refund.status ?? null,
+          failureReason: refundFailureReason(refund),
+        },
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Stripe refund failed';
+      this.logger.warn(`Stripe attempt refund failed: ${message}`);
+      return { ok: false, message, uncertain: true };
+    }
+  }
+
   /** Connect payouts run only against the test secret. Live charges are refused. */
   connectTestReady(): boolean {
     return this.checkoutMode === 'test' && this.stripe != null;
@@ -352,4 +496,41 @@ function isAlreadyRefunded(error: unknown): boolean {
   if (code === 'charge_already_refunded') return true;
   const message = error instanceof Error ? error.message.toLowerCase() : '';
   return message.includes('already refunded');
+}
+
+function normalizeStripeRefund(refund: {
+  id: string;
+  amount?: number | null;
+  currency?: string | null;
+  status?: string | null;
+  reason?: string | null;
+  failure_reason?: string | null;
+  metadata?: Stripe.Metadata | null;
+}): StripeRefundListItem {
+  const metadata: Record<string, string> = {};
+  if (refund.metadata) {
+    for (const [key, value] of Object.entries(refund.metadata)) {
+      if (typeof value === 'string') metadata[key] = value;
+    }
+  }
+  return {
+    id: refund.id,
+    amount: refund.amount ?? 0,
+    currency: (refund.currency ?? '').toLowerCase(),
+    status: refund.status ?? null,
+    failureReason: refundFailureReason(refund),
+    metadata,
+  };
+}
+
+function refundFailureReason(refund: {
+  failure_reason?: string | null;
+  reason?: string | null;
+  status?: string | null;
+}): string | null {
+  if (refund.failure_reason) return String(refund.failure_reason);
+  if (refund.status === 'failed' || refund.status === 'canceled') {
+    return refund.reason ? String(refund.reason) : refund.status;
+  }
+  return null;
 }

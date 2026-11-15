@@ -1,6 +1,10 @@
 import {
   canInsertNextSubmissionVersion,
+  canRetryStripeCreateSameVersion,
+  isApplyEligibleStripeSuccess,
+  isInFlightUncertainSubmission,
   isRefundAttemptV1Enabled,
+  isUnresolvedClaimedStripeCreate,
   operationKeyForCancelRemaining,
   operationKeyForLineCancel,
   operationKeyForOrderCancel,
@@ -8,6 +12,7 @@ import {
   operationKeyForUnsellable,
   REFUND_ATTEMPT_V1_ENV,
   requiresReconcileBeforeStripeCreate,
+  STRIPE_IDEMPOTENCY_RETAIN_MS,
   stripeIdempotencyKeyForSubmission,
 } from './refund-attempt.types';
 
@@ -56,12 +61,23 @@ describe('refund-attempt.types', () => {
           outcome: 'SUBMISSION_UNKNOWN',
           reconciliationResult: 'NONE',
           stripeIdempotencyKey: 'winger-ra:return:ret-1:v1',
-          submittedAt: new Date(),
+          submittedAt: null,
+          stripeRefundId: null,
         }),
       ).toEqual({
         allowed: false,
         reason: 'submission_unknown_requires_reconcile',
       });
+      expect(
+        canInsertNextSubmissionVersion({
+          version: 1,
+          outcome: 'SUBMISSION_UNKNOWN',
+          reconciliationResult: 'NONE',
+          stripeIdempotencyKey: 'winger-ra:return:ret-1:v1',
+          submittedAt: new Date(),
+          stripeRefundId: null,
+        }).reason,
+      ).toBe('unresolved_claimed_stripe_create');
     });
 
     it('allows a new version only after confirmed NO_MATCH', () => {
@@ -94,6 +110,150 @@ describe('refund-attempt.types', () => {
           stripeIdempotencyKey: 'k',
           submittedAt: new Date(),
         }).allowed,
+      ).toBe(false);
+    });
+
+    it('allows a new version after confirmed failed/canceled object', () => {
+      expect(
+        canInsertNextSubmissionVersion({
+          version: 1,
+          outcome: 'FAILED',
+          reconciliationResult: 'MATCHED',
+          stripeIdempotencyKey: 'k',
+          submittedAt: new Date(),
+          stripeRefundId: 're_fail',
+        }),
+      ).toEqual({
+        allowed: true,
+        reason: 'confirmed_stripe_refund_failed_or_canceled',
+      });
+    });
+
+    it('blocks FAILED until reconcile confirms the object', () => {
+      expect(
+        canInsertNextSubmissionVersion({
+          version: 1,
+          outcome: 'FAILED',
+          reconciliationResult: 'NONE',
+          stripeIdempotencyKey: 'k',
+          submittedAt: new Date(),
+        }).allowed,
+      ).toBe(false);
+    });
+  });
+
+  describe('canRetryStripeCreateSameVersion', () => {
+    it('blocks when a Stripe refund id is already known (pending/requires_action/failed)', () => {
+      expect(
+        canRetryStripeCreateSameVersion({
+          version: 1,
+          outcome: 'PENDING',
+          reconciliationResult: 'MATCHED',
+          stripeIdempotencyKey: 'k',
+          submittedAt: new Date(),
+          stripeRefundId: 're_pending',
+        }).allowed,
+      ).toBe(false);
+    });
+
+    it('allows PENDING without a Stripe id', () => {
+      expect(
+        canRetryStripeCreateSameVersion({
+          version: 1,
+          outcome: 'PENDING',
+          reconciliationResult: 'NONE',
+          stripeIdempotencyKey: 'k',
+          submittedAt: null,
+          stripeRefundId: null,
+        }).allowed,
+      ).toBe(true);
+    });
+
+    it('treats in-flight PENDING+submittedAt+no id as same-key recovery only inside 24h', () => {
+      const submittedAt = new Date('2026-11-15T00:00:00.000Z');
+      expect(
+        isInFlightUncertainSubmission({
+          outcome: 'PENDING',
+          submittedAt,
+          stripeRefundId: null,
+        }),
+      ).toBe(true);
+      expect(
+        canRetryStripeCreateSameVersion(
+          {
+            version: 1,
+            outcome: 'PENDING',
+            reconciliationResult: 'NONE',
+            stripeIdempotencyKey: 'k',
+            submittedAt,
+            stripeRefundId: null,
+          },
+          new Date(submittedAt.getTime() + 60_000),
+        ).reason,
+      ).toBe('inflight_same_key_recovery');
+      expect(
+        canRetryStripeCreateSameVersion(
+          {
+            version: 1,
+            outcome: 'PENDING',
+            reconciliationResult: 'NONE',
+            stripeIdempotencyKey: 'k',
+            submittedAt,
+            stripeRefundId: null,
+          },
+          new Date(submittedAt.getTime() + STRIPE_IDEMPOTENCY_RETAIN_MS),
+        ).allowed,
+      ).toBe(false);
+    });
+
+    it('keeps SUBMISSION_UNKNOWN after claimed create unresolved (never auto next version)', () => {
+      const submittedAt = new Date();
+      expect(
+        isUnresolvedClaimedStripeCreate({
+          outcome: 'SUBMISSION_UNKNOWN',
+          submittedAt,
+          stripeRefundId: null,
+        }),
+      ).toBe(true);
+      expect(
+        canInsertNextSubmissionVersion({
+          version: 1,
+          outcome: 'SUBMISSION_UNKNOWN',
+          reconciliationResult: 'NONE',
+          stripeIdempotencyKey: 'k',
+          submittedAt,
+          stripeRefundId: null,
+        }),
+      ).toEqual({
+        allowed: false,
+        reason: 'unresolved_claimed_stripe_create',
+      });
+    });
+  });
+
+  describe('isApplyEligibleStripeSuccess', () => {
+    it('requires attempt STRIPE_SUCCEEDED and submission SUCCEEDED with id', () => {
+      expect(
+        isApplyEligibleStripeSuccess({
+          attemptStatus: 'STRIPE_SUCCEEDED',
+          submissionOutcome: 'SUCCEEDED',
+          submissionStripeRefundId: 're_1',
+        }),
+      ).toBe(true);
+      expect(
+        isApplyEligibleStripeSuccess({
+          attemptStatus: 'PENDING',
+          submissionOutcome: 'PENDING',
+          submissionStripeRefundId: 're_pending',
+        }),
+      ).toBe(false);
+      expect(
+        isApplyEligibleStripeSuccess({
+          attemptStatus: 'STRIPE_SUCCEEDED',
+          submissionOutcome: 'SUCCEEDED',
+          submissionStripeRefundId: 're_1',
+          succeededSubmissionCount: 2,
+        }),
       ).toBe(false);
     });
   });
