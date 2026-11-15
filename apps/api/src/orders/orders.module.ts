@@ -10,6 +10,7 @@ import { ConnectController, SupplierConnectController } from './connect.controll
 import { OrdersController } from './orders.controller';
 import { PayoutsService } from './payouts.service';
 import { OrdersService } from './orders.service';
+import { RefundAttemptService } from './refund-attempt.service';
 import { StripeService } from './stripe.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
 
@@ -29,7 +30,8 @@ import { StripeWebhookController } from './stripe-webhook.controller';
     ConnectController,
     SupplierConnectController,
   ],
-  providers: [OrdersService, StripeService, PayoutsService],
-  exports: [OrdersService, PayoutsService],
+  // RefundAttemptService is registered but not injected into OrdersService until S2.3+.
+  providers: [OrdersService, StripeService, PayoutsService, RefundAttemptService],
+  exports: [OrdersService, PayoutsService, RefundAttemptService],
 })
 export class OrdersModule {}
