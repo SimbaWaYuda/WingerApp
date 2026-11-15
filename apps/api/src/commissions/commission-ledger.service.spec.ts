@@ -190,6 +190,61 @@ describe('applyReturnClawback', () => {
     ]);
     expect(tx.orderItemCommission.findUnique).toHaveBeenCalledTimes(1);
   });
+
+  it('locks OIC before returning legacy when no reservation exists', async () => {
+    const service = new CommissionLedgerService(
+      {} as never,
+      { record: jest.fn() } as never,
+      {} as never,
+    );
+    const $queryRaw = jest.fn(
+      async (_strings: TemplateStringsArray, ..._values: unknown[]) => [
+        { id: 'snap-1', supplierId: 'sup-1' },
+      ],
+    );
+    const tx = {
+      $queryRaw,
+      $executeRaw: jest.fn(),
+      commissionClawback: {
+        findUnique: jest.fn(async () => null),
+        update: jest.fn(),
+      },
+      orderItemCommission: {
+        findUnique: jest.fn(),
+      },
+    };
+    const result = await service.applyReturnClawback(tx as never, {
+      returnRequestId: 'ret-none',
+      actor: admin(),
+    });
+    expect(result).toEqual({ legacy: true, applied: false });
+    expect($queryRaw).toHaveBeenCalled();
+    expect(classifyLockSql($queryRaw.mock.calls[0][0])).toBe('oic-nku');
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.orderItemCommission.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns legacy without locking when no OIC exists for the return', async () => {
+    const service = new CommissionLedgerService(
+      {} as never,
+      { record: jest.fn() } as never,
+      {} as never,
+    );
+    const tx = {
+      $queryRaw: jest.fn(async () => []),
+      $executeRaw: jest.fn(),
+      commissionClawback: {
+        findUnique: jest.fn(async () => null),
+      },
+    };
+    const result = await service.applyReturnClawback(tx as never, {
+      returnRequestId: 'ret-no-oic',
+      actor: admin(),
+    });
+    expect(result).toEqual({ legacy: true, applied: false });
+    expect(tx.$queryRaw).toHaveBeenCalled();
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+  });
 });
 
 describe('reserveReturnClawback', () => {

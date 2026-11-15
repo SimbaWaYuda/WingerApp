@@ -1120,38 +1120,56 @@ export class CommissionLedgerService {
   /**
    * Applies a reserved slice. Cash that becomes a credit is reversed on the
    * allocation, so collected commission no longer includes it. No reservation
-   * means a return approved before slices existed: the caller uses the
-   * full-line clawback.
+   * after OIC lock means a return approved before slices existed: the caller
+   * uses the full-line clawback while this transaction still holds the OIC lock.
    */
   async applyReturnClawback(
     tx: Prisma.TransactionClient,
     params: { returnRequestId: string; actor: AuthUser },
   ): Promise<{ legacy: boolean; applied: boolean }> {
-    const reserved = await tx.commissionClawback.findUnique({
+    const peeked = await tx.commissionClawback.findUnique({
       where: { returnRequestId: params.returnRequestId },
     });
-    if (!reserved) return { legacy: true, applied: false };
-    if (reserved.appliedAt) return { legacy: false, applied: false };
+    // Already-applied reservation: cheap idempotent exit (no locks required).
+    if (peeked?.appliedAt) return { legacy: false, applied: false };
 
-    // OIC first (FOR NO KEY UPDATE) so sweep FK KEY SHARE can proceed, then supplier credits.
+    // Serialise proportional-vs-LEGACY on the OIC even when no reservation row is
+    // visible yet, so concurrent reserveReturnClawback cannot commit under us.
     const lockedOic = await tx.$queryRaw<{ id: string; supplierId: string }[]>`
       SELECT c.id, oi."supplierId" AS "supplierId"
-      FROM "OrderItemCommission" c
-      INNER JOIN "OrderItem" oi ON oi.id = c."orderItemId"
-      WHERE c.id = ${reserved.orderItemCommissionId}
+      FROM "ReturnRequest" rr
+      INNER JOIN "OrderItem" oi ON oi.id = rr."orderItemId"
+      INNER JOIN "OrderItemCommission" c ON c."orderItemId" = oi.id
+      WHERE rr.id = ${params.returnRequestId}
       FOR NO KEY UPDATE OF c
     `;
-    if (!lockedOic.length) return { legacy: false, applied: false };
-    await this.lockSupplierCredits(tx, lockedOic[0].supplierId);
+    if (!lockedOic.length) {
+      // No commission snapshot for this return's line — established legacy outcome.
+      return { legacy: true, applied: false };
+    }
 
     const current = await tx.commissionClawback.findUnique({
-      where: { id: reserved.id },
+      where: { returnRequestId: params.returnRequestId },
     });
-    if (!current || current.appliedAt) return { legacy: false, applied: false };
+    if (!current) {
+      // Hold OIC until the outer txn ends so completeLegacyReturnCommissionInTx /
+      // clawbackForOrderItem see a stable "no reservation" decision.
+      return { legacy: true, applied: false };
+    }
+    if (current.appliedAt) return { legacy: false, applied: false };
+
+    await this.lockSupplierCredits(tx, lockedOic[0].supplierId);
+
+    const afterCredits = await tx.commissionClawback.findUnique({
+      where: { id: current.id },
+    });
+    if (!afterCredits || afterCredits.appliedAt) {
+      return { legacy: false, applied: false };
+    }
 
     // Fresh snapshot after both locks — never plan from the pre-lock read.
     const snapshot = await tx.orderItemCommission.findUnique({
-      where: { id: current.orderItemCommissionId },
+      where: { id: afterCredits.orderItemCommissionId },
       include: {
         orderItem: true,
         clawbacks: true,
@@ -1164,10 +1182,10 @@ export class CommissionLedgerService {
     if (!snapshot) return { legacy: false, applied: false };
     const otherApplied = roundMoney(
       snapshot.clawbacks
-        .filter((row) => row.id !== current.id && row.appliedAt)
+        .filter((row) => row.id !== afterCredits.id && row.appliedAt)
         .reduce((sum, row) => sum + Number(row.commissionAmount), 0),
     );
-    const slice = Number(current.commissionAmount);
+    const slice = Number(afterCredits.commissionAmount);
     const retainedAfter = roundMoney(
       Math.max(0, Number(snapshot.commissionAmount) - otherApplied - slice),
     );
@@ -1230,7 +1248,7 @@ export class CommissionLedgerService {
       });
     }
     await tx.commissionClawback.update({
-      where: { id: current.id },
+      where: { id: afterCredits.id },
       data: { appliedAt: new Date() },
     });
     const appliedSum = roundMoney(otherApplied + slice);

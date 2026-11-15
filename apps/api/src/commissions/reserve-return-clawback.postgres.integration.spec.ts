@@ -1,5 +1,5 @@
 /**
- * S2.4.25 — isolated PostgreSQL regression for concurrent reserveReturnClawback.
+ * S2.4.25 / S2.4.28 — isolated PostgreSQL regression for concurrent reserveReturnClawback.
  *
  * Opt-in only:
  *   $env:S244_PG_TESTS = "1"
@@ -7,7 +7,10 @@
  *   npx jest --testPathPattern=reserve-return-clawback.postgres.integration --runInBand --no-coverage
  */
 import {
+  CommissionAllocationReason,
   CommissionRecognitionStatus,
+  CommissionRemittanceMethod,
+  CommissionRemittanceStatus,
   PrismaClient,
   ReturnRefundDrive,
   ReturnRefundStatus,
@@ -15,6 +18,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import type { AuthUser } from '../auth/auth.types';
+import { ShipmentRefundHoldService } from '../orders/shipment-refund-hold.service';
 import { AuditService } from './audit.service';
 import { CommissionLedgerService } from './commission-ledger.service';
 import { CommissionsService } from './commissions.service';
@@ -125,6 +129,9 @@ suite('S2.4.25 reserveReturnClawback concurrency (PostgreSQL)', () => {
   let ledgerA: CommissionLedgerService;
   let ledgerB: CommissionLedgerService;
   let commissionsA: CommissionsService;
+  let commissionsB: CommissionsService;
+  let holdsA: ShipmentRefundHoldService;
+  let holdsB: ShipmentRefundHoldService;
   let admin: AuthUser;
   let customerId = '';
   let adminId = '';
@@ -199,6 +206,17 @@ suite('S2.4.25 reserveReturnClawback concurrency (PostgreSQL)', () => {
     ledgerA = new CommissionLedgerService(sessionA as never, auditA, {} as never);
     ledgerB = new CommissionLedgerService(sessionB as never, auditB, {} as never);
     commissionsA = new CommissionsService(sessionA as never, auditA, ledgerA);
+    commissionsB = new CommissionsService(sessionB as never, auditB, ledgerB);
+    holdsA = new ShipmentRefundHoldService(
+      sessionA as never,
+      ledgerA,
+      commissionsA,
+    );
+    holdsB = new ShipmentRefundHoldService(
+      sessionB as never,
+      ledgerB,
+      commissionsB,
+    );
   });
 
   afterAll(async () => {
@@ -324,6 +342,43 @@ suite('S2.4.25 reserveReturnClawback concurrency (PostgreSQL)', () => {
       });
     }
     return { orderId, itemId, oicId, retIds };
+  }
+
+  async function seedVerifiedAllocation(input: {
+    label: string;
+    supplierId: string;
+    oicId: string;
+    amount: number;
+  }) {
+    const remittanceId = `${run}-rem-${input.label}`;
+    await sessionA.commissionRemittance.create({
+      data: {
+        id: remittanceId,
+        supplierId: input.supplierId,
+        method: CommissionRemittanceMethod.WINGER_LIPA,
+        status: CommissionRemittanceStatus.VERIFIED,
+        claimedAmount: input.amount.toFixed(2),
+        claimedCurrency: 'USD',
+        verifiedAmountUsd: input.amount.toFixed(2),
+        verifiedAt: new Date('2026-03-01T00:00:00.000Z'),
+        referenceRaw: remittanceId,
+        referenceNormalized: remittanceId.toUpperCase(),
+        provider: 'TEST',
+        merchantAccountKey: `${run}-account`,
+        autoApply: true,
+        submittedByUserId: adminId,
+      },
+    });
+    await ledgerA.sweepSupplier(input.supplierId);
+    const alloc = await sessionA.commissionAllocation.findFirst({
+      where: {
+        remittanceId,
+        orderItemCommissionId: input.oicId,
+      },
+    });
+    expect(alloc).toBeTruthy();
+    expect(money(alloc!.amountUsd)).toBe(money(input.amount));
+    return { remittanceId, allocationId: alloc!.id };
   }
 
   it('R1) concurrent reserves without OrderItem lock serialise on OIC and stay within commission', async () => {
@@ -577,6 +632,487 @@ suite('S2.4.25 reserveReturnClawback concurrency (PostgreSQL)', () => {
     expect(money(reserved!.commissionAmount)).toBe(5);
     releaseGate();
     await gateHold;
+  });
+
+  it('G1) concurrent same-return reservation is idempotent under OIC contention', async () => {
+    const supplierId = await makeSupplier('g1');
+    const line = await seedLine({
+      label: 'g1',
+      supplierId,
+      merchandise: 100,
+      commission: 10,
+      quantity: 2,
+      returnCount: 1,
+    });
+
+    let gateLocked = false;
+    let releaseGate = () => {};
+    const gateOpen = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const gateHold = sessionGate.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`
+          SELECT id FROM "OrderItemCommission" WHERE id = ${line.oicId} FOR NO KEY UPDATE
+        `;
+        gateLocked = true;
+        await gateOpen;
+      },
+      { timeout: 60000 },
+    );
+    while (!gateLocked) await sleep(20);
+
+    const raceA = sessionA.$transaction(
+      (tx) =>
+        ledgerA.reserveReturnClawback(tx, {
+          orderItemId: line.itemId,
+          returnRequestId: line.retIds[0],
+          quantity: 1,
+          unitPrice: 50,
+          lineQuantity: 2,
+        }),
+      { timeout: 60000 },
+    );
+    const raceB = sessionB.$transaction(
+      (tx) =>
+        ledgerB.reserveReturnClawback(tx, {
+          orderItemId: line.itemId,
+          returnRequestId: line.retIds[0],
+          quantity: 1,
+          unitPrice: 50,
+          lineQuantity: 2,
+        }),
+      { timeout: 60000 },
+    );
+    await waitForUngranted(sessionObserver, ['winger-s225-a', 'winger-s225-b'], 2);
+    releaseGate();
+    await gateHold;
+    const settled = await Promise.allSettled([raceA, raceB]);
+    expect(settled.every((row) => row.status === 'fulfilled')).toBe(true);
+    const values = settled.map(
+      (row) => (row as PromiseFulfilledResult<{ id: string; commissionAmount: unknown }>).value,
+    );
+    expect(values[0].id).toBe(values[1].id);
+    expect(money(values[0].commissionAmount)).toBe(5);
+    expect(money(values[1].commissionAmount)).toBe(5);
+    expect(
+      await sessionA.commissionClawback.count({
+        where: { orderItemCommissionId: line.oicId },
+      }),
+    ).toBe(1);
+  });
+
+  it('G2a) apply holds OIC first; concurrent reserve waits then sees applied history', async () => {
+    const supplierId = await makeSupplier('g2a');
+    const line = await seedLine({
+      label: 'g2a',
+      supplierId,
+      merchandise: 100,
+      commission: 10,
+      quantity: 2,
+      returnCount: 2,
+    });
+    await seedVerifiedAllocation({
+      label: 'g2a',
+      supplierId,
+      oicId: line.oicId,
+      amount: 10,
+    });
+    await sessionA.$transaction((tx) =>
+      ledgerA.reserveReturnClawback(tx, {
+        orderItemId: line.itemId,
+        returnRequestId: line.retIds[0],
+        quantity: 1,
+        unitPrice: 50,
+        lineQuantity: 2,
+      }),
+    );
+
+    let applyHolding = false;
+    let releaseApply = () => {};
+    const applyGate = new Promise<void>((resolve) => {
+      releaseApply = resolve;
+    });
+    const applyP = sessionA.$transaction(
+      async (tx) => {
+        const result = await ledgerA.applyReturnClawback(tx, {
+          returnRequestId: line.retIds[0],
+          actor: admin,
+        });
+        applyHolding = true;
+        await applyGate;
+        return result;
+      },
+      { timeout: 60000 },
+    );
+    while (!applyHolding) await sleep(20);
+
+    const reserveP = sessionB.$transaction(
+      (tx) =>
+        ledgerB.reserveReturnClawback(tx, {
+          orderItemId: line.itemId,
+          returnRequestId: line.retIds[1],
+          quantity: 1,
+          unitPrice: 50,
+          lineQuantity: 2,
+        }),
+      { timeout: 60000 },
+    );
+    await waitForUngranted(sessionObserver, ['winger-s225-b'], 1);
+
+    releaseApply();
+    const applied = await withTimeout(applyP, 30000, 'apply timed out');
+    expect(applied).toEqual({ legacy: false, applied: true });
+    const reserved = await withTimeout(reserveP, 30000, 'reserve timed out');
+    expect(money(reserved!.commissionAmount)).toBe(5);
+
+    const claw = await sessionA.commissionClawback.findUniqueOrThrow({
+      where: { returnRequestId: line.retIds[0] },
+    });
+    expect(claw.appliedAt).not.toBeNull();
+    expect(money(claw.commissionAmount)).toBe(5);
+    const second = await sessionA.commissionClawback.findUniqueOrThrow({
+      where: { returnRequestId: line.retIds[1] },
+    });
+    expect(second.appliedAt).toBeNull();
+    expect(money(second.commissionAmount)).toBe(5);
+    expect(
+      await sessionA.commissionClawback.count({
+        where: { orderItemCommissionId: line.oicId },
+      }),
+    ).toBe(2);
+    const oic = await sessionA.orderItemCommission.findUniqueOrThrow({
+      where: { id: line.oicId },
+    });
+    expect(oic.status).toBe(CommissionRecognitionStatus.SETTLEABLE);
+  });
+
+  it('G2b) reserve holds OIC first; concurrent apply waits then uses persisted slice', async () => {
+    const supplierId = await makeSupplier('g2b');
+    const line = await seedLine({
+      label: 'g2b',
+      supplierId,
+      merchandise: 100,
+      commission: 10,
+      quantity: 2,
+      returnCount: 2,
+    });
+    await seedVerifiedAllocation({
+      label: 'g2b',
+      supplierId,
+      oicId: line.oicId,
+      amount: 10,
+    });
+    await sessionA.$transaction((tx) =>
+      ledgerA.reserveReturnClawback(tx, {
+        orderItemId: line.itemId,
+        returnRequestId: line.retIds[0],
+        quantity: 1,
+        unitPrice: 50,
+        lineQuantity: 2,
+      }),
+    );
+
+    let reserveHolding = false;
+    let releaseReserve = () => {};
+    const reserveGate = new Promise<void>((resolve) => {
+      releaseReserve = resolve;
+    });
+    const reserveP = sessionA.$transaction(
+      async (tx) => {
+        const result = await ledgerA.reserveReturnClawback(tx, {
+          orderItemId: line.itemId,
+          returnRequestId: line.retIds[1],
+          quantity: 1,
+          unitPrice: 50,
+          lineQuantity: 2,
+        });
+        reserveHolding = true;
+        await reserveGate;
+        return result;
+      },
+      { timeout: 60000 },
+    );
+    while (!reserveHolding) await sleep(20);
+
+    const applyP = sessionB.$transaction(
+      (tx) =>
+        ledgerB.applyReturnClawback(tx, {
+          returnRequestId: line.retIds[0],
+          actor: admin,
+        }),
+      { timeout: 60000 },
+    );
+    await waitForUngranted(sessionObserver, ['winger-s225-b'], 1);
+
+    releaseReserve();
+    const reserved = await withTimeout(reserveP, 30000, 'reserve timed out');
+    expect(money(reserved!.commissionAmount)).toBe(5);
+    const applied = await withTimeout(applyP, 30000, 'apply timed out');
+    expect(applied).toEqual({ legacy: false, applied: true });
+
+    const first = await sessionA.commissionClawback.findUniqueOrThrow({
+      where: { returnRequestId: line.retIds[0] },
+    });
+    expect(first.appliedAt).not.toBeNull();
+    expect(money(first.commissionAmount)).toBe(5);
+    const second = await sessionA.commissionClawback.findUniqueOrThrow({
+      where: { returnRequestId: line.retIds[1] },
+    });
+    expect(second.appliedAt).toBeNull();
+    expect(money(second.commissionAmount)).toBe(5);
+    const reversals = await sessionA.commissionAllocationReversal.count({
+      where: {
+        allocation: { remittance: { supplierId } },
+      },
+    });
+    expect(reversals).toBe(1);
+    const credits = await sessionA.commissionCredit.count({
+      where: { supplierId },
+    });
+    expect(credits).toBe(1);
+  });
+
+  it('G3a-seq) committed reservation makes LEGACY complete use proportional path', async () => {
+    const supplierId = await makeSupplier('g3aseq');
+    const line = await seedLine({
+      label: 'g3aseq',
+      supplierId,
+      merchandise: 100,
+      commission: 10,
+      quantity: 1,
+      returnCount: 1,
+    });
+    await seedVerifiedAllocation({
+      label: 'g3aseq',
+      supplierId,
+      oicId: line.oicId,
+      amount: 10,
+    });
+    await sessionA.$transaction((tx) =>
+      ledgerA.reserveReturnClawback(tx, {
+        orderItemId: line.itemId,
+        returnRequestId: line.retIds[0],
+        quantity: 1,
+        unitPrice: 100,
+        lineQuantity: 1,
+      }),
+    );
+
+    const legacy = await sessionA.$transaction((tx) =>
+      holdsA.completeLegacyReturnCommissionInTx(tx, {
+        returnRequestId: line.retIds[0],
+        orderItemId: line.itemId,
+        actor: admin,
+      }),
+    );
+    expect(legacy.fullLineApplied).toBe(false);
+    const claw = await sessionA.commissionClawback.findUniqueOrThrow({
+      where: { returnRequestId: line.retIds[0] },
+    });
+    expect(claw.appliedAt).not.toBeNull();
+    expect(money(claw.commissionAmount)).toBe(10);
+    expect(
+      await sessionA.commissionClawback.count({
+        where: { orderItemCommissionId: line.oicId },
+      }),
+    ).toBe(1);
+  });
+
+  /**
+   * S2.4.30 regression: reservation-versus-LEGACY finalisation race.
+   * Reserve holds OIC with an uncommitted CommissionClawback; concurrent
+   * completeLegacyReturnCommissionInTx must block on that OIC lock. After the
+   * reservation commits, LEGACY finalisation must apply the proportional
+   * reservation (fullLineApplied === false), not fall through to full-line
+   * clawbackForOrderItem. applyReturnClawback acquires OIC before returning
+   * legacy so the proportional-versus-full-line decision stays serialised.
+   */
+  it('G3a-race) reserve holds OIC uncommitted; LEGACY complete must not full-line after reservation commits', async () => {
+    const supplierId = await makeSupplier('g3a');
+    const line = await seedLine({
+      label: 'g3a',
+      supplierId,
+      merchandise: 100,
+      commission: 10,
+      quantity: 1,
+      returnCount: 1,
+    });
+    await seedVerifiedAllocation({
+      label: 'g3a',
+      supplierId,
+      oicId: line.oicId,
+      amount: 10,
+    });
+
+    let reserveHolding = false;
+    let releaseReserve = () => {};
+    const reserveGate = new Promise<void>((resolve) => {
+      releaseReserve = resolve;
+    });
+    const reserveP = sessionA.$transaction(
+      async (tx) => {
+        const result = await ledgerA.reserveReturnClawback(tx, {
+          orderItemId: line.itemId,
+          returnRequestId: line.retIds[0],
+          quantity: 1,
+          unitPrice: 100,
+          lineQuantity: 1,
+        });
+        reserveHolding = true;
+        await reserveGate;
+        return result;
+      },
+      { timeout: 60000 },
+    );
+    while (!reserveHolding) await sleep(20);
+
+    const legacyP = sessionB.$transaction(
+      (tx) =>
+        holdsB.completeLegacyReturnCommissionInTx(tx, {
+          returnRequestId: line.retIds[0],
+          orderItemId: line.itemId,
+          actor: admin,
+        }),
+      { timeout: 60000 },
+    );
+    await waitForUngranted(sessionObserver, ['winger-s225-b'], 1);
+
+    releaseReserve();
+    const reserved = await withTimeout(reserveP, 30000, 'reserve timed out');
+    expect(money(reserved!.commissionAmount)).toBe(10);
+    const legacy = await withTimeout(legacyP, 30000, 'legacy complete timed out');
+
+    // Required property: reservation visible after OIC wait ⇒ proportional, not full-line.
+    expect(legacy.fullLineApplied).toBe(false);
+    const claw = await sessionA.commissionClawback.findUniqueOrThrow({
+      where: { returnRequestId: line.retIds[0] },
+    });
+    expect(claw.appliedAt).not.toBeNull();
+    expect(money(claw.commissionAmount)).toBe(10);
+    expect(
+      await sessionA.commissionClawback.count({
+        where: { orderItemCommissionId: line.oicId },
+      }),
+    ).toBe(1);
+    const oic = await sessionA.orderItemCommission.findUniqueOrThrow({
+      where: { id: line.oicId },
+    });
+    expect(oic.status).toBe(CommissionRecognitionStatus.CLAWED_BACK);
+  });
+
+  it('G3b) full-line CLAWED_BACK commits first; concurrent new reserve is rejected', async () => {
+    const supplierId = await makeSupplier('g3b');
+    const line = await seedLine({
+      label: 'g3b',
+      supplierId,
+      merchandise: 100,
+      commission: 10,
+      quantity: 1,
+      returnCount: 1,
+    });
+
+    let clawHolding = false;
+    let releaseClaw = () => {};
+    const clawGate = new Promise<void>((resolve) => {
+      releaseClaw = resolve;
+    });
+    const clawP = sessionA.$transaction(
+      async (tx) => {
+        const result = await commissionsA.clawbackForOrderItem({
+          orderItemId: line.itemId,
+          actor: admin,
+          tx,
+        });
+        clawHolding = true;
+        await clawGate;
+        return result;
+      },
+      { timeout: 60000 },
+    );
+    while (!clawHolding) await sleep(20);
+
+    const reserveP = sessionB.$transaction(
+      (tx) =>
+        ledgerB.reserveReturnClawback(tx, {
+          orderItemId: line.itemId,
+          returnRequestId: line.retIds[0],
+          quantity: 1,
+          unitPrice: 100,
+          lineQuantity: 1,
+        }),
+      { timeout: 60000 },
+    );
+    await waitForUngranted(sessionObserver, ['winger-s225-b'], 1);
+
+    releaseClaw();
+    const clawed = await withTimeout(clawP, 30000, 'full-line clawback timed out');
+    expect(clawed.clawedBack).toBe(true);
+    await expect(
+      withTimeout(reserveP, 30000, 'reserve timed out'),
+    ).rejects.toThrow(/clawed back/i);
+
+    expect(
+      await sessionA.commissionClawback.count({
+        where: { orderItemCommissionId: line.oicId },
+      }),
+    ).toBe(0);
+    const oic = await sessionA.orderItemCommission.findUniqueOrThrow({
+      where: { id: line.oicId },
+    });
+    expect(oic.status).toBe(CommissionRecognitionStatus.CLAWED_BACK);
+  });
+
+  it('G4) existing reservation retry succeeds after OIC becomes CLAWED_BACK', async () => {
+    const supplierId = await makeSupplier('g4');
+    const line = await seedLine({
+      label: 'g4',
+      supplierId,
+      merchandise: 100,
+      commission: 10,
+      quantity: 2,
+      returnCount: 1,
+    });
+    const first = await sessionA.$transaction((tx) =>
+      ledgerA.reserveReturnClawback(tx, {
+        orderItemId: line.itemId,
+        returnRequestId: line.retIds[0],
+        quantity: 1,
+        unitPrice: 50,
+        lineQuantity: 2,
+      }),
+    );
+    expect(money(first!.commissionAmount)).toBe(5);
+
+    await sessionA.$transaction((tx) =>
+      commissionsA.clawbackForOrderItem({
+        orderItemId: line.itemId,
+        actor: admin,
+        returnRequestId: line.retIds[0],
+        tx,
+      }),
+    );
+    const oic = await sessionA.orderItemCommission.findUniqueOrThrow({
+      where: { id: line.oicId },
+    });
+    expect(oic.status).toBe(CommissionRecognitionStatus.CLAWED_BACK);
+
+    const retry = await sessionA.$transaction((tx) =>
+      ledgerA.reserveReturnClawback(tx, {
+        orderItemId: line.itemId,
+        returnRequestId: line.retIds[0],
+        quantity: 1,
+        unitPrice: 50,
+        lineQuantity: 2,
+      }),
+    );
+    expect(retry!.id).toBe(first!.id);
+    expect(money(retry!.commissionAmount)).toBe(5);
+    expect(
+      await sessionA.commissionClawback.count({
+        where: { orderItemCommissionId: line.oicId },
+      }),
+    ).toBe(1);
   });
 });
 
