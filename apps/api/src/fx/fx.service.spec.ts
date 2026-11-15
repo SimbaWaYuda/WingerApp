@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { FxService, roundMoney } from './fx.service';
 
 describe('FxService.quote', () => {
@@ -116,5 +116,70 @@ describe('FxService.quote', () => {
     const quote = await fx.quote('USD', 'USD');
     expect(quote.rate).toBe(1);
     expect(quote.fresh).toBe(true);
+  });
+
+  it('logs a rejected scheduled refresh and does not leave it unhandled', async () => {
+    jest.useFakeTimers();
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    const settings = {
+      currency: 'USD',
+      supportedDisplayCurrencies: ['USD', 'TZS'],
+      supportedPaymentCurrencies: ['USD'],
+      fxMaxAgeSeconds: 86400,
+    };
+    const scheduledPrisma = {
+      platformSettings: {
+        upsert: jest.fn().mockResolvedValue(settings),
+      },
+      exchangeRate: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            baseCurrency: 'USD',
+            quoteCurrency: 'TZS',
+            source: 'manual',
+            expiresAt: new Date(Date.now() + 3_600_000),
+          },
+        ]),
+        findUnique: jest.fn(),
+        upsert: jest.fn(),
+        create: jest.fn(),
+      },
+    };
+    const scheduled = new FxService(scheduledPrisma as any);
+
+    try {
+      await scheduled.onModuleInit();
+      const readsAfterStartup = scheduledPrisma.exchangeRate.findMany.mock.calls.length;
+      expect(readsAfterStartup).toBe(1);
+
+      scheduledPrisma.platformSettings.upsert.mockRejectedValueOnce(
+        new Error("Can't reach database server at `localhost:5433`"),
+      );
+      await jest.advanceTimersByTimeAsync(15 * 60 * 1000);
+
+      expect(warn).toHaveBeenCalledWith(
+        "Scheduled exchange rate refresh failed: Can't reach database server at `localhost:5433`",
+      );
+      expect(unhandled).toEqual([]);
+
+      await jest.advanceTimersByTimeAsync(15 * 60 * 1000);
+      expect(scheduledPrisma.exchangeRate.findMany.mock.calls.length).toBeGreaterThan(
+        readsAfterStartup,
+      );
+    } finally {
+      scheduled.onModuleDestroy();
+      process.off('unhandledRejection', onUnhandled);
+      warn.mockRestore();
+      jest.useRealTimers();
+    }
   });
 });

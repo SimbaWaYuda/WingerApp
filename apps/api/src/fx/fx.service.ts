@@ -48,7 +48,10 @@ export class FxService implements OnModuleInit, OnModuleDestroy {
     await this.seedDevRatesIfEmpty();
     await this.refreshStaleRates();
     this.refreshTimer = setInterval(() => {
-      void this.refreshStaleRates();
+      void this.refreshStaleRates().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'unknown error';
+        this.logger.warn(`Scheduled exchange rate refresh failed: ${message}`);
+      });
     }, REFRESH_INTERVAL_MS);
     this.refreshTimer.unref?.();
   }
