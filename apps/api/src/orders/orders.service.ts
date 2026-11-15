@@ -10,6 +10,7 @@ import {
   OrderStatus,
   PaymentStatus,
   Prisma,
+  ReturnRefundDrive,
   ReturnRefundStatus,
   ReturnRequestStatus,
   StockStatus,
@@ -37,6 +38,16 @@ import {
   parseCourierTripDetails,
 } from './courier-booking';
 import { PayoutsService } from './payouts.service';
+import { operationKeyForReturn } from './refund-attempt.types';
+import { RefundAttemptService } from './refund-attempt.service';
+import { ShipmentRefundHoldService } from './shipment-refund-hold.service';
+import {
+  classifyLegacyStripeRefundStatus,
+  isCardPaymentMode,
+  isHistoricalIssuedComplete,
+  selectReturnRefundDrive,
+  ShipmentRefundHoldError,
+} from './shipment-refund-hold.types';
 import {
   isLiveOrderLine,
   lockShipmentPayments,
@@ -179,6 +190,8 @@ export class OrdersService {
     private readonly payouts: PayoutsService,
     private readonly supplierPayments: SupplierPaymentsService,
     private readonly ledger: CommissionLedgerService,
+    private readonly refundAttempts: RefundAttemptService,
+    private readonly shipmentRefundHolds: ShipmentRefundHoldService,
   ) {}
 
   /**
@@ -1780,11 +1793,20 @@ export class OrdersService {
         if (reverseTransfer) {
           await this.payouts.reverseIfTransferred(current.orderItemId);
         }
-        await this.refundCardForReturn(row, current.quantity);
-      }
-      let legacyClawback = false;
-      await this.prisma.$transaction(async (tx) => {
-        await tx.returnRequest.update({
+        // S2.3: ownership claim + ATTEMPT/LEGACY card or COD/Lipa/demo ledger path.
+        // Sets ISSUED only after successful financial finalisation.
+        await this.issueReturnRefundWithOwnership({
+          returnRequestId: current.id,
+          quantity: current.quantity,
+          refundNote:
+            dto.refundNote != null
+              ? dto.refundNote.trim() || null
+              : current.refundNote,
+          user,
+          row,
+        });
+      } else {
+        await this.prisma.returnRequest.update({
           where: { id: row.id },
           data: {
             refundStatus: dto.refundStatus,
@@ -1792,25 +1814,8 @@ export class OrdersService {
               dto.refundNote != null
                 ? dto.refundNote.trim() || null
                 : current.refundNote,
-            refundedAt:
-              dto.refundStatus === ReturnRefundStatus.ISSUED
-                ? current.refundedAt ?? new Date()
-                : null,
+            refundedAt: null,
           },
-        });
-        if (becameIssued) {
-          const applied = await this.ledger.applyReturnClawback(tx, {
-            returnRequestId: current.id,
-            actor: user,
-          });
-          legacyClawback = applied.legacy;
-        }
-      });
-      if (legacyClawback) {
-        await this.commissions.clawbackForOrderItem({
-          orderItemId: current.orderItemId,
-          actor: user,
-          returnRequestId: current.id,
         });
       }
     }
@@ -1847,16 +1852,21 @@ export class OrdersService {
   }
 
   /**
-   * Card charges are refunded in Stripe before the return is marked issued.
-   * Cash on delivery and demo orders never touched Stripe, so they stay ledger-only.
+   * S2.3 RETURN refund issuance: claim exclusive ownership, then follow only that drive.
+   * Card paths reserve ShipmentRefundHold; COD/Lipa/demo stay ledger-only (no Stripe).
    */
-  private async refundCardForReturn(
+  private async issueReturnRefundWithOwnership(params: {
+    returnRequestId: string;
+    quantity: number;
+    refundNote: string | null;
+    user: AuthUser;
     row: {
       id: string;
       orderId: string;
       order: {
         id?: string;
         paymentMode: string;
+        currency?: string;
         stripePaymentIntentId: string | null;
         paymentAmount: Prisma.Decimal | null;
         subtotal: Prisma.Decimal;
@@ -1869,32 +1879,656 @@ export class OrdersService {
         quantity: number;
         lineTotal: Prisma.Decimal;
       };
-    },
-    quantity: number,
-  ) {
-    const siblings = await this.prisma.orderItem.findMany({
-      where: { orderId: row.orderId },
+    };
+  }) {
+    const claim = await this.claimReturnRefundOwnership({
+      returnRequestId: params.returnRequestId,
+      quantity: params.quantity,
+      user: params.user,
+      row: params.row,
     });
-    const includeDelivery = !siblings.some(
+
+    if (claim.kind === 'already_issued') {
+      return;
+    }
+
+    if (claim.drive === ReturnRefundDrive.ATTEMPT) {
+      await this.runAttemptReturnRefund({
+        attemptId: claim.attemptId!,
+        user: params.user,
+        refundNote: params.refundNote,
+        returnRequestId: params.returnRequestId,
+      });
+      return;
+    }
+
+    // LEGACY ownership
+    if (!isCardPaymentMode(params.row.order.paymentMode)) {
+      await this.finalizeLegacyNonCardReturnIssued({
+        returnRequestId: params.returnRequestId,
+        refundNote: params.refundNote,
+        user: params.user,
+        orderItemId: params.row.orderItem.id,
+      });
+      return;
+    }
+
+    await this.runLegacyCardReturnRefund({
+      returnRequestId: params.returnRequestId,
+      refundNote: params.refundNote,
+      user: params.user,
+      row: params.row,
+      holdAmount: claim.holdAmount!,
+      holdCurrency: claim.holdCurrency!,
+    });
+  }
+
+  private async claimReturnRefundOwnership(params: {
+    returnRequestId: string;
+    quantity: number;
+    user: AuthUser;
+    row: {
+      id: string;
+      orderId: string;
+      order: {
+        paymentMode: string;
+        currency?: string;
+        stripePaymentIntentId: string | null;
+        paymentAmount: Prisma.Decimal | null;
+        subtotal: Prisma.Decimal;
+        total: Prisma.Decimal;
+      };
+      orderItem: {
+        id: string;
+        supplierId: string;
+        unitPrice: Prisma.Decimal;
+      };
+    };
+  }): Promise<{
+    kind: 'claimed' | 'already_issued' | 'owned';
+    drive: ReturnRefundDrive;
+    attemptId?: string;
+    holdAmount?: number;
+    holdCurrency?: string;
+  }> {
+    const siblings = await this.prisma.orderItem.findMany({
+      where: { orderId: params.row.orderId },
+    });
+    const siblingHadLiveLine = siblings.some(
       (item) =>
-        item.id !== row.orderItem.id &&
-        item.supplierId === row.orderItem.supplierId &&
+        item.id !== params.row.orderItem.id &&
+        item.supplierId === params.row.orderItem.supplierId &&
         isLiveOrderLine(item.status),
     );
-    await this.refundSupplierBucket({
-      orderId: row.orderId,
-      paymentMode: row.order.paymentMode,
-      stripePaymentIntentId: row.order.stripePaymentIntentId,
-      paymentAmount: Number(row.order.paymentAmount ?? row.order.total),
-      subtotal: Number(row.order.subtotal),
-      supplierId: row.orderItem.supplierId,
-      returnedMerchandise: Number(row.orderItem.unitPrice) * quantity,
-      includeDelivery,
-      idempotencyKey: `winger-refund-${row.id}`,
-      reason: 'return',
-      returnRequestId: row.id,
-      requirePaymentIntent: true,
+    const includeDelivery = !siblingHadLiveLine;
+    const returnedMerchandise =
+      Number(params.row.orderItem.unitPrice) * params.quantity;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await this.shipmentRefundHolds.lockReturnRequest(
+          tx,
+          params.returnRequestId,
+        );
+        const rr = await tx.returnRequest.findUniqueOrThrow({
+          where: { id: params.returnRequestId },
+        });
+
+        if (
+          isHistoricalIssuedComplete({
+            refundStatus: rr.refundStatus,
+            refundDrive: rr.refundDrive,
+          })
+        ) {
+          return {
+            kind: 'already_issued' as const,
+            drive: rr.refundDrive,
+          };
+        }
+        if (rr.refundStatus === ReturnRefundStatus.ISSUED) {
+          return {
+            kind: 'already_issued' as const,
+            drive: rr.refundDrive,
+          };
+        }
+        const order = await tx.order.findUniqueOrThrow({
+          where: { id: params.row.orderId },
+          select: {
+            paymentMode: true,
+            currency: true,
+            stripePaymentIntentId: true,
+          },
+        });
+        let drive = rr.refundDrive;
+        if (drive === ReturnRefundDrive.UNCLAIMED) {
+          if (rr.refundAbandonRequestedAt) {
+            throw new BadRequestException(
+              'Return refund abandonment requested; cannot start a new refund claim',
+            );
+          }
+          const selected = selectReturnRefundDrive({
+            paymentMode: order.paymentMode,
+          });
+          drive =
+            selected === 'ATTEMPT'
+              ? ReturnRefundDrive.ATTEMPT
+              : ReturnRefundDrive.LEGACY;
+          await tx.returnRequest.update({
+            where: { id: rr.id },
+            data: { refundDrive: drive },
+          });
+        } else if (rr.refundAbandonRequestedAt) {
+          // Soft abandon: only allow recovery of known success awaiting finalise/apply.
+          const existingHold = await tx.shipmentRefundHold.findUnique({
+            where: { returnRequestId: rr.id },
+          });
+          const legacySuccessPending =
+            existingHold?.legacyStripeOutcome === 'SUCCESS_PENDING_FINALIZE';
+          const attempt = await tx.refundAttempt.findFirst({
+            where: { returnRequestId: rr.id },
+            orderBy: { createdAt: 'asc' },
+          });
+          const attemptRecoverable =
+            attempt != null &&
+            (attempt.status === 'STRIPE_SUCCEEDED' ||
+              attempt.status === 'APPLY_FAILED' ||
+              attempt.status === 'APPLIED' ||
+              !!attempt.stripeRefundId);
+          if (!legacySuccessPending && !attemptRecoverable) {
+            throw new BadRequestException(
+              'Return refund abandonment requested; cannot start a new refund claim',
+            );
+          }
+        }
+
+        const needsCardHold = isCardPaymentMode(order.paymentMode);
+        if (!needsCardHold) {
+          return { kind: 'claimed' as const, drive };
+        }
+
+        const shipment = await tx.orderShipment.findFirst({
+          where: {
+            orderId: params.row.orderId,
+            supplierId: params.row.orderItem.supplierId,
+          },
+        });
+        if (!shipment) {
+          throw new BadRequestException(
+            'No supplier shipment found for return refund',
+          );
+        }
+
+        if (!order.stripePaymentIntentId && drive === ReturnRefundDrive.ATTEMPT) {
+          throw new BadRequestException(
+            'This card payment has no Stripe charge to refund',
+          );
+        }
+
+        if (drive === ReturnRefundDrive.ATTEMPT) {
+          // Reserve hold first to freeze amount, then create attempt with frozen values.
+          const hold = await this.shipmentRefundHolds.reserveInTransaction(tx, {
+            returnRequestId: rr.id,
+            orderShipmentId: shipment.id,
+            supplierId: params.row.orderItem.supplierId,
+            currency: order.currency,
+            returnedMerchandise,
+            includeDelivery,
+            siblingHadLiveLine,
+          });
+          const ensured = await this.refundAttempts.ensureAttemptForOperationTx(
+            tx,
+            {
+              kind: 'RETURN',
+              operationKey: operationKeyForReturn(rr.id),
+              orderId: params.row.orderId,
+              actorUserId: params.user.sub,
+              stripePaymentIntentId: order.stripePaymentIntentId!,
+              amount: hold.amount,
+              amountCents: hold.amountCents,
+              currency: hold.currency,
+              returnRequestId: rr.id,
+              orderItemId: params.row.orderItem.id,
+              orderShipmentId: shipment.id,
+              supplierId: params.row.orderItem.supplierId,
+              includeDelivery: hold.includeDelivery,
+            },
+          );
+          if (!hold.refundAttemptId) {
+            await tx.shipmentRefundHold.update({
+              where: { id: hold.id },
+              data: { refundAttemptId: ensured.attempt.id },
+            });
+          }
+          return {
+            kind: 'claimed' as const,
+            drive,
+            attemptId: ensured.attempt.id,
+            holdAmount: hold.amount,
+            holdCurrency: hold.currency,
+          };
+        }
+
+        // LEGACY card
+        const hold = await this.shipmentRefundHolds.reserveInTransaction(tx, {
+          returnRequestId: rr.id,
+          orderShipmentId: shipment.id,
+          supplierId: params.row.orderItem.supplierId,
+          currency: order.currency,
+          returnedMerchandise,
+          includeDelivery,
+          siblingHadLiveLine,
+        });
+        return {
+          kind: 'claimed' as const,
+          drive,
+          holdAmount: hold.amount,
+          holdCurrency: hold.currency,
+        };
+      });
+    } catch (error) {
+      if (error instanceof ShipmentRefundHoldError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
+  }
+
+  private async runAttemptReturnRefund(params: {
+    attemptId: string;
+    user: AuthUser;
+    refundNote: string | null;
+    returnRequestId: string;
+  }) {
+    if (params.refundNote != null) {
+      await this.prisma.returnRequest.update({
+        where: { id: params.returnRequestId },
+        data: { refundNote: params.refundNote },
+      });
+    }
+    const phase = await this.refundAttempts.runStripePhase({
+      refundAttemptId: params.attemptId,
     });
+    const attempt =
+      phase.submit.attempt.status === 'STRIPE_SUCCEEDED' ||
+      phase.reconcile?.attempt.status === 'STRIPE_SUCCEEDED'
+        ? phase.submit.attempt.status === 'STRIPE_SUCCEEDED'
+          ? phase.submit.attempt
+          : phase.reconcile!.attempt
+        : phase.submit.attempt;
+
+    if (attempt.status === 'STRIPE_SUCCEEDED' || attempt.status === 'APPLY_FAILED') {
+      await this.refundAttempts.applySuccessfulRefund({
+        refundAttemptId: params.attemptId,
+        actor: params.user,
+      });
+      return;
+    }
+
+    if (phase.submit.blockedReason || attempt.status !== 'APPLIED') {
+      throw new BadRequestException(
+        phase.submit.blockedReason
+          ? `RETURN ATTEMPT refund blocked: ${phase.submit.blockedReason}`
+          : `RETURN ATTEMPT refund not ready (status ${attempt.status})`,
+      );
+    }
+  }
+
+  private async runLegacyCardReturnRefund(params: {
+    returnRequestId: string;
+    refundNote: string | null;
+    user: AuthUser;
+    holdAmount: number;
+    holdCurrency: string;
+    row: {
+      id: string;
+      orderId: string;
+      order: {
+        paymentMode: string;
+        stripePaymentIntentId: string | null;
+      };
+      orderItem: { id: string };
+    };
+  }) {
+    if (params.refundNote != null) {
+      await this.prisma.returnRequest.update({
+        where: { id: params.returnRequestId },
+        data: { refundNote: params.refundNote },
+      });
+    }
+
+    const hold = await this.shipmentRefundHolds.claimLegacyStripeBeforeNetwork({
+      returnRequestId: params.returnRequestId,
+    });
+
+    if (hold.status === 'CONSUMED') {
+      return;
+    }
+    if (hold.legacyStripeOutcome === 'SUCCESS_PENDING_FINALIZE') {
+      await this.finalizeLegacyCardAfterSuccess({
+        returnRequestId: params.returnRequestId,
+        orderItemId: params.row.orderItem.id,
+        user: params.user,
+      });
+      return;
+    }
+
+    if (!params.row.order.stripePaymentIntentId) {
+      throw new BadRequestException(
+        'This card payment has no Stripe charge to refund',
+      );
+    }
+
+    const paymentIntentId = params.row.order.stripePaymentIntentId;
+
+    // Unresolved prior claim: list-reconcile before any create. Never create-replay alone.
+    if (!hold.freshClaim && hold.legacyStripeClaimedAt && !hold.legacyStripeOutcome) {
+      await this.reconcileUnresolvedLegacyCardClaim({
+        returnRequestId: params.returnRequestId,
+        paymentIntentId,
+        holdAmountCents: hold.amountCents,
+        holdCurrency: hold.currency,
+        orderItemId: params.row.orderItem.id,
+        user: params.user,
+      });
+      return;
+    }
+
+    let result: Awaited<ReturnType<StripeService['refundCardCharge']>>;
+    try {
+      result = await this.stripe.refundCardCharge({
+        paymentIntentId,
+        amount: hold.amount,
+        idempotencyKey: `winger-refund-${params.returnRequestId}`,
+        orderId: params.row.orderId,
+        returnRequestId: params.returnRequestId,
+        reason: 'return',
+      });
+    } catch (error) {
+      // Process crash / unexpected throw: leave legacyStripeOutcome null (ambiguous).
+      const message =
+        error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `LEGACY RETURN Stripe call uncertain for ${params.returnRequestId}: ${message}`,
+      );
+      await this.shipmentRefundHolds.appendLegacyStripeEvidence({
+        returnRequestId: params.returnRequestId,
+        stripePaymentIntentId: paymentIntentId,
+        source: 'FRESH_CREATE',
+        classification: 'UNRESOLVED_ERROR',
+        message,
+      });
+      throw new BadRequestException(
+        'Stripe refund result is uncertain; hold remains reserved for reconciliation',
+      );
+    }
+
+    if (!result.ok) {
+      const failedStatus = (result.status ?? '').trim().toLowerCase();
+      // Only a definitive Refund object with failed/canceled may be FAILED_TERMINAL.
+      if (failedStatus === 'failed' || failedStatus === 'canceled') {
+        await this.applyLegacyCardStripeRefundStatus({
+          returnRequestId: params.returnRequestId,
+          orderItemId: params.row.orderItem.id,
+          user: params.user,
+          paymentIntentId,
+          refundId: result.refundId ?? null,
+          status: result.status,
+          source: 'FRESH_CREATE',
+          message: result.message,
+        });
+        return;
+      }
+      await this.shipmentRefundHolds.appendLegacyStripeEvidence({
+        returnRequestId: params.returnRequestId,
+        stripePaymentIntentId: paymentIntentId,
+        stripeRefundId: result.refundId ?? null,
+        stripeStatus: result.status ?? null,
+        source: 'FRESH_CREATE',
+        classification: 'UNRESOLVED_ERROR',
+        message: result.message,
+      });
+      throw new BadRequestException(
+        `Stripe refund result is unresolved; hold remains reserved (${result.message})`,
+      );
+    }
+
+    await this.applyLegacyCardStripeRefundStatus({
+      returnRequestId: params.returnRequestId,
+      orderItemId: params.row.orderItem.id,
+      user: params.user,
+      paymentIntentId,
+      refundId: result.refundId,
+      status: result.status,
+      source: 'FRESH_CREATE',
+    });
+  }
+
+  /**
+   * After a prior LEGACY claim with null outcome: use listRefundsForPaymentIntent
+   * (existing API) to establish a definitive match before any new create.
+   * Inconclusive → retain RESERVED; never create-replay alone.
+   */
+  private async reconcileUnresolvedLegacyCardClaim(params: {
+    returnRequestId: string;
+    paymentIntentId: string;
+    holdAmountCents: number;
+    holdCurrency: string;
+    orderItemId: string;
+    user: AuthUser;
+  }) {
+    const listed = await this.stripe.listRefundsForPaymentIntent(
+      params.paymentIntentId,
+    );
+    if (!listed.ok || !listed.exhausted) {
+      throw new BadRequestException(
+        `LEGACY RETURN refund outcome is uncertain (list incomplete); hold remains reserved (${listed.message ?? 'incomplete'})`,
+      );
+    }
+
+    const currency = params.holdCurrency.toLowerCase();
+    // Require returnRequestId metadata — bare amount matches are not definitive.
+    const candidates = listed.refunds.filter((refund) => {
+      if (refund.amount !== params.holdAmountCents) return false;
+      if (refund.currency.toLowerCase() !== currency) return false;
+      return refund.metadata?.returnRequestId === params.returnRequestId;
+    });
+
+    if (candidates.length > 1) {
+      this.logger.warn(
+        `LEGACY RETURN ambiguous refund list for ${params.returnRequestId}: ${candidates.length} matches`,
+      );
+      throw new BadRequestException(
+        'LEGACY RETURN refund outcome is ambiguous; hold remains reserved for operational investigation',
+      );
+    }
+
+    if (candidates.length === 0) {
+      // Empty exhausted list is not proof the prior create never reached Stripe.
+      throw new BadRequestException(
+        'LEGACY RETURN prior Stripe claim is unresolved; hold remains reserved (no safe create retry without definitive list match)',
+      );
+    }
+
+    const refund = candidates[0]!;
+    await this.applyLegacyCardStripeRefundStatus({
+      returnRequestId: params.returnRequestId,
+      orderItemId: params.orderItemId,
+      user: params.user,
+      paymentIntentId: params.paymentIntentId,
+      refundId: refund.id,
+      status: refund.status,
+      source: 'RECOVERY_LIST',
+    });
+  }
+
+  /**
+   * Shared LEGACY Stripe status gate for fresh create and list recovery.
+   * Only definitive `succeeded` may record SUCCESS_PENDING_FINALIZE and finalize.
+   * Only definitive `failed`/`canceled` may record FAILED_TERMINAL.
+   * pending / requires_action / unknown / unresolved retain RESERVED (outcome null).
+   */
+  private async applyLegacyCardStripeRefundStatus(params: {
+    returnRequestId: string;
+    orderItemId: string;
+    user: AuthUser;
+    paymentIntentId: string;
+    refundId: string | null;
+    status: string | null | undefined;
+    source: 'FRESH_CREATE' | 'RECOVERY_LIST';
+    message?: string | null;
+  }) {
+    const status = (params.status ?? '').trim().toLowerCase();
+    const classification = classifyLegacyStripeRefundStatus(params.status);
+
+    if (classification === 'SUCCEEDED') {
+      try {
+        await this.shipmentRefundHolds.appendLegacyStripeEvidence({
+          returnRequestId: params.returnRequestId,
+          stripePaymentIntentId: params.paymentIntentId,
+          stripeRefundId: params.refundId,
+          stripeStatus: params.status ?? null,
+          source: params.source,
+          classification: 'SUCCEEDED',
+          message: params.message,
+        });
+      } catch (error) {
+        if (
+          error instanceof ShipmentRefundHoldError &&
+          error.code === 'legacy_late_success_after_released'
+        ) {
+          throw new BadRequestException(error.message);
+        }
+        throw error;
+      }
+      await this.shipmentRefundHolds.recordLegacyStripeOutcome({
+        returnRequestId: params.returnRequestId,
+        outcome: 'SUCCESS_PENDING_FINALIZE',
+      });
+      await this.finalizeLegacyCardAfterSuccess({
+        returnRequestId: params.returnRequestId,
+        orderItemId: params.orderItemId,
+        user: params.user,
+      });
+      return;
+    }
+
+    if (
+      classification === 'PENDING' ||
+      classification === 'REQUIRES_ACTION'
+    ) {
+      await this.shipmentRefundHolds.appendLegacyStripeEvidence({
+        returnRequestId: params.returnRequestId,
+        stripePaymentIntentId: params.paymentIntentId,
+        stripeRefundId: params.refundId,
+        stripeStatus: params.status ?? null,
+        source: params.source,
+        classification,
+        message: params.message,
+      });
+      throw new BadRequestException(
+        `Stripe refund is ${status}; hold remains reserved for reconciliation`,
+      );
+    }
+
+    if (classification === 'FAILED' || classification === 'CANCELED') {
+      await this.shipmentRefundHolds.appendLegacyStripeEvidence({
+        returnRequestId: params.returnRequestId,
+        stripePaymentIntentId: params.paymentIntentId,
+        stripeRefundId: params.refundId,
+        stripeStatus: params.status ?? null,
+        source: params.source,
+        classification,
+        message: params.message,
+      });
+      await this.shipmentRefundHolds.recordLegacyStripeOutcome({
+        returnRequestId: params.returnRequestId,
+        outcome: 'FAILED_TERMINAL',
+      });
+      throw new BadRequestException(`Stripe refund ${status}`);
+    }
+
+    // Unknown / unrecognised — fail closed; retain RESERVED; never finalize.
+    await this.shipmentRefundHolds.appendLegacyStripeEvidence({
+      returnRequestId: params.returnRequestId,
+      stripePaymentIntentId: params.paymentIntentId,
+      stripeRefundId: params.refundId,
+      stripeStatus: params.status ?? null,
+      source: params.source,
+      classification: 'UNKNOWN',
+      message: params.message,
+    });
+    throw new BadRequestException(
+      `LEGACY RETURN refund status ${status || 'unknown'} is inconclusive; hold remains reserved`,
+    );
+  }
+
+  private async finalizeLegacyCardAfterSuccess(params: {
+    returnRequestId: string;
+    orderItemId: string;
+    user: AuthUser;
+  }) {
+    const finalized =
+      await this.shipmentRefundHolds.finalizeLegacySuccessfulRefund({
+        returnRequestId: params.returnRequestId,
+        actor: params.user,
+      });
+    if (finalized.legacyClawback) {
+      await this.commissions.clawbackForOrderItem({
+        orderItemId: params.orderItemId,
+        actor: params.user,
+        returnRequestId: params.returnRequestId,
+      });
+    }
+  }
+
+  private async finalizeLegacyNonCardReturnIssued(params: {
+    returnRequestId: string;
+    refundNote: string | null;
+    user: AuthUser;
+    orderItemId: string;
+  }) {
+    let legacyClawback = false;
+    await this.prisma.$transaction(async (tx) => {
+      await this.shipmentRefundHolds.lockReturnRequest(
+        tx,
+        params.returnRequestId,
+      );
+      const rr = await tx.returnRequest.findUniqueOrThrow({
+        where: { id: params.returnRequestId },
+      });
+      if (rr.refundStatus === ReturnRefundStatus.ISSUED) {
+        return;
+      }
+      if (rr.refundAbandonRequestedAt) {
+        throw new BadRequestException(
+          'Return refund abandonment requested; cannot finalise',
+        );
+      }
+      await tx.returnRequest.update({
+        where: { id: rr.id },
+        data: {
+          refundStatus: ReturnRefundStatus.ISSUED,
+          refundNote: params.refundNote,
+          refundedAt: rr.refundedAt ?? new Date(),
+          refundDrive:
+            rr.refundDrive === ReturnRefundDrive.UNCLAIMED
+              ? ReturnRefundDrive.LEGACY
+              : rr.refundDrive,
+        },
+      });
+      const applied = await this.ledger.applyReturnClawback(tx, {
+        returnRequestId: rr.id,
+        actor: params.user,
+      });
+      legacyClawback = applied.legacy;
+    });
+    if (legacyClawback && params.orderItemId) {
+      await this.commissions.clawbackForOrderItem({
+        orderItemId: params.orderItemId,
+        actor: params.user,
+        returnRequestId: params.returnRequestId,
+      });
+    }
   }
 
   private async refundSupplierBucket(params: {

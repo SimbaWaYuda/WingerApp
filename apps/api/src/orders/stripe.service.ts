@@ -22,8 +22,24 @@ export type PaymentIntentEvent = {
 };
 
 export type CardRefundResult =
-  | { ok: true; refundId: string }
-  | { ok: false; message: string };
+  | {
+      ok: true;
+      refundId: string;
+      /** Stripe refund.status — callers must inspect; ok:true alone is not success. */
+      status: string | null;
+    }
+  | {
+      ok: false;
+      message: string;
+      /**
+       * True when the create may have reached Stripe (timeout/network).
+       * Callers must not treat this as FAILED_TERMINAL.
+       */
+      uncertain?: boolean;
+      /** Present when Stripe returned a definitive failed/canceled Refund object. */
+      refundId?: string;
+      status?: string | null;
+    };
 
 /** Normalized Stripe refund fields used by RefundAttempt reconciliation (S2.1). */
 export type StripeRefundListItem = {
@@ -238,16 +254,30 @@ export class StripeService {
         { idempotencyKey: params.idempotencyKey },
       );
       if (refund.status === 'failed' || refund.status === 'canceled') {
-        return { ok: false, message: `Stripe refund ${refund.status}` };
+        return {
+          ok: false,
+          message: `Stripe refund ${refund.status}`,
+          refundId: refund.id,
+          status: refund.status,
+        };
       }
-      return { ok: true, refundId: refund.id };
+      return {
+        ok: true,
+        refundId: refund.id,
+        status: refund.status ?? null,
+      };
     } catch (error) {
       if (isAlreadyRefunded(error)) {
-        return { ok: true, refundId: 'already_refunded' };
+        // Charge already refunded is definitive success for ledger completion.
+        return { ok: true, refundId: 'already_refunded', status: 'succeeded' };
       }
       const message = error instanceof Error ? error.message : 'Stripe refund failed';
       this.logger.warn(`Stripe refund failed: ${message}`);
-      return { ok: false, message };
+      return {
+        ok: false,
+        message,
+        uncertain: isUncertainStripeNetworkError(error),
+      };
     }
   }
 
@@ -496,6 +526,32 @@ function isAlreadyRefunded(error: unknown): boolean {
   if (code === 'charge_already_refunded') return true;
   const message = error instanceof Error ? error.message.toLowerCase() : '';
   return message.includes('already refunded');
+}
+
+/** Network/timeout/connection errors — may have reached Stripe; never treat as terminal. */
+function isUncertainStripeNetworkError(error: unknown): boolean {
+  const type =
+    error && typeof error === 'object' && 'type' in error
+      ? String((error as { type: unknown }).type)
+      : '';
+  if (
+    type === 'StripeConnectionError' ||
+    type === 'StripeAPIError' ||
+    type === 'StripeRateLimitError'
+  ) {
+    return true;
+  }
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code: unknown }).code)
+      : '';
+  if (code === 'rate_limit' || code === 'lock_timeout') {
+    return true;
+  }
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  return /timeout|timed out|econnreset|econnrefused|socket hang up|network|temporarily unavailable|rate limit|503|502|504|429/.test(
+    message,
+  );
 }
 
 function normalizeStripeRefund(refund: {

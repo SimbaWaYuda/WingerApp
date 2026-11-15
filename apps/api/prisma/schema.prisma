@@ -58,6 +58,44 @@ enum ReturnRefundStatus {
   NOT_REQUIRED
 }
 
+/// Exclusive RETURN refund ownership (S2.3). Claimed once; never flipped by flag changes.
+enum ReturnRefundDrive {
+  UNCLAIMED
+  LEGACY
+  ATTEMPT
+}
+
+/// Shared shipment capacity hold for RETURN card refunds (LEGACY + ATTEMPT).
+enum ShipmentRefundHoldStatus {
+  RESERVED
+  CONSUMED
+  RELEASED
+}
+
+/// LEGACY Stripe bracket outcome. Null after claim = in-flight / crash / ambiguous.
+enum LegacyStripeOutcome {
+  SUCCESS_PENDING_FINALIZE
+  FAILED_TERMINAL
+}
+
+/// How a LEGACY Stripe observation was obtained (append-only evidence rows).
+enum LegacyStripeEvidenceSource {
+  FRESH_CREATE
+  RECOVERY_LIST
+}
+
+/// Classification of one LEGACY Stripe observation (append-only; never mutates proofJson).
+enum LegacyStripeEvidenceClassification {
+  SUCCEEDED
+  PENDING
+  REQUIRES_ACTION
+  FAILED
+  CANCELED
+  UNKNOWN
+  UNRESOLVED_ERROR
+  LATE_SUCCESS_AFTER_RELEASED
+}
+
 /// Durable card refund attempt (Phase 3 RefundAttempt). COD/Lipa do not use this table.
 enum RefundAttemptStatus {
   PENDING
@@ -296,6 +334,7 @@ model Supplier {
   commissionCredits     CommissionCredit[]
   lipaEvidence          CustomerPaymentEvidence[]
   refundAttempts        RefundAttempt[]
+  shipmentRefundHolds   ShipmentRefundHold[]
 }
 
 /// Versioned Lipa/Till registration. SUPPLIER_DIRECT is live only when status=APPROVED.
@@ -639,6 +678,7 @@ model OrderShipment {
   refundedAmount     Decimal         @default(0) @db.Decimal(12, 2)
   createdAt          DateTime        @default(now())
   refundAttempts     RefundAttempt[]
+  shipmentRefundHolds ShipmentRefundHold[]
 
   @@unique([orderId, supplierId])
   @@index([supplierId])
@@ -781,16 +821,23 @@ model ReturnRequest {
   refundStatus       ReturnRefundStatus  @default(NONE)
   refundNote         String?
   refundedAt         DateTime?
+  /// S2.3 exclusive ownership. Historical ISSUED rows may remain UNCLAIMED.
+  refundDrive        ReturnRefundDrive   @default(UNCLAIMED)
+  /// Soft abandon request; does not release capacity by itself.
+  refundAbandonRequestedAt DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   commissionClawback CommissionClawback?
   refundAttempts     RefundAttempt[]
+  shipmentRefundHold ShipmentRefundHold?
+  legacyStripeEvidence ShipmentRefundHoldLegacyEvidence[]
 
   @@index([orderId, createdAt])
   @@index([customerId])
   @@index([orderItemId])
   @@index([status])
   @@index([refundStatus])
+  @@index([refundDrive])
 }
 
 /// Durable Stripe card refund + Connect reverse bookkeeping (Phase 3).
@@ -865,6 +912,7 @@ model RefundAttempt {
   createdAt   DateTime                  @default(now())
   updatedAt   DateTime                  @updatedAt
   submissions RefundAttemptSubmission[]
+  shipmentRefundHold ShipmentRefundHold?
 
   @@index([orderId])
   @@index([returnRequestId])
@@ -874,6 +922,58 @@ model RefundAttempt {
   @@index([actorUserId])
   @@index([status, updatedAt])
   @@index([transferReversalStatus, updatedAt])
+  @@index([stripePaymentIntentId])
+}
+
+/// Shared RETURN refund capacity reservation + immutable snapshot (S2.3).
+/// One hold per ReturnRequest. ATTEMPT and LEGACY card paths share this pool.
+model ShipmentRefundHold {
+  id                  String                   @id @default(cuid())
+  returnRequestId     String                   @unique
+  returnRequest       ReturnRequest            @relation(fields: [returnRequestId], references: [id], onDelete: Restrict)
+  orderShipmentId     String
+  orderShipment       OrderShipment            @relation(fields: [orderShipmentId], references: [id], onDelete: Restrict)
+  supplierId          String
+  supplier            Supplier                 @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  amount              Decimal                  @db.Decimal(12, 2)
+  amountCents         Int
+  currency            String
+  returnedMerchandise Decimal                  @db.Decimal(12, 2)
+  includeDelivery     Boolean
+  /// Frozen calculation inputs proving the reserved amount. Never mutate after create.
+  proofJson           Json
+  status              ShipmentRefundHoldStatus @default(RESERVED)
+  refundAttemptId     String?                  @unique
+  refundAttempt       RefundAttempt?           @relation(fields: [refundAttemptId], references: [id], onDelete: SetNull)
+  /// LEGACY only: set immediately before Stripe; null outcome = unresolved.
+  legacyStripeClaimedAt DateTime?
+  legacyStripeOutcome   LegacyStripeOutcome?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  legacyStripeEvidence ShipmentRefundHoldLegacyEvidence[]
+
+  @@index([orderShipmentId, status])
+  @@index([supplierId])
+}
+
+/// Append-only LEGACY Stripe observations. Never mutates ShipmentRefundHold.proofJson.
+model ShipmentRefundHoldLegacyEvidence {
+  id                     String                             @id @default(cuid())
+  shipmentRefundHoldId   String
+  shipmentRefundHold     ShipmentRefundHold                 @relation(fields: [shipmentRefundHoldId], references: [id], onDelete: Restrict)
+  returnRequestId        String
+  returnRequest          ReturnRequest                      @relation(fields: [returnRequestId], references: [id], onDelete: Restrict)
+  stripePaymentIntentId  String
+  stripeRefundId         String?
+  stripeStatus           String?
+  source                 LegacyStripeEvidenceSource
+  classification         LegacyStripeEvidenceClassification
+  message                String?
+  observedAt             DateTime                           @default(now())
+  createdAt              DateTime                           @default(now())
+
+  @@index([shipmentRefundHoldId, observedAt])
+  @@index([returnRequestId, observedAt])
   @@index([stripePaymentIntentId])
 }
 

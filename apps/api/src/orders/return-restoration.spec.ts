@@ -1,5 +1,6 @@
 import { OrderStatus, PaymentStatus, ReturnRequestStatus, UserRole } from '@prisma/client';
 import { OrdersService } from './orders.service';
+import { ShipmentRefundHoldService } from './shipment-refund-hold.service';
 
 function admin() {
   return {
@@ -43,6 +44,7 @@ describe('partial return stock and refund routing', () => {
     returns.set('ret-1', returnRow('ret-1', 1));
     const ledgerEvents: { eventId: string; variantId?: string; delta: number }[] = [];
     const clawbacks = new Map<string, { id: string }>();
+    const holdRows = new Map<string, Record<string, unknown>>();
     let locked = false;
     const waiters: Array<() => void> = [];
     const snapshot = () => ({
@@ -55,6 +57,35 @@ describe('partial return stock and refund routing', () => {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 'item-1' }]),
       returnRequest: {
         findUnique: jest.fn(async ({ where }: { where: { id: string } }) => returns.get(where.id)),
+        findUniqueOrThrow: jest.fn(
+          async ({
+            where,
+            include,
+          }: {
+            where: { id: string };
+            include?: { order?: unknown };
+          }) => {
+            const row = returns.get(where.id);
+            if (!row) throw new Error('rr missing');
+            const base = {
+              refundDrive: 'UNCLAIMED',
+              refundAbandonRequestedAt: null,
+              ...row,
+            };
+            if (include?.order) {
+              const order = (row.order ?? {}) as {
+                stripePaymentIntentId?: string | null;
+              };
+              return {
+                ...base,
+                order: {
+                  stripePaymentIntentId: order.stripePaymentIntentId ?? 'pi_1',
+                },
+              };
+            }
+            return base;
+          },
+        ),
         update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
           Object.assign(returns.get(where.id)!, data);
         }),
@@ -67,7 +98,6 @@ describe('partial return stock and refund routing', () => {
           if (data.status) item.status = data.status;
         }),
       },
-      order: { update: jest.fn().mockResolvedValue({}) },
       product: {
         findUnique: jest.fn(async () => product),
         update: jest.fn(async ({ data }: { data: { stock: number } }) => {
@@ -96,13 +126,137 @@ describe('partial return stock and refund routing', () => {
           ledgerEvents.push(data);
         }),
       },
-      orderShipment: { findMany: jest.fn().mockResolvedValue([]) },
+      orderShipment: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'ship-1',
+            orderId: 'ord-1',
+            supplierId: 'sup-1',
+            supplierName: 'Kijani',
+            merchandise: 30,
+            deliveryFee: 0,
+            merchandiseTax: 0,
+            deliveryTax: 0,
+            paymentMerchandise: 30,
+            paymentDelivery: 0,
+            paymentTax: 0,
+            refundedAmount: 0,
+          },
+        ]),
+        findFirst: jest.fn(async () => ({
+          id: 'ship-1',
+          orderId: 'ord-1',
+          supplierId: 'sup-1',
+          supplierName: 'Kijani',
+          merchandise: 30,
+          deliveryFee: 0,
+          merchandiseTax: 0,
+          deliveryTax: 0,
+          paymentMerchandise: 30,
+          paymentDelivery: 0,
+          paymentTax: 0,
+          refundedAmount: 0,
+        })),
+        findUniqueOrThrow: jest.fn(async () => ({
+          id: 'ship-1',
+          orderId: 'ord-1',
+          supplierId: 'sup-1',
+          supplierName: 'Kijani',
+          merchandise: 30,
+          deliveryFee: 0,
+          merchandiseTax: 0,
+          deliveryTax: 0,
+          paymentMerchandise: 30,
+          paymentDelivery: 0,
+          paymentTax: 0,
+          refundedAmount: 0,
+        })),
+        update: jest.fn(),
+      },
+      order: {
+        update: jest.fn().mockResolvedValue({}),
+        findUniqueOrThrow: jest.fn(async () => {
+          const row = returns.get('ret-1');
+          const order = (row?.order ?? {}) as {
+            paymentMode?: string;
+            stripePaymentIntentId?: string | null;
+            currency?: string;
+          };
+          return {
+            id: 'ord-1',
+            paymentMode: order.paymentMode ?? 'test',
+            currency: order.currency ?? 'usd',
+            stripePaymentIntentId: order.stripePaymentIntentId ?? 'pi_1',
+          };
+        }),
+      },
       commissionClawback: {
         findUnique: jest.fn(async ({ where }: { where: { returnRequestId: string } }) =>
           clawbacks.get(where.returnRequestId) ?? null,
         ),
       },
+      shipmentRefundHold: {
+        findUnique: jest.fn(async ({ where }: { where: { returnRequestId?: string; id?: string } }) => {
+          if (where.returnRequestId) {
+            return holdRows.get(where.returnRequestId) ?? null;
+          }
+          if (where.id) {
+            return [...holdRows.values()].find((h) => h.id === where.id) ?? null;
+          }
+          return null;
+        }),
+        findUniqueOrThrow: jest.fn(),
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      shipmentRefundHoldLegacyEvidence: {
+        create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+          id: 'ev-1',
+          observedAt: new Date(),
+          createdAt: new Date(),
+          ...data,
+        })),
+      },
+      refundAttempt: { findFirst: jest.fn().mockResolvedValue(null) },
+      $executeRaw: jest.fn().mockResolvedValue(1),
     };
+    tx.shipmentRefundHold.create.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => {
+        const row: Record<string, unknown> = {
+          id: `hold-${holdRows.size + 1}`,
+          legacyStripeClaimedAt: null,
+          legacyStripeOutcome: null,
+          refundAttemptId: null,
+          ...data,
+          amount: Number(data.amount),
+          returnedMerchandise: Number(data.returnedMerchandise),
+        };
+        holdRows.set(String(row.returnRequestId), row);
+        return { ...row };
+      },
+    );
+    tx.shipmentRefundHold.findUniqueOrThrow.mockImplementation(
+      async (args: { where: { returnRequestId?: string; id?: string } }) => {
+        const row = await tx.shipmentRefundHold.findUnique(args);
+        if (!row) throw new Error('hold missing');
+        return row;
+      },
+    );
+    tx.shipmentRefundHold.update.mockImplementation(
+      async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: Record<string, unknown>;
+      }) => {
+        const existing = [...holdRows.values()].find((h) => h.id === where.id)!;
+        Object.assign(existing, data);
+        return { ...existing };
+      },
+    );
+
     const prisma = {
       ...tx,
       $transaction: jest.fn(async (fn: (client: typeof tx) => Promise<unknown>) => {
@@ -127,13 +281,23 @@ describe('partial return stock and refund routing', () => {
         }
       }),
     };
-    const stripe = { refundCardCharge: jest.fn().mockResolvedValue({ ok: true, refundId: 're_1' }) };
+    const stripe = {
+      refundCardCharge: jest
+        .fn()
+        .mockResolvedValue({ ok: true, refundId: 're_1', status: 'succeeded' }),
+      listRefundsForPaymentIntent: jest.fn().mockResolvedValue({
+        ok: true,
+        exhausted: true,
+        refunds: [],
+      }),
+    };
     const payouts = { reverseIfTransferred: jest.fn().mockResolvedValue(undefined) };
     const ledger = {
       reserveReturnClawback: jest.fn().mockResolvedValue({ id: 'claw-1' }),
       applyReturnClawback: jest.fn().mockResolvedValue({ legacy: false, applied: true }),
       sweepSupplier: jest.fn(),
     };
+    const holds = new ShipmentRefundHoldService(prisma as never, ledger as never);
     const service = new OrdersService(
       prisma as never,
       { clawbackForOrderItem: jest.fn() } as never,
@@ -145,6 +309,8 @@ describe('partial return stock and refund routing', () => {
       payouts as never,
       {} as never,
       ledger as never,
+      {} as never,
+      holds,
     );
     return { service, item, product, variants, ledgerEvents, stripe, ledger, returns, payouts, clawbacks };
   }
@@ -260,11 +426,14 @@ function returnRow(id: string, quantity: number) {
     refundStatus: 'NONE',
     refundNote: null,
     refundedAt: null,
+    refundDrive: 'UNCLAIMED',
+    refundAbandonRequestedAt: null,
     order: {
       id: 'ord-1',
       displayId: 'WG-10999',
       customerName: 'Amina',
       paymentMode: 'test',
+      currency: 'usd',
       stripePaymentIntentId: 'pi_1',
       paymentAmount: 30,
       subtotal: 30,

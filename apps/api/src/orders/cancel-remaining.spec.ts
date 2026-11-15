@@ -125,7 +125,9 @@ describe('cancel remaining unshipped lines', () => {
       }),
     };
     const stripe = {
-      refundCardCharge: jest.fn().mockResolvedValue({ ok: true, refundId: 're_1' }),
+      refundCardCharge: jest
+        .fn()
+        .mockResolvedValue({ ok: true, refundId: 're_1', status: 'succeeded' }),
     };
     const clawback = jest.fn().mockResolvedValue({ clawedBack: true });
     const payouts = { reverseIfTransferred: jest.fn().mockResolvedValue(undefined) };
@@ -138,6 +140,8 @@ describe('cancel remaining unshipped lines', () => {
       {} as never,
       { record: jest.fn() } as never,
       payouts as never,
+      {} as never,
+      {} as never,
       {} as never,
       {} as never,
     );

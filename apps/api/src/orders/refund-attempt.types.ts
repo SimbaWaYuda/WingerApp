@@ -263,7 +263,8 @@ export function isApplyEligibleStripeSuccess(input: {
 }): boolean {
   if (
     input.attemptStatus !== 'STRIPE_SUCCEEDED' &&
-    input.attemptStatus !== 'APPLY_FAILED'
+    input.attemptStatus !== 'APPLY_FAILED' &&
+    input.attemptStatus !== 'PERMANENTLY_FAILED'
   ) {
     return false;
   }
@@ -306,7 +307,12 @@ export function hasInconsistentApplyMarkers(m: ApplyCompletionMarkers): boolean 
 }
 
 export function canStartApplyFromStatus(status: string): boolean {
-  return status === 'STRIPE_SUCCEEDED' || status === 'APPLY_FAILED';
+  return (
+    status === 'STRIPE_SUCCEEDED' ||
+    status === 'APPLY_FAILED' ||
+    // Late success evidence may land after abandon marked PERMANENTLY_FAILED for new creates.
+    status === 'PERMANENTLY_FAILED'
+  );
 }
 
 export function isApplyActorAllowed(

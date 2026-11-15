@@ -77,7 +77,11 @@ describe('StripeService payment safety', () => {
       returnRequestId: 'ret-1',
     });
 
-    expect(result).toEqual({ ok: true, refundId: 're_1' });
+    expect(result).toEqual({
+      ok: true,
+      refundId: 're_1',
+      status: 'succeeded',
+    });
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         payment_intent: 'pi_1',
@@ -101,7 +105,11 @@ describe('StripeService payment safety', () => {
       reason: 'cancel',
     });
 
-    expect(result).toEqual({ ok: true, refundId: 're_cancel' });
+    expect(result).toEqual({
+      ok: true,
+      refundId: 're_cancel',
+      status: 'succeeded',
+    });
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         payment_intent: 'pi_1',
@@ -127,7 +135,31 @@ describe('StripeService payment safety', () => {
       reason: 'cancel',
     });
 
-    expect(result).toEqual({ ok: true, refundId: 'already_refunded' });
+    expect(result).toEqual({
+      ok: true,
+      refundId: 'already_refunded',
+      status: 'succeeded',
+    });
+  });
+
+  it('exposes pending status without treating ok as terminal success', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 're_pending', status: 'pending' });
+    const service = new StripeService();
+    service.bindForTests({ refunds: { create } } as never, 'test');
+
+    const result = await service.refundCardCharge({
+      paymentIntentId: 'pi_1',
+      amount: 10,
+      idempotencyKey: 'winger-refund-ret-1',
+      orderId: 'ord-1',
+      returnRequestId: 'ret-1',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      refundId: 're_pending',
+      status: 'pending',
+    });
   });
 
   it('reports a Stripe refund failure without throwing', async () => {
@@ -145,7 +177,11 @@ describe('StripeService payment safety', () => {
       returnRequestId: 'ret-1',
     });
 
-    expect(result).toEqual({ ok: false, message: 'insufficient funds' });
+    expect(result).toEqual({
+      ok: false,
+      message: 'insufficient funds',
+      uncertain: false,
+    });
   });
 
   it('lists PaymentIntent refunds across pages until exhausted', async () => {

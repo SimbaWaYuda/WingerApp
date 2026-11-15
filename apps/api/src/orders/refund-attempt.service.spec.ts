@@ -335,6 +335,27 @@ function createMemoryPrisma() {
         return row ? { ...row } : null;
       },
     },
+    returnRequest: {
+      async findUnique(args: {
+        where: { id: string };
+        select?: { refundAbandonRequestedAt?: true };
+      }) {
+        return {
+          id: args.where.id,
+          refundAbandonRequestedAt: null,
+          refundStatus: 'PENDING',
+          refundDrive: 'ATTEMPT',
+        };
+      },
+      async updateMany() {
+        return { count: 0 };
+      },
+    },
+    shipmentRefundHold: {
+      async findUnique() {
+        return null;
+      },
+    },
   };
 
   // Serialize interactive txns so concurrent apply tests honor FOR UPDATE ordering.
@@ -432,12 +453,19 @@ describe('RefundAttemptService (S2.1)', () => {
       }),
       ...ledgerOverrides,
     } as unknown as CommissionLedgerService;
+    const holds = {
+      consumeHoldForApplyTx: jest.fn().mockResolvedValue({
+        consumed: true,
+        alreadyConsumed: false,
+      }),
+    };
     const service = new RefundAttemptService(
       prisma as never,
       stripe,
       ledger,
+      holds as never,
     );
-    return { service, prisma, stripe, ledger };
+    return { service, prisma, stripe, ledger, holds };
   }
 
   const ensureParams = {
@@ -771,7 +799,18 @@ describe('RefundAttemptService (S2.1)', () => {
       applyReturnClawback: jest.fn(),
     } as unknown as CommissionLedgerService;
 
-    const service = new RefundAttemptService(prisma as never, stripe, ledger);
+    const holds = {
+      consumeHoldForApplyTx: jest.fn().mockResolvedValue({
+        consumed: true,
+        alreadyConsumed: false,
+      }),
+    };
+    const service = new RefundAttemptService(
+      prisma as never,
+      stripe,
+      ledger,
+      holds as never,
+    );
     const ensured = await service.ensureAttemptForOperation(ensureParams);
     events.length = 0;
     await service.submitCurrentSubmission({
@@ -1225,12 +1264,19 @@ describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
       }),
       ...ledgerOverrides,
     } as unknown as CommissionLedgerService;
+    const holds = {
+      consumeHoldForApplyTx: jest.fn().mockResolvedValue({
+        consumed: true,
+        alreadyConsumed: false,
+      }),
+    };
     const service = new RefundAttemptService(
       prisma as never,
       stripe,
       ledger,
+      holds as never,
     );
-    return { service, prisma, stripe, ledger };
+    return { service, prisma, stripe, ledger, holds };
   }
 
   function seedReadyApply(opts?: {

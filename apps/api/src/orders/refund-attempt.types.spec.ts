@@ -253,6 +253,13 @@ describe('refund-attempt.types', () => {
       ).toBe(true);
       expect(
         isApplyEligibleStripeSuccess({
+          attemptStatus: 'PERMANENTLY_FAILED',
+          submissionOutcome: 'SUCCEEDED',
+          submissionStripeRefundId: 're_late',
+        }),
+      ).toBe(true);
+      expect(
+        isApplyEligibleStripeSuccess({
           attemptStatus: 'PENDING',
           submissionOutcome: 'PENDING',
           submissionStripeRefundId: 're_pending',
@@ -297,6 +304,7 @@ describe('refund-attempt.types', () => {
       ).toBe(true);
       expect(canStartApplyFromStatus('STRIPE_SUCCEEDED')).toBe(true);
       expect(canStartApplyFromStatus('APPLY_FAILED')).toBe(true);
+      expect(canStartApplyFromStatus('PERMANENTLY_FAILED')).toBe(true);
       expect(canStartApplyFromStatus('PENDING')).toBe(false);
       expect(
         isApplyActorAllowed({ sub: 'u-1', role: 'ADMIN' }, 'u-other'),

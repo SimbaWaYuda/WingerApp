@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -9,6 +10,8 @@ import {
   RefundAttemptStatus,
   RefundReconciliationResult,
   RefundSubmissionOutcome,
+  ReturnRefundStatus,
+  ShipmentRefundHoldStatus,
 } from '@prisma/client';
 import type { AuthUser } from '../auth/auth.types';
 import { CommissionLedgerService } from '../commissions/commission-ledger.service';
@@ -45,6 +48,8 @@ import {
   requiresReconcileBeforeStripeCreate,
   stripeIdempotencyKeyForSubmission,
 } from './refund-attempt.types';
+import { ShipmentRefundHoldService } from './shipment-refund-hold.service';
+import { ShipmentRefundHoldError } from './shipment-refund-hold.types';
 
 type AttemptRow = {
   id: string;
@@ -110,6 +115,19 @@ export type SubmitCurrentSubmissionResult = {
 export type ApplySuccessfulRefundResult = {
   attempt: AttemptRow;
   idempotent: boolean;
+  /** Set when RETURN apply also finalised ReturnRequest to ISSUED. */
+  returnIssued?: boolean;
+};
+
+type SubmissionRowLike = {
+  id: string;
+  refundAttemptId: string;
+  version: number;
+  stripeIdempotencyKey: string;
+  submittedAt: Date | null;
+  reconciliationResult: RefundReconciliationResult;
+  stripeRefundId: string | null;
+  outcome: RefundSubmissionOutcome;
 };
 
 /** Validation / invariant failures that must not leave money half-applied. */
@@ -130,8 +148,7 @@ class ApplyInvariantError extends Error {
 }
 
 /**
- * Phase 3 RefundAttempt orchestration (S2.1 + S2.2 apply).
- * Apply is RETURN-only and unwired from OrdersService until S2.3+.
+ * Phase 3 RefundAttempt orchestration (S2.1 + S2.2 apply + S2.3 hold/abandon).
  */
 @Injectable()
 export class RefundAttemptService {
@@ -141,6 +158,7 @@ export class RefundAttemptService {
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
     private readonly ledger: CommissionLedgerService,
+    private readonly holds: ShipmentRefundHoldService,
   ) {}
 
   /** When false, OrdersService must keep using legacy refundPaidCard paths. */
@@ -187,6 +205,7 @@ export class RefundAttemptService {
   /**
    * Create or load RefundAttempt by operationKey and ensure an open submission.
    * Short DB work only — no Stripe calls.
+   * Pass `tx` to join an outer transaction (no nested $transaction).
    */
   async ensureAttemptForOperation(params: {
     kind: RefundAttemptKindName;
@@ -202,92 +221,239 @@ export class RefundAttemptService {
     orderShipmentId?: string | null;
     supplierId?: string | null;
     includeDelivery?: boolean;
+    /** When set, use this client and do not open a nested transaction. */
+    tx?: Prisma.TransactionClient;
   }): Promise<EnsureAttemptResult> {
-    const currency = params.currency.toLowerCase();
-    const kind = params.kind as RefundAttemptKind;
-
+    if (params.tx) {
+      return this.ensureAttemptForOperationTx(params.tx, params);
+    }
     const existing = await this.prisma.refundAttempt.findUnique({
       where: { operationKey: params.operationKey },
       include: {
         submissions: { orderBy: { version: 'desc' }, take: 1 },
       },
     });
-
     if (existing) {
-      if (existing.amountCents !== params.amountCents) {
-        throw new Error(
-          `RefundAttempt ${existing.operationKey} amountCents frozen at ${existing.amountCents}`,
-        );
-      }
-      if (existing.currency.toLowerCase() !== currency) {
-        throw new Error(
-          `RefundAttempt ${existing.operationKey} currency frozen at ${existing.currency}`,
-        );
-      }
-      if (existing.stripePaymentIntentId !== params.stripePaymentIntentId) {
-        throw new Error(
-          `RefundAttempt ${existing.operationKey} paymentIntent frozen`,
-        );
-      }
-
-      const latest = existing.submissions[0] ?? null;
-      if (!latest) {
-        const createdSub = await this.insertSubmissionVersion(
-          existing.id,
-          params.operationKey,
-          1,
-        );
-        return { attempt: asAttempt(existing), submission: createdSub };
-      }
-      const gate = canInsertNextSubmissionVersion(toLatestView(latest));
-      if (gate.allowed && latest.outcome !== RefundSubmissionOutcome.PENDING) {
-        const opened = await this.openNextSubmissionVersion(existing.id, latest);
-        const attempt = await this.prisma.refundAttempt.findUniqueOrThrow({
-          where: { id: existing.id },
-        });
-        return { attempt: asAttempt(attempt), submission: opened };
-      }
-      return { attempt: asAttempt(existing), submission: asSubmission(latest) };
+      return this.ensureExistingAttempt(existing, params);
     }
-
-    const created = await this.prisma.$transaction(async (tx) => {
-      const attempt = await tx.refundAttempt.create({
-        data: {
-          operationKey: params.operationKey,
-          kind,
-          status: RefundAttemptStatus.PENDING,
-          orderId: params.orderId,
-          returnRequestId: params.returnRequestId ?? null,
-          orderItemId: params.orderItemId ?? null,
-          orderShipmentId: params.orderShipmentId ?? null,
-          supplierId: params.supplierId ?? null,
-          actorUserId: params.actorUserId,
-          stripePaymentIntentId: params.stripePaymentIntentId,
-          amount: new Prisma.Decimal(params.amount),
-          amountCents: params.amountCents,
-          currency,
-          includeDelivery: params.includeDelivery ?? false,
-        },
-      });
-      const submission = await tx.refundAttemptSubmission.create({
-        data: {
-          refundAttemptId: attempt.id,
-          version: 1,
-          stripeIdempotencyKey: stripeIdempotencyKeyForSubmission(
-            params.operationKey,
-            1,
-          ),
-          outcome: RefundSubmissionOutcome.PENDING,
-          reconciliationResult: RefundReconciliationResult.NONE,
-        },
-      });
-      return { attempt, submission };
-    });
-
+    const created = await this.prisma.$transaction(async (tx) =>
+      this.createAttemptWithSubmissionTx(tx, params),
+    );
     return {
       attempt: asAttempt(created.attempt),
       submission: asSubmission(created.submission),
     };
+  }
+
+  /** Transaction-client helper — never opens a nested transaction. */
+  async ensureAttemptForOperationTx(
+    tx: Prisma.TransactionClient,
+    params: {
+      kind: RefundAttemptKindName;
+      operationKey: string;
+      orderId: string;
+      actorUserId: string;
+      stripePaymentIntentId: string;
+      amount: number;
+      amountCents: number;
+      currency: string;
+      returnRequestId?: string | null;
+      orderItemId?: string | null;
+      orderShipmentId?: string | null;
+      supplierId?: string | null;
+      includeDelivery?: boolean;
+    },
+  ): Promise<EnsureAttemptResult> {
+    const existing = await tx.refundAttempt.findUnique({
+      where: { operationKey: params.operationKey },
+      include: {
+        submissions: { orderBy: { version: 'desc' }, take: 1 },
+      },
+    });
+    if (existing) {
+      return this.ensureExistingAttemptTx(tx, existing, params);
+    }
+    const created = await this.createAttemptWithSubmissionTx(tx, params);
+    return {
+      attempt: asAttempt(created.attempt),
+      submission: asSubmission(created.submission),
+    };
+  }
+
+  private assertFrozenAttemptMatches(
+    existing: {
+      operationKey: string;
+      amountCents: number;
+      currency: string;
+      stripePaymentIntentId: string;
+    },
+    params: {
+      amountCents: number;
+      currency: string;
+      stripePaymentIntentId: string;
+    },
+  ): string {
+    const currency = params.currency.toLowerCase();
+    if (existing.amountCents !== params.amountCents) {
+      throw new Error(
+        `RefundAttempt ${existing.operationKey} amountCents frozen at ${existing.amountCents}`,
+      );
+    }
+    if (existing.currency.toLowerCase() !== currency) {
+      throw new Error(
+        `RefundAttempt ${existing.operationKey} currency frozen at ${existing.currency}`,
+      );
+    }
+    if (existing.stripePaymentIntentId !== params.stripePaymentIntentId) {
+      throw new Error(
+        `RefundAttempt ${existing.operationKey} paymentIntent frozen`,
+      );
+    }
+    return currency;
+  }
+
+  private async ensureExistingAttempt(
+    existing: {
+      id: string;
+      operationKey: string;
+      amountCents: number;
+      currency: string;
+      stripePaymentIntentId: string;
+      submissions: SubmissionRowLike[];
+    } & Record<string, unknown>,
+    params: {
+      amountCents: number;
+      currency: string;
+      stripePaymentIntentId: string;
+      operationKey: string;
+    },
+  ): Promise<EnsureAttemptResult> {
+    this.assertFrozenAttemptMatches(existing, params);
+    const latest = existing.submissions[0] ?? null;
+    if (!latest) {
+      const createdSub = await this.insertSubmissionVersion(
+        existing.id,
+        params.operationKey,
+        1,
+      );
+      return { attempt: asAttempt(existing as never), submission: createdSub };
+    }
+    const gate = canInsertNextSubmissionVersion(toLatestView(latest));
+    if (gate.allowed && latest.outcome !== RefundSubmissionOutcome.PENDING) {
+      const opened = await this.openNextSubmissionVersion(existing.id, latest);
+      const attempt = await this.prisma.refundAttempt.findUniqueOrThrow({
+        where: { id: existing.id },
+      });
+      return { attempt: asAttempt(attempt), submission: opened };
+    }
+    return {
+      attempt: asAttempt(existing as never),
+      submission: asSubmission(latest),
+    };
+  }
+
+  private async ensureExistingAttemptTx(
+    tx: Prisma.TransactionClient,
+    existing: {
+      id: string;
+      operationKey: string;
+      amountCents: number;
+      currency: string;
+      stripePaymentIntentId: string;
+      status: RefundAttemptStatus;
+      submissions: SubmissionRowLike[];
+    } & Record<string, unknown>,
+    params: {
+      amountCents: number;
+      currency: string;
+      stripePaymentIntentId: string;
+      operationKey: string;
+    },
+  ): Promise<EnsureAttemptResult> {
+    this.assertFrozenAttemptMatches(existing, params);
+    if (existing.status === RefundAttemptStatus.PERMANENTLY_FAILED) {
+      const latest = existing.submissions[0];
+      if (!latest) {
+        throw new BadRequestException(
+          'RefundAttempt is PERMANENTLY_FAILED; new submission versions blocked',
+        );
+      }
+      return {
+        attempt: asAttempt(existing as never),
+        submission: asSubmission(latest),
+      };
+    }
+    const latest = existing.submissions[0] ?? null;
+    if (!latest) {
+      const createdSub = await this.insertSubmissionVersionTx(
+        tx,
+        existing.id,
+        params.operationKey,
+        1,
+      );
+      return { attempt: asAttempt(existing as never), submission: createdSub };
+    }
+    // Inside an outer claim txn we never open next versions — reuse frozen hold/attempt.
+    return {
+      attempt: asAttempt(existing as never),
+      submission: asSubmission(latest),
+    };
+  }
+
+  private async createAttemptWithSubmissionTx(
+    tx: Prisma.TransactionClient,
+    params: {
+      kind: RefundAttemptKindName;
+      operationKey: string;
+      orderId: string;
+      actorUserId: string;
+      stripePaymentIntentId: string;
+      amount: number;
+      amountCents: number;
+      currency: string;
+      returnRequestId?: string | null;
+      orderItemId?: string | null;
+      orderShipmentId?: string | null;
+      supplierId?: string | null;
+      includeDelivery?: boolean;
+    },
+  ): Promise<{
+    attempt: Parameters<typeof asAttempt>[0];
+    submission: Parameters<typeof asSubmission>[0];
+  }> {
+    const currency = params.currency.toLowerCase();
+    const kind = params.kind as RefundAttemptKind;
+    const attempt = await tx.refundAttempt.create({
+      data: {
+        operationKey: params.operationKey,
+        kind,
+        status: RefundAttemptStatus.PENDING,
+        orderId: params.orderId,
+        returnRequestId: params.returnRequestId ?? null,
+        orderItemId: params.orderItemId ?? null,
+        orderShipmentId: params.orderShipmentId ?? null,
+        supplierId: params.supplierId ?? null,
+        actorUserId: params.actorUserId,
+        stripePaymentIntentId: params.stripePaymentIntentId,
+        amount: new Prisma.Decimal(params.amount),
+        amountCents: params.amountCents,
+        currency,
+        includeDelivery: params.includeDelivery ?? false,
+      },
+    });
+    const submission = await tx.refundAttemptSubmission.create({
+      data: {
+        refundAttemptId: attempt.id,
+        version: 1,
+        stripeIdempotencyKey: stripeIdempotencyKeyForSubmission(
+          params.operationKey,
+          1,
+        ),
+        outcome: RefundSubmissionOutcome.PENDING,
+        reconciliationResult: RefundReconciliationResult.NONE,
+      },
+    });
+    return { attempt, submission };
   }
 
   /**
@@ -442,6 +608,16 @@ export class RefundAttemptService {
       });
       if (!submission) {
         throw new Error('RefundAttempt has no submission');
+      }
+
+      const abandonGate = await this.abandonBlocksNewStripeCreateTx(tx, attempt);
+      if (abandonGate.blocked) {
+        return {
+          blocked: true as const,
+          reason: abandonGate.reason,
+          attempt: asAttempt(attempt),
+          submission: asSubmission(submission),
+        };
       }
 
       const view = toLatestView(submission);
@@ -805,7 +981,8 @@ export class RefundAttemptService {
         // Validate frozen amount before locking shipment or any money writes.
         const frozenAmount = resolveFrozenRefundAmount(attempt);
 
-        // 4) OrderShipment FOR UPDATE (after attempt; before ledger locks)
+        // 4) OrderShipment FOR UPDATE (after attempt; before hold + ledger)
+        // Do not lock ReturnRequest here — preserve Attempt-first apply order.
         await this.lockShipment(tx, attempt.orderShipmentId);
         const shipment = await tx.orderShipment.findUniqueOrThrow({
           where: { id: attempt.orderShipmentId },
@@ -853,6 +1030,25 @@ export class RefundAttemptService {
             'shipment_refund_capacity',
             'Frozen refund amount exceeds remaining shipment payment capacity',
           );
+        }
+
+        // 4b) Consume shared hold (S2.3) — Attempt → Shipment → Hold
+        try {
+          await this.holds.consumeHoldForApplyTx(tx, {
+            returnRequestId: attempt.returnRequestId,
+            refundAttemptId: attempt.id,
+            expectedAmount: frozenAmount,
+            expectedAmountCents: attempt.amountCents,
+            expectedCurrency: attempt.currency,
+            orderShipmentId: attempt.orderShipmentId,
+          });
+        } catch (holdError) {
+          if (holdError instanceof ShipmentRefundHoldError) {
+            throw new ApplyInvariantError(holdError.code, holdError.message, {
+              needsInvestigation: holdError.code === 'hold_released',
+            });
+          }
+          throw holdError;
         }
 
         const now = new Date();
@@ -958,7 +1154,38 @@ export class RefundAttemptService {
         { needsInvestigation: true },
       );
     }
-    return outcome.result;
+
+    // Finalise ReturnRequest ISSUED only after apply commits (S2.3).
+    const returnIssued = await this.finalizeReturnIssuedAfterApply(
+      outcome.result.attempt,
+    );
+    return { ...outcome.result, returnIssued };
+  }
+
+  /**
+   * After APPLIED commits, set ReturnRequest ISSUED.
+   * Separate short transaction — never inside the Attempt→Shipment apply lock set.
+   */
+  private async finalizeReturnIssuedAfterApply(
+    attempt: AttemptRow,
+  ): Promise<boolean> {
+    if (attempt.kind !== RefundAttemptKind.RETURN || !attempt.returnRequestId) {
+      return false;
+    }
+    if (attempt.status !== RefundAttemptStatus.APPLIED) {
+      return false;
+    }
+    const updated = await this.prisma.returnRequest.updateMany({
+      where: {
+        id: attempt.returnRequestId,
+        refundStatus: { not: ReturnRefundStatus.ISSUED },
+      },
+      data: {
+        refundStatus: ReturnRefundStatus.ISSUED,
+        refundedAt: new Date(),
+      },
+    });
+    return updated.count > 0;
   }
 
   /** Exposed for tests — S2.2 eligibility helper. */
@@ -979,10 +1206,15 @@ export class RefundAttemptService {
       const attempt = await tx.refundAttempt.findUniqueOrThrow({
         where: { id: refundAttemptId },
       });
+      const abandonGate = await this.abandonBlocksNewStripeCreateTx(tx, attempt);
+      if (abandonGate.blocked) {
+        return null;
+      }
       if (
         attempt.status === RefundAttemptStatus.NEEDS_INVESTIGATION ||
         attempt.status === RefundAttemptStatus.STRIPE_SUCCEEDED ||
         attempt.status === RefundAttemptStatus.APPLIED ||
+        attempt.status === RefundAttemptStatus.PERMANENTLY_FAILED ||
         attempt.investigationReason === INFLIGHT_UNRESOLVED_REASON
       ) {
         return null;
@@ -1002,6 +1234,42 @@ export class RefundAttemptService {
       }
       return this.openNextSubmissionVersionTx(tx, attempt);
     });
+  }
+
+  /**
+   * Abandon / PERMANENTLY_FAILED / RELEASED hold gate new Stripe creates and versions.
+   * Does not block persistence of late success evidence or apply.
+   */
+  private async abandonBlocksNewStripeCreateTx(
+    tx: Prisma.TransactionClient,
+    attempt: {
+      id: string;
+      status: RefundAttemptStatus;
+      returnRequestId: string | null;
+      kind: RefundAttemptKind;
+    },
+  ): Promise<{ blocked: boolean; reason: string }> {
+    if (attempt.status === RefundAttemptStatus.PERMANENTLY_FAILED) {
+      return { blocked: true, reason: 'attempt_permanently_failed' };
+    }
+    if (attempt.kind !== RefundAttemptKind.RETURN || !attempt.returnRequestId) {
+      return { blocked: false, reason: '' };
+    }
+    const rr = await tx.returnRequest.findUnique({
+      where: { id: attempt.returnRequestId },
+      select: { refundAbandonRequestedAt: true },
+    });
+    if (rr?.refundAbandonRequestedAt) {
+      return { blocked: true, reason: 'return_abandon_requested' };
+    }
+    const hold = await tx.shipmentRefundHold.findUnique({
+      where: { returnRequestId: attempt.returnRequestId },
+      select: { status: true },
+    });
+    if (hold?.status === ShipmentRefundHoldStatus.RELEASED) {
+      return { blocked: true, reason: 'hold_released' };
+    }
+    return { blocked: false, reason: '' };
   }
 
   private async openNextSubmissionVersion(
@@ -1027,13 +1295,23 @@ export class RefundAttemptService {
       id: string;
       operationKey: string;
       status: RefundAttemptStatus;
+      kind?: RefundAttemptKind;
+      returnRequestId?: string | null;
       investigationReason?: string | null;
     },
   ): Promise<SubmissionRow> {
+    const abandonGate = await this.abandonBlocksNewStripeCreateTx(tx, {
+      id: attempt.id,
+      status: attempt.status,
+      returnRequestId: attempt.returnRequestId ?? null,
+      kind: attempt.kind ?? RefundAttemptKind.RETURN,
+    });
     if (
+      abandonGate.blocked ||
       attempt.status === RefundAttemptStatus.NEEDS_INVESTIGATION ||
       attempt.status === RefundAttemptStatus.STRIPE_SUCCEEDED ||
       attempt.status === RefundAttemptStatus.APPLIED ||
+      attempt.status === RefundAttemptStatus.PERMANENTLY_FAILED ||
       attempt.investigationReason === INFLIGHT_UNRESOLVED_REASON
     ) {
       const latest = await tx.refundAttemptSubmission.findFirstOrThrow({
@@ -1118,7 +1396,21 @@ export class RefundAttemptService {
     operationKey: string,
     version: number,
   ): Promise<SubmissionRow> {
-    const row = await this.prisma.refundAttemptSubmission.create({
+    return this.insertSubmissionVersionTx(
+      this.prisma,
+      attemptId,
+      operationKey,
+      version,
+    );
+  }
+
+  private async insertSubmissionVersionTx(
+    db: Prisma.TransactionClient | PrismaService,
+    attemptId: string,
+    operationKey: string,
+    version: number,
+  ): Promise<SubmissionRow> {
+    const row = await db.refundAttemptSubmission.create({
       data: {
         refundAttemptId: attemptId,
         version,
@@ -1307,8 +1599,18 @@ export class RefundAttemptService {
       if (
         attempt.status === RefundAttemptStatus.STRIPE_SUCCEEDED ||
         attempt.status === RefundAttemptStatus.APPLIED ||
-        attempt.status === RefundAttemptStatus.NEEDS_INVESTIGATION
+        attempt.status === RefundAttemptStatus.NEEDS_INVESTIGATION ||
+        attempt.status === RefundAttemptStatus.PERMANENTLY_FAILED
       ) {
+        return {
+          attempt: asAttempt(attempt),
+          submission: asSubmission(submission),
+          classification: 'STALE_SUBMISSION_IGNORED' as const,
+        };
+      }
+
+      const abandonGate = await this.abandonBlocksNewStripeCreateTx(tx, attempt);
+      if (abandonGate.blocked) {
         return {
           attempt: asAttempt(attempt),
           submission: asSubmission(submission),
