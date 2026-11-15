@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import {
   CommissionActorType,
   CommissionRecognitionJobStatus,
@@ -7,6 +8,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
+import { ROLES_KEY } from '../auth/roles.decorator';
 import { CommissionLedgerService, toAdminAllocation, toAdminCreditApplication } from './commission-ledger.service';
 import { lipaSuppliersReadyForPayment } from './commission-ledger.math';
 import { CommissionRecognitionRecovery } from './commission-recognition.recovery';
@@ -258,6 +260,344 @@ describe('Lipa evidence payment confirmation', () => {
     const result = await service.reviewLipaEvidence(admin, 'ev-a', { approve: true });
     expect(result.recoveryRequired).toBe(true);
     expect(result.evidence.status).toBe('VERIFIED');
+  });
+
+  it('rejects evidence, keeps the row, and leaves the order unpaid', async () => {
+    const { state, service } = lipaHarness({
+      paymentMode: 'lipa',
+      items: [live('item-a', 's-a')],
+      evidence: [{ id: 'ev-a', supplierId: 's-a', status: 'SUBMITTED' }],
+    });
+    const result = await service.reviewLipaEvidence(admin, 'ev-a', {
+      approve: false,
+      reviewNote: 'Not received',
+    });
+    expect(result.evidence.status).toBe('REJECTED');
+    expect(result.evidence.reviewNote).toBe('Not received');
+    expect(result.recoveryRequired).toBe(false);
+    expect(state.evidence).toHaveLength(1);
+    expect(state.evidence[0].status).toBe('REJECTED');
+    expect(state.order.paymentStatus).toBe('PENDING');
+    expect(state.jobs).toHaveLength(0);
+  });
+});
+
+const kijani: AuthUser = {
+  sub: 'user-kijani',
+  email: 'supplier@kijani.example',
+  name: 'Kijani',
+  role: UserRole.SUPPLIER,
+  supplierId: 's-kijani',
+};
+
+const customer: AuthUser = {
+  sub: 'user-amina',
+  email: 'amina.mwangi@example.com',
+  name: 'Amina',
+  role: UserRole.CUSTOMER,
+};
+
+function evidenceSubmitHarness(
+  orders: {
+    id: string;
+    displayId: string;
+    paymentMode: string;
+    supplierIds: string[];
+  }[],
+) {
+  const evidence: { id: string; orderId: string; supplierId: string; referenceRaw: string }[] = [];
+  const prisma: any = {
+    order: {
+      findUnique: async ({
+        where,
+        include,
+      }: {
+        where: { id?: string; displayId?: string };
+        include: { items: { where: { supplierId: string } } };
+      }) => {
+        const match = orders.find((row) =>
+          where.id != null ? row.id === where.id : row.displayId === where.displayId,
+        );
+        if (!match) return null;
+        const supplierId = include.items.where.supplierId;
+        return {
+          id: match.id,
+          displayId: match.displayId,
+          paymentMode: match.paymentMode,
+          items: match.supplierIds
+            .filter((id) => id === supplierId)
+            .map((id) => ({ supplierId: id })),
+        };
+      },
+    },
+    $transaction: async (fn: (tx: any) => Promise<unknown>) =>
+      fn({
+        customerPaymentEvidence: {
+          create: async ({ data }: { data: Record<string, unknown> }) => {
+            const row = {
+              id: `ev-${evidence.length + 1}`,
+              status: 'SUBMITTED',
+              orderId: String(data.orderId),
+              supplierId: String(data.supplierId),
+              referenceRaw: String(data.referenceRaw),
+            };
+            evidence.push(row);
+            return row;
+          },
+        },
+        customerPaymentEvidenceOpen: {
+          create: async ({ data }: { data: Record<string, unknown> }) => data,
+        },
+      }),
+  };
+  return {
+    evidence,
+    service: new CommissionLedgerService(
+      prisma,
+      { record: async () => undefined } as never,
+      {} as never,
+    ),
+  };
+}
+
+describe('customer Lipa evidence order numbers and admin inbox', () => {
+  const orders = [
+    {
+      id: 'order-kijani',
+      displayId: 'WG-10126',
+      paymentMode: 'lipa',
+      supplierIds: ['s-kijani'],
+    },
+    {
+      id: 'order-other',
+      displayId: 'WG-20000',
+      paymentMode: 'lipa',
+      supplierIds: ['s-other'],
+    },
+  ];
+
+  it('accepts the internal order id', async () => {
+    const { evidence, service } = evidenceSubmitHarness(orders);
+    const created = await service.submitLipaEvidence(kijani, {
+      orderId: 'order-kijani',
+      reference: 'TEST-CUST-LIPA-001',
+    });
+    expect(created.orderId).toBe('order-kijani');
+    expect(created.referenceRaw).toBe('TEST-CUST-LIPA-001');
+    expect(evidence).toHaveLength(1);
+  });
+
+  it('accepts the supplier-visible order number', async () => {
+    const { evidence, service } = evidenceSubmitHarness(orders);
+    const created = await service.submitLipaEvidence(kijani, {
+      orderId: 'WG-10126',
+      reference: 'TEST-CUST-LIPA-001',
+    });
+    expect(created.orderId).toBe('order-kijani');
+    expect(evidence[0].supplierId).toBe('s-kijani');
+  });
+
+  it('refuses evidence for another supplier order', async () => {
+    const { evidence, service } = evidenceSubmitHarness(orders);
+    await expect(
+      service.submitLipaEvidence(kijani, {
+        orderId: 'WG-20000',
+        reference: 'TEST-CUST-LIPA-002',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      service.submitLipaEvidence(kijani, {
+        orderId: 'order-other',
+        reference: 'TEST-CUST-LIPA-002',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(evidence).toHaveLength(0);
+  });
+
+  it('rejects an order number that does not exist', async () => {
+    const { evidence, service } = evidenceSubmitHarness(orders);
+    await expect(
+      service.submitLipaEvidence(kijani, {
+        orderId: 'WG-99999',
+        reference: 'TEST-CUST-LIPA-003',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(evidence).toHaveLength(0);
+  });
+
+  it('lists pending evidence for an admin and keeps rejected evidence in the list', async () => {
+    const rows = [
+      {
+        id: 'ev-pending',
+        status: 'SUBMITTED',
+        supplierId: 's-kijani',
+        supplier: { name: 'Kijani Tech' },
+        referenceRaw: 'TEST-CUST-LIPA-001',
+        reviewNote: null,
+        createdAt: new Date('2026-11-14T18:00:00.000Z'),
+        order: {
+          id: 'order-kijani',
+          displayId: 'WG-10126',
+          currency: 'USD',
+          items: [
+            { supplierId: 's-kijani', lineTotal: 48, status: OrderStatus.PROCESSING },
+            { supplierId: 's-other', lineTotal: 10, status: OrderStatus.PROCESSING },
+          ],
+        },
+      },
+      {
+        id: 'ev-rejected',
+        status: 'REJECTED',
+        supplierId: 's-kijani',
+        supplier: { name: 'Kijani Tech' },
+        referenceRaw: 'OLD-REF',
+        reviewNote: 'Not received',
+        createdAt: new Date('2026-11-13T18:00:00.000Z'),
+        order: {
+          id: 'order-old',
+          displayId: 'WG-10001',
+          currency: 'USD',
+          items: [{ supplierId: 's-kijani', lineTotal: 20, status: OrderStatus.PROCESSING }],
+        },
+      },
+    ];
+    const prisma = { customerPaymentEvidence: { findMany: async () => rows } };
+    const service = new CommissionLedgerService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
+    const listed = await service.listLipaEvidence(admin);
+    expect(listed.items.map((row) => row.status)).toEqual(['SUBMITTED', 'REJECTED']);
+    expect(listed.items[0]).toMatchObject({
+      orderNumber: 'WG-10126',
+      supplierName: 'Kijani Tech',
+      amount: 48,
+      currency: 'USD',
+      reference: 'TEST-CUST-LIPA-001',
+    });
+    expect(listed.items[1].reviewNote).toBe('Not received');
+  });
+
+  it('lists only this supplier evidence, including a rejection note', async () => {
+    const rows = [
+      {
+        id: 'ev-rejected',
+        status: 'REJECTED',
+        supplierId: 's-kijani',
+        supplier: { name: 'Kijani Tech' },
+        referenceRaw: 'TEST-CUST-LIPA-V2-002',
+        reviewNote: 'Test rejection, payment not received',
+        createdAt: new Date('2026-11-14T20:09:38.263Z'),
+        order: {
+          id: 'order-10127',
+          displayId: 'WG-10127',
+          currency: 'USD',
+          items: [{ supplierId: 's-kijani', lineTotal: 48, status: OrderStatus.PROCESSING }],
+        },
+      },
+      {
+        id: 'ev-other',
+        status: 'VERIFIED',
+        supplierId: 's-other',
+        supplier: { name: 'Other Shop' },
+        referenceRaw: 'OTHER-REF',
+        reviewNote: null,
+        createdAt: new Date('2026-11-14T21:00:00.000Z'),
+        order: {
+          id: 'order-other',
+          displayId: 'WG-20000',
+          currency: 'USD',
+          items: [{ supplierId: 's-other', lineTotal: 10, status: OrderStatus.PROCESSING }],
+        },
+      },
+    ];
+    const findMany = jest.fn(
+      async (args: { where?: { supplierId?: string } }) =>
+        rows.filter((row) => row.supplierId === args.where?.supplierId),
+    );
+    const service = new CommissionLedgerService(
+      { customerPaymentEvidence: { findMany } } as never,
+      {} as never,
+      {} as never,
+    );
+    const listed = await service.listSupplierLipaEvidence(kijani);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { supplierId: 's-kijani' },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      }),
+    );
+    expect(listed.items).toEqual([
+      expect.objectContaining({
+        orderNumber: 'WG-10127',
+        reference: 'TEST-CUST-LIPA-V2-002',
+        status: 'REJECTED',
+        reviewNote: 'Test rejection, payment not received',
+        submittedAt: '2026-11-14T20:09:38.263Z',
+      }),
+    ]);
+  });
+
+  it('refuses the supplier evidence list to admin and customer accounts', async () => {
+    const findMany = jest.fn();
+    const service = new CommissionLedgerService(
+      { customerPaymentEvidence: { findMany } } as never,
+      {} as never,
+      {} as never,
+    );
+    await expect(service.listSupplierLipaEvidence(admin)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.listSupplierLipaEvidence(customer)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(findMany).not.toHaveBeenCalled();
+    expect(
+      new Reflector().get(ROLES_KEY, CommissionsController.prototype.supplierLipaEvidence),
+    ).toEqual([UserRole.SUPPLIER]);
+  });
+
+  it('refuses the evidence list to supplier and customer accounts', async () => {
+    const findMany = jest.fn();
+    const service = new CommissionLedgerService(
+      { customerPaymentEvidence: { findMany } } as never,
+      {} as never,
+      {} as never,
+    );
+    await expect(service.listLipaEvidence(kijani)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.listLipaEvidence(customer)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(new Reflector().get(ROLES_KEY, CommissionsController.prototype.adminLipaEvidence)).toEqual([
+      UserRole.ADMIN,
+    ]);
+  });
+
+  it('verifies and rejects through the existing admin actions', async () => {
+    const ledger = {
+      reviewLipaEvidence: jest.fn(async (_user: AuthUser, id: string, body: { approve: boolean; reviewNote?: string }) => ({
+        evidence: {
+          id,
+          status: body.approve ? 'VERIFIED' : 'REJECTED',
+          reviewNote: body.reviewNote ?? null,
+        },
+        orderId: 'order-kijani',
+        recoveryRequired: false,
+      })),
+    };
+    const recognition = { run: jest.fn() };
+    const controller = new CommissionsController({} as never, ledger as never, recognition as never);
+    const verified = await controller.verifyLipaEvidence(admin, 'ev-pending');
+    const rejected = await controller.rejectLipaEvidence(admin, 'ev-other', {
+      reviewNote: 'Not received',
+    });
+    expect(verified.status).toBe('VERIFIED');
+    expect(rejected.status).toBe('REJECTED');
+    expect(rejected.reviewNote).toBe('Not received');
+    expect(recognition.run).not.toHaveBeenCalled();
+    expect(ledger.reviewLipaEvidence).toHaveBeenNthCalledWith(2, admin, 'ev-other', {
+      approve: false,
+      reviewNote: 'Not received',
+    });
   });
 });
 

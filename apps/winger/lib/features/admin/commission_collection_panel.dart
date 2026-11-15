@@ -18,6 +18,7 @@ class _AdminCommissionCollectionPanelState
   Map<String, dynamic>? _accounts;
   Map<String, dynamic>? _held;
   List<dynamic> _remittances = const [];
+  List<dynamic> _lipaEvidence = const [];
   String? _error;
   bool _busy = false;
   bool _started = false;
@@ -27,6 +28,7 @@ class _AdminCommissionCollectionPanelState
   final _bankAccountName = TextEditingController();
   final _bankAccount = TextEditingController();
   final _reason = TextEditingController();
+  final _evidenceNote = TextEditingController();
 
   @override
   void didChangeDependencies() {
@@ -44,6 +46,7 @@ class _AdminCommissionCollectionPanelState
     _bankAccountName.dispose();
     _bankAccount.dispose();
     _reason.dispose();
+    _evidenceNote.dispose();
     super.dispose();
   }
 
@@ -54,6 +57,7 @@ class _AdminCommissionCollectionPanelState
       final held = await api.fetchHeldFunds();
       final receiving = await api.fetchReceivingAccounts();
       final remittances = await api.fetchAdminRemittances();
+      final lipaEvidence = await api.fetchAdminLipaEvidence();
       if (!mounted) return;
       _lipa.text = '${receiving['lipaNumber'] ?? ''}';
       _network.text = '${receiving['lipaNetwork'] ?? ''}';
@@ -64,12 +68,100 @@ class _AdminCommissionCollectionPanelState
         _accounts = accounts;
         _held = held;
         _remittances = remittances;
+        _lipaEvidence = lipaEvidence;
         _error = null;
       });
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
     }
+  }
+
+  bool _isPendingEvidence(Map row) {
+    final status = row['status'];
+    return status == 'SUBMITTED' || status == 'UNDER_REVIEW';
+  }
+
+  List<dynamic> get _pendingEvidence =>
+      _lipaEvidence.where((row) => row is Map && _isPendingEvidence(row)).toList();
+
+  List<dynamic> get _evidenceHistory =>
+      _lipaEvidence.where((row) => row is Map && !_isPendingEvidence(row)).toList();
+
+  Widget _evidenceTile(BuildContext context, Map row, {required bool pending}) {
+    final s = WingerStrings.of(context);
+    final note = '${row['reviewNote'] ?? ''}'.trim();
+    return ListTile(
+      title: Text(
+        '${row['orderNumber']} · ${row['supplierName']} · ${row['status']}\n'
+        '${row['amount']} ${row['currency']} · ${row['reference']}',
+      ),
+      subtitle: Text(
+        [
+          '${row['submittedAt']}',
+          if (note.isNotEmpty) note,
+        ].join('\n'),
+      ),
+      isThreeLine: note.isNotEmpty,
+      trailing: pending
+          ? Wrap(
+              spacing: 8,
+              children: [
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => _run(() async {
+                            final api = context.read<ApiClient>();
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: Text(s.t('verifyPayment')),
+                                content: Text(
+                                  '${row['orderNumber']} · ${row['supplierName']}\n'
+                                  '${row['amount']} ${row['currency']} · ${row['reference']}',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context, false),
+                                    child: Text(s.t('cancel')),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context, true),
+                                    child: Text(s.t('verifyPayment')),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed != true || !context.mounted) return;
+                            await api.verifyCustomerLipaEvidence('${row['id']}');
+                          }),
+                  child: Text(s.t('verifyPayment')),
+                ),
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () {
+                          final note = _evidenceNote.text.trim();
+                          if (note.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(s.t('lipaEvidenceNoteRequired'))),
+                            );
+                            return;
+                          }
+                          _run(() async {
+                            await context.read<ApiClient>().rejectCustomerLipaEvidence(
+                                  '${row['id']}',
+                                  note,
+                                );
+                            if (mounted) _evidenceNote.clear();
+                          });
+                        },
+                  child: Text(s.t('reject')),
+                ),
+              ],
+            )
+          : null,
+    );
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -133,6 +225,31 @@ class _AdminCommissionCollectionPanelState
                 '${supplier['supplierName']}: due ${supplier['netAmountDue']} · outstanding ${supplier['grossCommissionOutstanding']} · collected ${supplier['cashCommissionCollected']} · unapplied cash ${supplier['unappliedVerifiedCash']} · credit ${supplier['unappliedRefundCredit']}',
               ),
             ),
+        const SizedBox(height: 8),
+        Text(s.t('lipaEvidenceTitle'),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        const SizedBox(height: 4),
+        Text(s.t('lipaEvidenceHint'), style: TextStyle(color: WingerColors.muted)),
+        const SizedBox(height: 8),
+        Text(s.t('lipaEvidencePending'),
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+        if (_pendingEvidence.isEmpty)
+          Text(s.t('lipaEvidenceEmpty'), style: TextStyle(color: WingerColors.muted)),
+        for (final row in _pendingEvidence)
+          if (row is Map) _evidenceTile(context, row, pending: true),
+        TextField(
+          key: const ValueKey('lipa-evidence-reject-note'),
+          controller: _evidenceNote,
+          decoration: InputDecoration(labelText: s.t('lipaEvidenceRejectNote')),
+        ),
+        if (_evidenceHistory.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(s.t('lipaEvidenceHistory'),
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+          for (final row in _evidenceHistory)
+            if (row is Map) _evidenceTile(context, row, pending: false),
+        ],
+        const SizedBox(height: 16),
         TextField(
           controller: _reason,
           decoration: InputDecoration(labelText: s.t('reverseRemittance')),

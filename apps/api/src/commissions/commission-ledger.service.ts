@@ -677,10 +677,22 @@ export class CommissionLedgerService {
     if (!referenceNormalized) {
       throw new BadRequestException('Payment reference is required');
     }
-    const order = await this.prisma.order.findUnique({
-      where: { id: body.orderId },
-      include: { items: { where: { supplierId } } },
-    });
+    const orderKey = (body.orderId ?? '').trim();
+    const orderInclude = { items: { where: { supplierId } } };
+    const byId = orderKey
+      ? await this.prisma.order.findUnique({
+          where: { id: orderKey },
+          include: orderInclude,
+        })
+      : null;
+    const order =
+      byId ??
+      (orderKey
+        ? await this.prisma.order.findUnique({
+            where: { displayId: orderKey },
+            include: orderInclude,
+          })
+        : null);
     if (!order || order.items.length === 0) {
       throw new NotFoundException('Order not found for this supplier');
     }
@@ -845,6 +857,79 @@ export class CommissionLedgerService {
       return { evidence: updated, orderId: order.id, recoveryRequired };
     });
     return result;
+  }
+
+  async listSupplierLipaEvidence(user: AuthUser) {
+    const supplierId = this.requireSupplier(user);
+    const rows = await this.prisma.customerPaymentEvidence.findMany({
+      where: { supplierId },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: this.lipaEvidenceListInclude,
+    });
+    return { items: rows.map((row) => this.toLipaEvidenceListItem(row)) };
+  }
+
+  async listLipaEvidence(user: AuthUser) {
+    this.requireAdmin(user);
+    const rows = await this.prisma.customerPaymentEvidence.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: this.lipaEvidenceListInclude,
+    });
+    return { items: rows.map((row) => this.toLipaEvidenceListItem(row)) };
+  }
+
+  private readonly lipaEvidenceListInclude = {
+    supplier: { select: { name: true } },
+    order: {
+      select: {
+        id: true,
+        displayId: true,
+        currency: true,
+        items: { select: { supplierId: true, lineTotal: true, status: true } },
+      },
+    },
+  };
+
+  private toLipaEvidenceListItem(row: {
+    id: string;
+    status: string;
+    supplierId: string;
+    referenceRaw: string;
+    reviewNote: string | null;
+    createdAt: Date;
+    supplier: { name: string };
+    order: {
+      id: string;
+      displayId: string;
+      currency: string;
+      items: { supplierId: string; lineTotal: unknown; status: string }[];
+    };
+  }) {
+    const amount = roundMoney(
+      row.order.items
+        .filter(
+          (item) =>
+            item.supplierId === row.supplierId &&
+            item.status !== OrderStatus.CANCELLED &&
+            item.status !== OrderStatus.RETURNED,
+        )
+        .reduce((sum, item) => sum + Number(item.lineTotal), 0),
+    );
+    return {
+      id: row.id,
+      status: row.status,
+      supplierId: row.supplierId,
+      supplierName: row.supplier.name,
+      orderId: row.order.id,
+      orderNumber: row.order.displayId,
+      amount,
+      currency: row.order.currency,
+      reference: row.referenceRaw,
+      submittedAt: row.createdAt.toISOString(),
+      reviewNote: row.reviewNote,
+    };
   }
 
   async restoreAfterClawback(

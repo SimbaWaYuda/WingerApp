@@ -1720,6 +1720,11 @@ class ApiClient {
     });
   }
 
+  Future<List<dynamic>> fetchSupplierLipaEvidence() async {
+    final body = await _commissionJson('GET', '/commissions/supplier/lipa-evidence');
+    return (body['items'] as List?) ?? const [];
+  }
+
   Future<void> submitLipaEvidence({
     required String orderId,
     required String reference,
@@ -1734,6 +1739,21 @@ class ApiClient {
 
   Future<Map<String, dynamic>> fetchAdminCommissionAccounts() {
     return _commissionJson('GET', '/commissions/admin/accounts');
+  }
+
+  Future<List<dynamic>> fetchAdminLipaEvidence() async {
+    final body = await _commissionJson('GET', '/commissions/admin/lipa-evidence');
+    return (body['items'] as List?) ?? const [];
+  }
+
+  Future<void> verifyCustomerLipaEvidence(String id) async {
+    await _commissionJson('POST', '/commissions/admin/lipa-evidence/$id/verify', {});
+  }
+
+  Future<void> rejectCustomerLipaEvidence(String id, String reviewNote) async {
+    await _commissionJson('POST', '/commissions/admin/lipa-evidence/$id/reject', {
+      'reviewNote': reviewNote,
+    });
   }
 
   Future<List<dynamic>> fetchAdminRemittances() async {

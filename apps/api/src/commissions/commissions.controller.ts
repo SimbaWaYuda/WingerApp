@@ -147,6 +147,12 @@ export class CommissionsController {
     });
   }
 
+  @Get('supplier/lipa-evidence')
+  @Roles(UserRole.SUPPLIER)
+  supplierLipaEvidence(@CurrentUser() user: AuthUser) {
+    return this.ledger.listSupplierLipaEvidence(user);
+  }
+
   @Post('supplier/lipa-evidence')
   @Roles(UserRole.SUPPLIER)
   submitLipaEvidence(@CurrentUser() user: AuthUser, @Body() body: Record<string, unknown>) {
@@ -249,6 +255,12 @@ export class CommissionsController {
       confirmExchange: body.confirmExchange === true,
       fxRate: body.fxRate == null ? undefined : Number(body.fxRate),
     });
+  }
+
+  @Get('admin/lipa-evidence')
+  @Roles(UserRole.ADMIN)
+  adminLipaEvidence(@CurrentUser() user: AuthUser) {
+    return this.ledger.listLipaEvidence(user);
   }
 
   @Post('admin/lipa-evidence/:id/verify')

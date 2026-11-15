@@ -18,6 +18,7 @@ class _SupplierCommissionAccountPanelState
   Map<String, dynamic>? _account;
   Map<String, dynamic>? _accounts;
   List<dynamic> _remittances = const [];
+  List<dynamic> _lipaEvidence = const [];
   String? _error;
   bool _busy = false;
   bool _started = false;
@@ -52,11 +53,13 @@ class _SupplierCommissionAccountPanelState
       final account = await api.fetchSupplierCommissionAccount();
       final accounts = await api.fetchSupplierReceivingAccounts();
       final remittances = await api.fetchSupplierRemittances();
+      final lipaEvidence = await api.fetchSupplierLipaEvidence();
       if (!mounted) return;
       setState(() {
         _account = account;
         _accounts = accounts;
         _remittances = remittances;
+        _lipaEvidence = lipaEvidence;
         _error = null;
       });
     } catch (error) {
@@ -93,11 +96,24 @@ class _SupplierCommissionAccountPanelState
   }
 
   Future<void> _submitEvidence() async {
+    final orderId = _orderId.text.trim();
+    final reference = _evidenceRef.text.trim();
+    final s = WingerStrings.of(context);
+    if (orderId.isEmpty || reference.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            orderId.isEmpty ? s.t('orderIdRequired') : s.t('paymentReferenceRequired'),
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _busy = true);
     try {
       await context.read<ApiClient>().submitLipaEvidence(
-            orderId: _orderId.text.trim(),
-            reference: _evidenceRef.text.trim(),
+            orderId: orderId,
+            reference: reference,
           );
       _evidenceRef.clear();
       await _load();
@@ -172,10 +188,15 @@ class _SupplierCommissionAccountPanelState
         const SizedBox(height: 16),
         Text(s.t('lipaEvidenceTitle'),
             style: const TextStyle(fontWeight: FontWeight.w700)),
-        TextField(controller: _orderId, decoration: const InputDecoration(labelText: 'Order id')),
         TextField(
+          key: const ValueKey('lipa-evidence-order'),
+          controller: _orderId,
+          decoration: InputDecoration(labelText: s.t('lipaEvidenceOrderId')),
+        ),
+        TextField(
+          key: const ValueKey('lipa-evidence-reference'),
           controller: _evidenceRef,
-          decoration: InputDecoration(labelText: s.t('paymentReference')),
+          decoration: InputDecoration(labelText: s.t('lipaEvidenceReference')),
         ),
         Align(
           alignment: Alignment.centerLeft,
@@ -184,6 +205,13 @@ class _SupplierCommissionAccountPanelState
             child: Text(s.t('lipaEvidenceTitle')),
           ),
         ),
+        const SizedBox(height: 12),
+        Text(s.t('lipaEvidenceHistory'),
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+        if (_lipaEvidence.isEmpty)
+          Text(s.t('lipaEvidenceEmpty'), style: TextStyle(color: WingerColors.muted)),
+        for (final row in _lipaEvidence)
+          if (row is Map) _evidenceHistoryTile(s, row),
         const SizedBox(height: 12),
         for (final row in _remittances)
           if (row is Map)
@@ -196,6 +224,31 @@ class _SupplierCommissionAccountPanelState
             ),
         const SizedBox(height: 20),
       ],
+    );
+  }
+
+  String _evidenceStatusLabel(WingerStrings s, String status) {
+    return switch (status) {
+      'SUBMITTED' => s.t('evidenceStatusSubmitted'),
+      'UNDER_REVIEW' => s.t('evidenceStatusUnderReview'),
+      'VERIFIED' => s.t('evidenceStatusVerified'),
+      'REJECTED' => s.t('evidenceStatusRejected'),
+      _ => status,
+    };
+  }
+
+  Widget _evidenceHistoryTile(WingerStrings s, Map row) {
+    final note = '${row['reviewNote'] ?? ''}'.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        [
+          '${row['orderNumber']} · ${_evidenceStatusLabel(s, '${row['status']}')}',
+          '${row['reference']}',
+          '${row['submittedAt']}',
+          if (note.isNotEmpty) '${s.t('lipaEvidenceRejectNote')}: $note',
+        ].join('\n'),
+      ),
     );
   }
 
