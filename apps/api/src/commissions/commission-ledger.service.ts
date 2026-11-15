@@ -461,6 +461,13 @@ export class CommissionLedgerService {
       throw new BadRequestException('A reason is required');
     }
     return this.prisma.$transaction(async (tx) => {
+      // Supplier mutex before remittance — same order as sweep/verify.
+      const peek = await tx.commissionRemittance.findUnique({
+        where: { id: remittanceId },
+        select: { supplierId: true },
+      });
+      if (!peek) throw new NotFoundException('Remittance not found');
+      await this.lockSupplierCredits(tx, peek.supplierId);
       await this.lockRemittance(tx, remittanceId);
       const remittance = await tx.commissionRemittance.findUnique({
         where: { id: remittanceId },
@@ -943,7 +950,7 @@ export class CommissionLedgerService {
     });
     if (!peek) return { restored: false };
 
-    // Caller must already hold OrderItemCommission FOR UPDATE (clawbackForOrderItem).
+    // Caller must already hold OrderItemCommission FOR NO KEY UPDATE (clawbackForOrderItem).
     // Credits after snapshot — never Credits → Shipment/Hold.
     await this.lockSupplierCredits(tx, peek.orderItem.supplierId);
 
@@ -1101,8 +1108,26 @@ export class CommissionLedgerService {
     });
     if (!reserved) return { legacy: true, applied: false };
     if (reserved.appliedAt) return { legacy: false, applied: false };
+
+    // OIC first (FOR NO KEY UPDATE) so sweep FK KEY SHARE can proceed, then supplier credits.
+    const lockedOic = await tx.$queryRaw<{ id: string; supplierId: string }[]>`
+      SELECT c.id, oi."supplierId" AS "supplierId"
+      FROM "OrderItemCommission" c
+      INNER JOIN "OrderItem" oi ON oi.id = c."orderItemId"
+      WHERE c.id = ${reserved.orderItemCommissionId}
+      FOR NO KEY UPDATE OF c
+    `;
+    if (!lockedOic.length) return { legacy: false, applied: false };
+    await this.lockSupplierCredits(tx, lockedOic[0].supplierId);
+
+    const current = await tx.commissionClawback.findUnique({
+      where: { id: reserved.id },
+    });
+    if (!current || current.appliedAt) return { legacy: false, applied: false };
+
+    // Fresh snapshot after both locks — never plan from the pre-lock read.
     const snapshot = await tx.orderItemCommission.findUnique({
-      where: { id: reserved.orderItemCommissionId },
+      where: { id: current.orderItemCommissionId },
       include: {
         orderItem: true,
         clawbacks: true,
@@ -1113,11 +1138,6 @@ export class CommissionLedgerService {
       },
     });
     if (!snapshot) return { legacy: false, applied: false };
-    await this.lockSupplierCredits(tx, snapshot.orderItem.supplierId);
-    const current = await tx.commissionClawback.findUnique({
-      where: { id: reserved.id },
-    });
-    if (!current || current.appliedAt) return { legacy: false, applied: false };
     const otherApplied = roundMoney(
       snapshot.clawbacks
         .filter((row) => row.id !== current.id && row.appliedAt)
@@ -1965,10 +1985,20 @@ export class CommissionLedgerService {
   }
 
   /**
-   * Credits first, then their sources, always in id order.
+   * Supplier ledger mutex, then credit rows, then their sources (id order).
    * Remittance locks happen after this so a sweep and a verification cannot deadlock.
+   *
+   * Advisory key: hashtextextended('commission-ledger:' || supplierId, 0) — 64-bit
+   * transaction-scoped lock. Collisions across distinct supplier ids are negligible;
+   * false sharing would only serialize unrelated suppliers, never skip locking.
+   * Required when the supplier has zero CommissionCredit rows (row locks alone are empty).
    */
   private async lockSupplierCredits(tx: Prisma.TransactionClient, supplierId: string) {
+    const advisoryKey = `commission-ledger:${supplierId}`;
+    // $executeRaw: pg_advisory_xact_lock returns void (Prisma $queryRaw cannot deserialize it).
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtextextended(${advisoryKey}, 0))
+    `;
     await tx.$queryRaw`
       SELECT id FROM "CommissionCredit"
       WHERE "supplierId" = ${supplierId}

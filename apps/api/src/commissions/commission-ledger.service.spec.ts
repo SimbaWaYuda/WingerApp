@@ -72,11 +72,18 @@ describe('applyReturnClawback', () => {
       { record: jest.fn().mockResolvedValue({}) } as never,
       {} as never,
     );
-    const result = await service.applyReturnClawback(fakeTx(state) as never, {
+    const tx = fakeTx(state);
+    const result = await service.applyReturnClawback(tx as never, {
       returnRequestId: 'ret-half',
       actor: admin(),
     });
     expect(result).toEqual({ legacy: false, applied: true });
+    expect(lockSequence(tx)).toEqual([
+      'oic-nku',
+      'supplier-advisory',
+      'credit-rows',
+      'credit-sources',
+    ]);
     expect(state.allocationReversals).toEqual([
       expect.objectContaining({ allocationId: 'alloc-6', amountUsd: '1.00' }),
     ]);
@@ -106,10 +113,17 @@ describe('applyReturnClawback', () => {
       { record: jest.fn().mockResolvedValue({}) } as never,
       {} as never,
     );
-    await service.applyReturnClawback(fakeTx(state) as never, {
+    const tx = fakeTx(state);
+    await service.applyReturnClawback(tx as never, {
       returnRequestId: 'ret-half',
       actor: admin(),
     });
+    expect(lockSequence(tx)).toEqual([
+      'oic-nku',
+      'supplier-advisory',
+      'credit-rows',
+      'credit-sources',
+    ]);
     expect(state.credits).toEqual([]);
     expect(state.allocationReversals).toEqual([]);
     expect(state.applicationReversals).toEqual([]);
@@ -123,12 +137,58 @@ describe('applyReturnClawback', () => {
       { record: jest.fn() } as never,
       {} as never,
     );
-    const result = await service.applyReturnClawback(fakeTx(state) as never, {
+    const tx = fakeTx(state);
+    const result = await service.applyReturnClawback(tx as never, {
       returnRequestId: 'ret-half',
       actor: admin(),
     });
     expect(result).toEqual({ legacy: false, applied: false });
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
     expect(state.credits).toEqual([]);
+  });
+
+  it('reads the OIC snapshot only after acquiring locks', async () => {
+    const state = halfSettledState();
+    const service = new CommissionLedgerService(
+      {} as never,
+      { record: jest.fn().mockResolvedValue({}) } as never,
+      {} as never,
+    );
+    const tx = fakeTx(state);
+    const order: string[] = [];
+    tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      order.push(classifyLockSql(strings));
+      if (classifyLockSql(strings) === 'oic-nku') {
+        return [
+          {
+            id: state.snapshot.id,
+            supplierId: state.snapshot.orderItem.supplierId,
+          },
+        ];
+      }
+      return [];
+    });
+    tx.$executeRaw.mockImplementation((...args: unknown[]) => {
+      order.push(classifyLockSql(args[0] as TemplateStringsArray));
+      return Promise.resolve(0);
+    });
+    tx.orderItemCommission.findUnique = jest.fn(async () => {
+      order.push('snapshot-read');
+      return state.snapshot;
+    });
+    await service.applyReturnClawback(tx as never, {
+      returnRequestId: 'ret-half',
+      actor: admin(),
+    });
+    expect(order).toEqual([
+      'oic-nku',
+      'supplier-advisory',
+      'credit-rows',
+      'credit-sources',
+      'snapshot-read',
+    ]);
+    expect(tx.orderItemCommission.findUnique).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -182,9 +242,58 @@ function halfSettledState() {
   };
 }
 
+function classifyLockSql(strings: TemplateStringsArray | string): string {
+  const sql = Array.isArray(strings) ? strings.join('?') : String(strings);
+  if (sql.includes('OrderItemCommission') && sql.includes('FOR NO KEY UPDATE')) {
+    return 'oic-nku';
+  }
+  if (sql.includes('pg_advisory_xact_lock') && sql.includes('hashtextextended')) {
+    return 'supplier-advisory';
+  }
+  if (sql.includes('CommissionCreditSource')) {
+    return 'credit-sources';
+  }
+  if (sql.includes('CommissionCredit') && sql.includes('FOR UPDATE')) {
+    return 'credit-rows';
+  }
+  return 'other';
+}
+
+function lockSequence(tx: {
+  $queryRaw: jest.Mock;
+  $executeRaw: jest.Mock;
+}) {
+  const events: { order: number; kind: string }[] = [];
+  tx.$queryRaw.mock.invocationCallOrder.forEach((order, index) => {
+    events.push({
+      order,
+      kind: classifyLockSql(tx.$queryRaw.mock.calls[index][0]),
+    });
+  });
+  tx.$executeRaw.mock.invocationCallOrder.forEach((order, index) => {
+    events.push({
+      order,
+      kind: classifyLockSql(tx.$executeRaw.mock.calls[index][0]),
+    });
+  });
+  return events.sort((a, b) => a.order - b.order).map((row) => row.kind);
+}
+
 function fakeTx(state: ReturnType<typeof halfSettledState>) {
   return {
-    $queryRaw: jest.fn().mockResolvedValue([]),
+    $executeRaw: jest.fn(async () => 0),
+    $queryRaw: jest.fn(async (strings: TemplateStringsArray) => {
+      const kind = classifyLockSql(strings);
+      if (kind === 'oic-nku') {
+        return [
+          {
+            id: state.snapshot.id,
+            supplierId: state.snapshot.orderItem.supplierId,
+          },
+        ];
+      }
+      return [];
+    }),
     commissionClawback: {
       findUnique: jest.fn(async () => state.clawback),
       update: jest.fn(async ({ data }: { data: { appliedAt: Date } }) => {
