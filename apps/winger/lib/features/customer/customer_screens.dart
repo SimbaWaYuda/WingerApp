@@ -5086,6 +5086,46 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
+  Future<void> _cancelRemaining(CustomerOrder order) async {
+    final s = WingerStrings.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.t('cancelRemaining')),
+        content: Text(s.t('cancelRemainingConfirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.t('back')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.t('cancelRemaining')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _cancelling = true);
+    try {
+      await context.read<ApiClient>().cancelRemainingItems(order.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.t('remainingItemsCancelled'))));
+      setState(() => _future = _load());
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _cancelling = false);
+    }
+  }
+
   Future<void> _cancel(CustomerOrder order) async {
     final s = WingerStrings.of(context);
     final confirmed = await showDialog<bool>(
@@ -5417,6 +5457,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 ),
             ],
             const SizedBox(height: 16),
+            if (order.canCancelRemaining)
+              OutlinedButton(
+                onPressed: _cancelling ? null : () => _cancelRemaining(order),
+                child: Text(s.t('cancelRemaining')),
+              ),
             if (order.canCancel)
               OutlinedButton(
                 onPressed: _cancelling ? null : () => _cancel(order),

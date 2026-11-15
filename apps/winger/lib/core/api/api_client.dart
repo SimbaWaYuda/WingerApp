@@ -887,6 +887,27 @@ class ApiClient {
     return json;
   }
 
+  Future<CustomerOrder> cancelRemainingItems(String orderId) async {
+    final response = await http
+        .post(
+          _uri('/orders/$orderId/cancel-remaining'),
+          headers: session.authHeaders,
+          body: jsonEncode({}),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final body = _tryJson(response.body);
+      throw Exception(
+        body?['message']?.toString() ?? 'Could not cancel the remaining items',
+      );
+    }
+    return customerOrderFromApi(
+      _withResolvedOrderImages(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      ),
+    );
+  }
+
   Future<CustomerOrder> cancelOrder(String orderId) async {
     final response = await http
         .post(

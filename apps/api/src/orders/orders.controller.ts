@@ -116,6 +116,12 @@ export class OrdersController {
     return this.ordersService.cancel(id, user);
   }
 
+  @Post(':id/cancel-remaining')
+  @Roles(UserRole.CUSTOMER)
+  cancelRemaining(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ordersService.cancelRemaining(id, user);
+  }
+
   @Post(':id/returns')
   @Roles(UserRole.CUSTOMER)
   createReturn(

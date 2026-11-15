@@ -733,6 +733,20 @@ class CustomerOrder {
     );
   }
 
+  bool get canCancelRemaining {
+    final statuses = itemRows.map((item) => item.status);
+    final fulfilled = statuses.any(
+      (itemStatus) =>
+          itemStatus == OrderStatus.shipped || itemStatus == OrderStatus.delivered,
+    );
+    final waiting = statuses.any(
+      (itemStatus) =>
+          itemStatus == OrderStatus.processing ||
+          itemStatus == OrderStatus.readyForPickup,
+    );
+    return fulfilled && waiting;
+  }
+
   bool get canRequestReturn => returnableItems.isNotEmpty;
 
   bool get isCodPending =>

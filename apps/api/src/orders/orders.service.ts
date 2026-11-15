@@ -1910,8 +1910,10 @@ export class OrdersService {
     reason: 'return' | 'cancel' | 'line_cancel';
     returnRequestId?: string;
     requirePaymentIntent?: boolean;
+    db?: Prisma.TransactionClient;
   }): Promise<number> {
-    const shipments = await this.prisma.orderShipment.findMany({
+    const db = params.db ?? this.prisma;
+    const shipments = await db.orderShipment.findMany({
       where: { orderId: params.orderId },
     });
     const row = shipments.find((shipment) => shipment.supplierId === params.supplierId);
@@ -1951,7 +1953,7 @@ export class OrdersService {
       });
     }
     if (row && amount > 0) {
-      await this.prisma.orderShipment.update({
+      await db.orderShipment.update({
         where: { id: row.id },
         data: {
           refundedAmount: new Prisma.Decimal(
@@ -2314,6 +2316,148 @@ export class OrdersService {
         : paidCard
           ? 'Order cancelled, Stripe refunded, and stock restored'
           : 'Order cancelled and stock restored',
+    );
+  }
+
+  /**
+   * Customer cancellation of lines that are still processing or ready for pickup
+   * after another supplier has shipped or delivered. Entire-order cancel stays separate.
+   */
+  async cancelRemaining(id: string, user: AuthUser) {
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customers can cancel their orders');
+    }
+    const order = await this.prisma.order.findFirst({
+      where: {
+        OR: [{ id }, { displayId: id }],
+        customerId: user.sub,
+      },
+      include: orderWithItems,
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    const fulfilled = order.items.some(
+      (item) =>
+        item.status === OrderStatus.SHIPPED || item.status === OrderStatus.DELIVERED,
+    );
+    if (!fulfilled) {
+      throw new BadRequestException(
+        'Cancel the whole order while every item is still unshipped',
+      );
+    }
+    const preview = order.items.some(
+      (item) =>
+        item.status === OrderStatus.PROCESSING ||
+        item.status === OrderStatus.READY_FOR_PICKUP,
+    );
+    if (!preview) {
+      return this.toResponse(order, 'No remaining items to cancel');
+    }
+
+    let changed = false;
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`
+          SELECT id FROM "Order" WHERE id = ${order.id} FOR UPDATE
+        `;
+        const items = await tx.orderItem.findMany({ where: { orderId: order.id } });
+        const stillFulfilled = items.some(
+          (item) =>
+            item.status === OrderStatus.SHIPPED || item.status === OrderStatus.DELIVERED,
+        );
+        const eligible = items
+          .filter(
+            (item) =>
+              item.status === OrderStatus.PROCESSING ||
+              item.status === OrderStatus.READY_FOR_PICKUP,
+          )
+          .sort((a, b) => a.id.localeCompare(b.id));
+        if (!stillFulfilled || eligible.length === 0) return;
+        const eligibleIds = new Set(eligible.map((item) => item.id));
+        const lastBySupplier = new Map<string, string>();
+        for (const item of eligible) lastBySupplier.set(item.supplierId, item.id);
+        const paidCard =
+          (order.paymentMode === 'test' || order.paymentMode === 'live') &&
+          order.paymentStatus === PaymentStatus.PAID &&
+          !!order.stripePaymentIntentId;
+        for (const item of eligible) {
+          const supplierStillLive = items.some(
+            (row) =>
+              row.supplierId === item.supplierId &&
+              !eligibleIds.has(row.id) &&
+              isLiveOrderLine(row.status),
+          );
+          const includeDelivery =
+            lastBySupplier.get(item.supplierId) === item.id && !supplierStillLive;
+          if (paidCard) {
+            await this.payouts.reverseIfTransferred(item.id);
+            await this.refundSupplierBucket({
+              orderId: order.id,
+              paymentMode: order.paymentMode,
+              stripePaymentIntentId: order.stripePaymentIntentId,
+              paymentAmount: Number(order.paymentAmount ?? order.total),
+              subtotal: Number(order.subtotal),
+              supplierId: item.supplierId,
+              returnedMerchandise: Number(item.lineTotal),
+              includeDelivery,
+              idempotencyKey: `winger-line-cancel-${item.id}`,
+              reason: 'line_cancel',
+              db: tx,
+            });
+          }
+          await tx.orderItem.update({
+            where: { id: item.id },
+            data: { status: OrderStatus.CANCELLED },
+          });
+          await tx.courierBooking.updateMany({
+            where: { orderItemId: item.id, status: 'booked' },
+            data: { status: 'cancelled' },
+          });
+          await this.restoreCancelledLineStock(tx, {
+            orderId: order.id,
+            productId: item.productId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+            userId: user.sub,
+            orderItemId: item.id,
+          });
+          await this.commissions.clawbackForOrderItem({
+            orderItemId: item.id,
+            actor: user,
+            tx,
+          });
+          if (!paidCard) {
+            await this.payouts.reverseIfTransferred(item.id);
+          }
+          changed = true;
+        }
+        const latest = await tx.orderItem.findMany({
+          where: { orderId: order.id },
+          select: { status: true },
+        });
+        const allDone = latest.every(
+          (row) =>
+            row.status === OrderStatus.CANCELLED || row.status === OrderStatus.RETURNED,
+        );
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: rollupStatus(latest.map((row) => row.status)),
+            ...(allDone && order.paymentStatus === PaymentStatus.PAID
+              ? { paymentStatus: PaymentStatus.REFUNDED }
+              : {}),
+          },
+        });
+      },
+      { timeout: 20_000 },
+    );
+
+    const updated = await this.prisma.order.findUnique({
+      where: { id: order.id },
+      include: orderWithItems,
+    });
+    return this.toResponse(
+      updated!,
+      changed ? 'Remaining items cancelled' : 'No remaining items to cancel',
     );
   }
 
@@ -3199,6 +3343,73 @@ export class OrdersService {
         supplierId: product.supplierId,
         delta: params.quantity,
         reason: 'RETURN_APPROVED',
+        eventId,
+        userId: params.userId,
+        quantityAfter: next,
+      },
+    });
+  }
+
+  /** One stock event per cancelled line. A retry finds it and does not add the units again. */
+  private async restoreCancelledLineStock(
+    tx: Prisma.TransactionClient,
+    params: {
+      orderId: string;
+      orderItemId: string;
+      productId: string;
+      variantId: string | null;
+      quantity: number;
+      userId: string;
+    },
+  ) {
+    const eventId = `line-cancel-restore-${params.orderItemId}`;
+    const already = await tx.inventoryLedger.findUnique({ where: { eventId } });
+    if (already) return;
+    const product = await tx.product.findUnique({ where: { id: params.productId } });
+    if (!product) return;
+    if (params.variantId) {
+      const variant = await tx.productVariant.findUnique({
+        where: { id: params.variantId },
+      });
+      if (!variant) return;
+      const nextVariant = variant.stock + params.quantity;
+      await tx.productVariant.update({
+        where: { id: variant.id },
+        data: { stock: nextVariant, stockStatus: stockStatusFor(nextVariant) },
+      });
+      const siblings = await tx.productVariant.findMany({
+        where: { productId: product.id },
+      });
+      const total = aggregateVariantStock(siblings);
+      await tx.product.update({
+        where: { id: product.id },
+        data: { stock: total, stockStatus: stockStatusFor(total) },
+      });
+      await tx.inventoryLedger.create({
+        data: {
+          productId: product.id,
+          variantId: variant.id,
+          supplierId: product.supplierId,
+          delta: params.quantity,
+          reason: 'LINE_CANCELLED',
+          eventId,
+          userId: params.userId,
+          quantityAfter: nextVariant,
+        },
+      });
+      return;
+    }
+    const next = product.stock + params.quantity;
+    await tx.product.update({
+      where: { id: product.id },
+      data: { stock: next, stockStatus: stockStatusFor(next) },
+    });
+    await tx.inventoryLedger.create({
+      data: {
+        productId: product.id,
+        supplierId: product.supplierId,
+        delta: params.quantity,
+        reason: 'LINE_CANCELLED',
         eventId,
         userId: params.userId,
         quantityAfter: next,

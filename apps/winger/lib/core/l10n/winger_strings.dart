@@ -106,6 +106,10 @@ class WingerStrings {
           'Cancel this order? Stock will be restored if nothing has shipped yet.',
       'cancelOrderConfirmCod':
           'Cancel this unpaid pay-on-delivery order? Nothing has been charged. Stock will be restored.',
+      'cancelRemaining': 'Cancel remaining items',
+      'cancelRemainingConfirm':
+          'Cancel items that have not shipped? Shipped and delivered items stay. You are refunded only for the cancelled items.',
+      'remainingItemsCancelled': 'Remaining items cancelled',
       'dueOnDelivery': 'Due on delivery',
       'codPendingBanner':
           'Pay on delivery — pay {amount} when your order arrives.',
@@ -815,6 +819,10 @@ class WingerStrings {
           '¿Cancelar este pedido? Se restaurará el stock si aún no se ha enviado.',
       'cancelOrderConfirmCod':
           '¿Cancelar este pedido contra entrega sin pagar? No se ha cobrado. Se restaurará el stock.',
+      'cancelRemaining': 'Cancelar artículos restantes',
+      'cancelRemainingConfirm':
+          '¿Cancelar los artículos que no se han enviado? Los enviados y entregados se quedan. El reembolso es solo por los artículos cancelados.',
+      'remainingItemsCancelled': 'Artículos restantes cancelados',
       'dueOnDelivery': 'A pagar al entregar',
       'codPendingBanner':
           'Pagar al entregar — paga {amount} cuando llegue el pedido.',
@@ -1527,6 +1535,10 @@ class WingerStrings {
           'Ghairi oda hii? Stock itarejeshwa ikiwa bado haijasafirishwa.',
       'cancelOrderConfirmCod':
           'Ghairi oda hii ya kulipa unapopokea ambayo bado haijalipwa? Hakuna malipo yaliyokusanywa. Stock itarejeshwa.',
+      'cancelRemaining': 'Ghairi vitu vilivyobaki',
+      'cancelRemainingConfirm':
+          'Ghairi vitu ambavyo havijasafirishwa? Vilivyosafirishwa na kuwasilishwa vinabaki. Rudisho ni kwa vitu vilivyoghairiwa tu.',
+      'remainingItemsCancelled': 'Vitu vilivyobaki vimeghairiwa',
       'dueOnDelivery': 'Yanayolipwa unapopokea',
       'codPendingBanner':
           'Lipa unapopokea — lipa {amount} oda yako itakapofika.',
