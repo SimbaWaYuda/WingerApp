@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -1280,12 +1279,10 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
     );
     if (picked.isEmpty || !mounted) return;
     final file = picked.first;
-    final path = file.path;
-    if (path == null || path.isEmpty) return;
 
     late final ParsedProductCsv parsed;
     try {
-      final bytes = await File(path).readAsBytes();
+      final bytes = await file.readAsBytes();
       if (bytes.isEmpty) {
         throw const FormatException('Could not read CSV file');
       }
