@@ -142,6 +142,9 @@ describe('payment and commission reliability', () => {
       refundAttempt: {
         findFirst: jest.fn().mockResolvedValue(null),
       },
+      commissionClawback: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
       product: {
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
@@ -153,6 +156,7 @@ describe('payment and commission reliability', () => {
         create: jest.fn(),
       },
       $executeRaw: jest.fn().mockResolvedValue(1),
+      $queryRaw: jest.fn().mockResolvedValue([]),
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     };
     // In-memory hold rows for S2.3 LEGACY RETURN path.
@@ -339,7 +343,10 @@ describe('payment and commission reliability', () => {
     commissions = {
       createSnapshotsForOrder: jest.fn().mockResolvedValue({ created: 1, skipped: 0 }),
       advanceRecognitionForItem: jest.fn().mockResolvedValue(null),
-      clawbackForOrderItem: jest.fn().mockResolvedValue(null),
+      clawbackForOrderItem: jest.fn().mockResolvedValue({
+        clawedBack: true,
+        reason: 'ok',
+      }),
     };
     stripe = {
       chargeOrder: jest.fn(),
@@ -368,7 +375,11 @@ describe('payment and commission reliability', () => {
       applyReturnClawback: jest.fn().mockResolvedValue({ legacy: true, applied: false }),
       reserveReturnClawback: jest.fn().mockResolvedValue(null),
     };
-    const holds = new ShipmentRefundHoldService(prisma as never, ledger as never);
+    const holds = new ShipmentRefundHoldService(
+      prisma as never,
+      ledger as never,
+      { clawbackForOrderItem: commissions.clawbackForOrderItem } as never,
+    );
     service = new OrdersService(
       prisma,
       commissions as unknown as CommissionsService,

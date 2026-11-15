@@ -461,19 +461,36 @@ export class CommissionsService {
     returnRequestId?: string;
     tx?: Prisma.TransactionClient;
   }) {
-    const item = await this.prisma.orderItem.findUnique({
-      where: { id: params.orderItemId },
-      include: { commission: true },
-    });
-    if (!item?.commission) {
-      return { clawedBack: false, reason: 'no_commission_snapshot' as const };
-    }
-    const snap = item.commission;
-    if (snap.status === CommissionRecognitionStatus.CLAWED_BACK) {
-      return { clawedBack: false, reason: 'already_clawed_back' as const, snapshot: snap };
-    }
+    const run = async (tx: Prisma.TransactionClient) => {
+      const item = await tx.orderItem.findUnique({
+        where: { id: params.orderItemId },
+        include: { commission: true },
+      });
+      if (!item?.commission) {
+        return {
+          clawedBack: false as const,
+          reason: 'no_commission_snapshot' as const,
+        };
+      }
 
-    const apply = async (tx: Prisma.TransactionClient) => {
+      // Serialize clawbacks on this snapshot without blocking FK KEY SHARE
+      // (sweep/verify inserts into CommissionAllocation / applications).
+      // FOR NO KEY UPDATE still conflicts with other NO KEY UPDATE / UPDATE locks,
+      // so concurrent full-line clawbacks remain serialized.
+      await tx.$queryRaw`
+        SELECT id FROM "OrderItemCommission" WHERE id = ${item.commission.id} FOR NO KEY UPDATE
+      `;
+      const snap = await tx.orderItemCommission.findUniqueOrThrow({
+        where: { id: item.commission.id },
+      });
+      if (snap.status === CommissionRecognitionStatus.CLAWED_BACK) {
+        return {
+          clawedBack: false as const,
+          reason: 'already_clawed_back' as const,
+          snapshot: snap,
+        };
+      }
+
       const row = await tx.orderItemCommission.update({
         where: { id: snap.id },
         data: { status: CommissionRecognitionStatus.CLAWED_BACK },
@@ -497,10 +514,17 @@ export class CommissionsService {
         tx,
       });
       await this.ledger.restoreAfterClawback(tx, snap.id, params.actor);
-      return row;
+      return {
+        clawedBack: true as const,
+        reason: 'ok' as const,
+        snapshot: row,
+      };
     };
-    const updated = params.tx ? await apply(params.tx) : await this.prisma.$transaction(apply);
-    return { clawedBack: true, reason: 'ok' as const, snapshot: updated };
+
+    if (params.tx) {
+      return run(params.tx);
+    }
+    return this.prisma.$transaction((tx) => run(tx));
   }
 
   /**

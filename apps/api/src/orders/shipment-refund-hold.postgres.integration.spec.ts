@@ -231,6 +231,12 @@ concurrencyDescribe('PostgreSQL ShipmentRefundHold concurrency (S2.3)', () => {
       {
         applyReturnClawback,
       } as never,
+      {
+        clawbackForOrderItem: async () => ({
+          clawedBack: false,
+          reason: 'no_commission_snapshot',
+        }),
+      } as never,
     );
   }
 

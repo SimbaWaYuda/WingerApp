@@ -297,7 +297,11 @@ describe('partial return stock and refund routing', () => {
       applyReturnClawback: jest.fn().mockResolvedValue({ legacy: false, applied: true }),
       sweepSupplier: jest.fn(),
     };
-    const holds = new ShipmentRefundHoldService(prisma as never, ledger as never);
+    const holds = new ShipmentRefundHoldService(
+      prisma as never,
+      ledger as never,
+      { clawbackForOrderItem: jest.fn() } as never,
+    );
     const service = new OrdersService(
       prisma as never,
       { clawbackForOrderItem: jest.fn() } as never,

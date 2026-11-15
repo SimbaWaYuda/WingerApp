@@ -49,8 +49,12 @@ describe('allocation lifecycle after a cash credit', () => {
     const created: { remittanceId: string; amountUsd: string }[] = [];
     const credits: { sourceEventKey: string }[] = [];
     const tx = {
+      $queryRaw: jest.fn(async () => []),
       orderItemCommission: {
-        findUnique: jest.fn(async () => input.snapshot),
+        findUnique: jest.fn(async () => ({
+          ...input.snapshot,
+          orderItem: input.snapshot.orderItem ?? { supplierId: 'sup-b' },
+        })),
         findMany: jest.fn(async () => [openLine()]),
       },
       commissionAllocationReversal: {

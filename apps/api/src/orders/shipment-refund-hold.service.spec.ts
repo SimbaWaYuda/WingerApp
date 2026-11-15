@@ -33,6 +33,7 @@ function buildMemory() {
     string,
     {
       id: string;
+      orderItemId: string;
       refundStatus: ReturnRefundStatus;
       refundDrive: ReturnRefundDrive;
       refundAbandonRequestedAt: Date | null;
@@ -64,6 +65,14 @@ function buildMemory() {
   const api = {
     async $executeRaw() {
       return 1;
+    },
+    async $queryRaw() {
+      return [{ id: 'locked' }];
+    },
+    commissionClawback: {
+      async findUnique(_args: { where: { returnRequestId: string } }) {
+        return null;
+      },
     },
     returnRequest: {
       async findUniqueOrThrow(args: {
@@ -263,6 +272,7 @@ function buildMemory() {
     _evidence: evidenceRows,
     seedReturn(row: {
       id: string;
+      orderItemId?: string;
       refundStatus?: ReturnRefundStatus;
       refundDrive?: ReturnRefundDrive;
       refundAbandonRequestedAt?: Date | null;
@@ -270,6 +280,7 @@ function buildMemory() {
     }) {
       returns.set(row.id, {
         id: row.id,
+        orderItemId: row.orderItemId ?? 'item-1',
         refundStatus: row.refundStatus ?? ReturnRefundStatus.PENDING,
         refundDrive: row.refundDrive ?? ReturnRefundDrive.UNCLAIMED,
         refundAbandonRequestedAt: row.refundAbandonRequestedAt ?? null,
@@ -305,8 +316,18 @@ function buildMemory() {
   const ledger = {
     applyReturnClawback: jest.fn().mockResolvedValue({ legacy: false, applied: true }),
   };
-  const service = new ShipmentRefundHoldService(prisma as never, ledger as never);
-  return { service, prisma, ledger, holds };
+  const commissions = {
+    clawbackForOrderItem: jest.fn().mockResolvedValue({
+      clawedBack: false,
+      reason: 'no_commission_snapshot',
+    }),
+  };
+  const service = new ShipmentRefundHoldService(
+    prisma as never,
+    ledger as never,
+    commissions as never,
+  );
+  return { service, prisma, ledger, commissions, holds };
 }
 
 const actor: AuthUser = {
@@ -619,6 +640,94 @@ describe('ShipmentRefundHoldService (S2.3)', () => {
       actor,
     });
     expect(again.idempotent).toBe(true);
+  });
+
+  it('runs full-line clawback in the finalize txn when apply returns legacy', async () => {
+    const { service, prisma, ledger, commissions } = buildMemory();
+    prisma.seedReturn({ id: 'ret-1', refundDrive: ReturnRefundDrive.LEGACY });
+    prisma.seedShipment({
+      id: 'ship-1',
+      paymentMerchandise: 40,
+      merchandise: 40,
+    });
+    await prisma.$transaction((tx) =>
+      service.reserveInTransaction(tx as never, {
+        returnRequestId: 'ret-1',
+        orderShipmentId: 'ship-1',
+        supplierId: 'sup-1',
+        currency: 'usd',
+        returnedMerchandise: 40,
+        includeDelivery: false,
+        siblingHadLiveLine: true,
+      }),
+    );
+    await service.claimLegacyStripeBeforeNetwork({ returnRequestId: 'ret-1' });
+    await service.recordLegacyStripeOutcome({
+      returnRequestId: 'ret-1',
+      outcome: 'SUCCESS_PENDING_FINALIZE',
+    });
+    ledger.applyReturnClawback.mockResolvedValue({
+      legacy: true,
+      applied: false,
+    });
+    commissions.clawbackForOrderItem.mockResolvedValue({
+      clawedBack: true,
+      reason: 'ok',
+    });
+
+    const result = await service.finalizeLegacySuccessfulRefund({
+      returnRequestId: 'ret-1',
+      actor,
+    });
+
+    expect(result.hold.status).toBe(ShipmentRefundHoldStatus.CONSUMED);
+    expect(result.legacyClawback).toBe(true);
+    expect(commissions.clawbackForOrderItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderItemId: 'item-1',
+        returnRequestId: 'ret-1',
+        actor,
+        tx: expect.anything(),
+      }),
+    );
+  });
+
+  it('does not full-line clawback when proportional apply succeeds', async () => {
+    const { service, prisma, ledger, commissions } = buildMemory();
+    prisma.seedReturn({ id: 'ret-1', refundDrive: ReturnRefundDrive.LEGACY });
+    prisma.seedShipment({
+      id: 'ship-1',
+      paymentMerchandise: 40,
+      merchandise: 40,
+    });
+    await prisma.$transaction((tx) =>
+      service.reserveInTransaction(tx as never, {
+        returnRequestId: 'ret-1',
+        orderShipmentId: 'ship-1',
+        supplierId: 'sup-1',
+        currency: 'usd',
+        returnedMerchandise: 40,
+        includeDelivery: false,
+        siblingHadLiveLine: true,
+      }),
+    );
+    await service.claimLegacyStripeBeforeNetwork({ returnRequestId: 'ret-1' });
+    await service.recordLegacyStripeOutcome({
+      returnRequestId: 'ret-1',
+      outcome: 'SUCCESS_PENDING_FINALIZE',
+    });
+    ledger.applyReturnClawback.mockResolvedValue({
+      legacy: false,
+      applied: true,
+    });
+
+    const result = await service.finalizeLegacySuccessfulRefund({
+      returnRequestId: 'ret-1',
+      actor,
+    });
+
+    expect(result.legacyClawback).toBe(false);
+    expect(commissions.clawbackForOrderItem).not.toHaveBeenCalled();
   });
 
   it('releases LEGACY hold after FAILED_TERMINAL + abandonment', async () => {

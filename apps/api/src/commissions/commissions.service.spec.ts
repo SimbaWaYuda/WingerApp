@@ -60,11 +60,13 @@ describe('CommissionsService', () => {
         create: jest.fn(),
         update: jest.fn(),
         findMany: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
       },
       cashCollection: {
         findUnique: jest.fn().mockResolvedValue(null),
         count: jest.fn().mockResolvedValue(0),
       },
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'c1' }]),
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
     };
     audit = {
@@ -538,15 +540,17 @@ describe('CommissionsService', () => {
 
   describe('clawbackForOrderItem', () => {
     it('marks commission CLAWED_BACK and writes audit', async () => {
+      const snap = {
+        id: 'c1',
+        status: CommissionRecognitionStatus.SETTLEABLE,
+        commissionAmount: 12.5,
+        isDemo: false,
+      };
       prisma.orderItem.findUnique.mockResolvedValue({
         id: 'item-1',
-        commission: {
-          id: 'c1',
-          status: CommissionRecognitionStatus.SETTLEABLE,
-          commissionAmount: 12.5,
-          isDemo: false,
-        },
+        commission: snap,
       });
+      prisma.orderItemCommission.findUniqueOrThrow.mockResolvedValue(snap);
       prisma.orderItemCommission.update.mockResolvedValue({
         id: 'c1',
         status: CommissionRecognitionStatus.CLAWED_BACK,
@@ -560,6 +564,7 @@ describe('CommissionsService', () => {
       });
 
       expect(result.clawedBack).toBe(true);
+      expect(prisma.$queryRaw).toHaveBeenCalled();
       expect(prisma.orderItemCommission.update).toHaveBeenCalledWith({
         where: { id: 'c1' },
         data: { status: CommissionRecognitionStatus.CLAWED_BACK },
@@ -574,14 +579,16 @@ describe('CommissionsService', () => {
     });
 
     it('is idempotent when already clawed back', async () => {
+      const snap = {
+        id: 'c1',
+        status: CommissionRecognitionStatus.CLAWED_BACK,
+        commissionAmount: 12.5,
+      };
       prisma.orderItem.findUnique.mockResolvedValue({
         id: 'item-1',
-        commission: {
-          id: 'c1',
-          status: CommissionRecognitionStatus.CLAWED_BACK,
-          commissionAmount: 12.5,
-        },
+        commission: snap,
       });
+      prisma.orderItemCommission.findUniqueOrThrow.mockResolvedValue(snap);
 
       const result = await service.clawbackForOrderItem({
         orderItemId: 'item-1',
@@ -591,6 +598,49 @@ describe('CommissionsService', () => {
       expect(result.clawedBack).toBe(false);
       expect(result.reason).toBe('already_clawed_back');
       expect(prisma.orderItemCommission.update).not.toHaveBeenCalled();
+    });
+
+    it('uses the caller transaction for eligibility reads when tx is supplied', async () => {
+      const snap = {
+        id: 'c1',
+        status: CommissionRecognitionStatus.SETTLEABLE,
+        commissionAmount: 12.5,
+      };
+      const tx = {
+        orderItem: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'item-1',
+            commission: snap,
+          }),
+        },
+        orderItemCommission: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue(snap),
+          update: jest.fn().mockResolvedValue({
+            ...snap,
+            status: CommissionRecognitionStatus.CLAWED_BACK,
+          }),
+        },
+        $queryRaw: jest.fn().mockResolvedValue([{ id: 'c1' }]),
+      };
+      const ledger = (service as any).ledger as {
+        restoreAfterClawback: jest.Mock;
+      };
+
+      const result = await service.clawbackForOrderItem({
+        orderItemId: 'item-1',
+        actor: admin(),
+        tx: tx as never,
+      });
+
+      expect(result.clawedBack).toBe(true);
+      expect(prisma.orderItem.findUnique).not.toHaveBeenCalled();
+      expect(tx.orderItem.findUnique).toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(ledger.restoreAfterClawback).toHaveBeenCalledWith(
+        tx,
+        'c1',
+        expect.anything(),
+      );
     });
   });
 });

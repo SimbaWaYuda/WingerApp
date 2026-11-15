@@ -937,6 +937,16 @@ export class CommissionLedgerService {
     snapshotId: string,
     actor: AuthUser,
   ) {
+    const peek = await tx.orderItemCommission.findUnique({
+      where: { id: snapshotId },
+      include: { orderItem: { select: { supplierId: true } } },
+    });
+    if (!peek) return { restored: false };
+
+    // Caller must already hold OrderItemCommission FOR UPDATE (clawbackForOrderItem).
+    // Credits after snapshot — never Credits → Shipment/Hold.
+    await this.lockSupplierCredits(tx, peek.orderItem.supplierId);
+
     const snapshot = await tx.orderItemCommission.findUnique({
       where: { id: snapshotId },
       include: {

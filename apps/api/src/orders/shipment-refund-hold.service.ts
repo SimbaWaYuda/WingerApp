@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import type { AuthUser } from '../auth/auth.types';
 import { CommissionLedgerService } from '../commissions/commission-ledger.service';
+import { CommissionsService } from '../commissions/commissions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   refundPaymentForSupplierAction,
@@ -60,7 +61,7 @@ export type ReservedHoldView = {
 /**
  * Shared RETURN card-refund capacity holds (S2.3).
  * Lock order when used with attempts: ReturnRequest → RefundAttempt → OrderShipment → Hold.
- * LEGACY card finalize: ReturnRequest → OrderShipment → Hold.
+ * LEGACY card finalize: ReturnRequest → OrderShipment → Hold → (OIC → supplier credits).
  */
 @Injectable()
 export class ShipmentRefundHoldService {
@@ -69,6 +70,7 @@ export class ShipmentRefundHoldService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledger: CommissionLedgerService,
+    private readonly commissions: CommissionsService,
   ) {}
 
   selectDrive(paymentMode: string): 'ATTEMPT' | 'LEGACY' {
@@ -657,8 +659,9 @@ export class ShipmentRefundHoldService {
 
   /**
    * LEGACY card atomic finalisation after SUCCESS_PENDING_FINALIZE.
-   * Lock: ReturnRequest → OrderShipment → Hold → clawback.
+   * Lock: ReturnRequest → OrderShipment → Hold → commission (OIC → credits).
    * Does not call Stripe or Connect reverse.
+   * Commission adjustment commits in the same txn as ISSUED/CONSUMED (S2.4.4).
    */
   async finalizeLegacySuccessfulRefund(params: {
     returnRequestId: string;
@@ -666,6 +669,7 @@ export class ShipmentRefundHoldService {
   }): Promise<{
     hold: ReservedHoldView;
     idempotent: boolean;
+    /** True only when a full-line legacy clawback ran in this call (not proportional). */
     legacyClawback: boolean;
   }> {
     return this.prisma.$transaction(async (tx) => {
@@ -686,10 +690,16 @@ export class ShipmentRefundHoldService {
         locked.status === ShipmentRefundHoldStatus.CONSUMED &&
         rr.refundStatus === ReturnRefundStatus.ISSUED
       ) {
+        // Idempotent re-entry: repair any outstanding commission before returning.
+        const repaired = await this.completeLegacyReturnCommissionInTx(tx, {
+          returnRequestId: rr.id,
+          orderItemId: rr.orderItemId,
+          actor: params.actor,
+        });
         return {
           hold: this.asView(locked),
           idempotent: true,
-          legacyClawback: false,
+          legacyClawback: repaired.fullLineApplied,
         };
       }
       if (locked.status === ShipmentRefundHoldStatus.RELEASED) {
@@ -742,8 +752,9 @@ export class ShipmentRefundHoldService {
         data: { status: ShipmentRefundHoldStatus.CONSUMED },
       });
 
-      const clawback = await this.ledger.applyReturnClawback(tx, {
+      const commission = await this.completeLegacyReturnCommissionInTx(tx, {
         returnRequestId: rr.id,
+        orderItemId: rr.orderItemId,
         actor: params.actor,
       });
 
@@ -761,9 +772,44 @@ export class ShipmentRefundHoldService {
       return {
         hold: this.asView(consumed),
         idempotent: false,
-        legacyClawback: clawback.legacy === true,
+        legacyClawback: commission.fullLineApplied,
       };
     });
+  }
+
+  /**
+   * Proportional reservation first; full-line only when applyReturnClawback reports legacy
+   * (no CommissionClawback row for this return). Never full-line when a reservation exists.
+   */
+  async completeLegacyReturnCommissionInTx(
+    tx: Prisma.TransactionClient,
+    params: {
+      returnRequestId: string;
+      orderItemId: string;
+      actor: AuthUser;
+    },
+  ): Promise<{ fullLineApplied: boolean }> {
+    const applied = await this.ledger.applyReturnClawback(tx, {
+      returnRequestId: params.returnRequestId,
+      actor: params.actor,
+    });
+    if (!applied.legacy) {
+      return { fullLineApplied: false };
+    }
+    // Defensive: legacy means no reservation; never full-line if one appeared.
+    const reservation = await tx.commissionClawback.findUnique({
+      where: { returnRequestId: params.returnRequestId },
+    });
+    if (reservation) {
+      return { fullLineApplied: false };
+    }
+    const result = await this.commissions.clawbackForOrderItem({
+      orderItemId: params.orderItemId,
+      actor: params.actor,
+      returnRequestId: params.returnRequestId,
+      tx,
+    });
+    return { fullLineApplied: result?.clawedBack === true };
   }
 
   /**

@@ -2467,18 +2467,11 @@ export class OrdersService {
     orderItemId: string;
     user: AuthUser;
   }) {
-    const finalized =
-      await this.shipmentRefundHolds.finalizeLegacySuccessfulRefund({
-        returnRequestId: params.returnRequestId,
-        actor: params.user,
-      });
-    if (finalized.legacyClawback) {
-      await this.commissions.clawbackForOrderItem({
-        orderItemId: params.orderItemId,
-        actor: params.user,
-        returnRequestId: params.returnRequestId,
-      });
-    }
+    // Commission (proportional or full-line) commits inside finalize's txn (S2.4.4).
+    await this.shipmentRefundHolds.finalizeLegacySuccessfulRefund({
+      returnRequestId: params.returnRequestId,
+      actor: params.user,
+    });
   }
 
   private async finalizeLegacyNonCardReturnIssued(params: {
@@ -2487,7 +2480,6 @@ export class OrdersService {
     user: AuthUser;
     orderItemId: string;
   }) {
-    let legacyClawback = false;
     await this.prisma.$transaction(async (tx) => {
       await this.shipmentRefundHolds.lockReturnRequest(
         tx,
@@ -2497,6 +2489,12 @@ export class OrdersService {
         where: { id: params.returnRequestId },
       });
       if (rr.refundStatus === ReturnRefundStatus.ISSUED) {
+        // Repair outstanding commission on retry (same gate as card finalize).
+        await this.shipmentRefundHolds.completeLegacyReturnCommissionInTx(tx, {
+          returnRequestId: rr.id,
+          orderItemId: rr.orderItemId,
+          actor: params.user,
+        });
         return;
       }
       if (rr.refundAbandonRequestedAt) {
@@ -2516,19 +2514,12 @@ export class OrdersService {
               : rr.refundDrive,
         },
       });
-      const applied = await this.ledger.applyReturnClawback(tx, {
+      await this.shipmentRefundHolds.completeLegacyReturnCommissionInTx(tx, {
         returnRequestId: rr.id,
-        actor: params.user,
-      });
-      legacyClawback = applied.legacy;
-    });
-    if (legacyClawback && params.orderItemId) {
-      await this.commissions.clawbackForOrderItem({
         orderItemId: params.orderItemId,
         actor: params.user,
-        returnRequestId: params.returnRequestId,
       });
-    }
+    });
   }
 
   private async refundSupplierBucket(params: {
