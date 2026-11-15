@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { CommissionRecognitionStatus, UserRole } from '@prisma/client';
 import { CommissionLedgerService } from './commission-ledger.service';
 
 function admin() {
@@ -189,6 +189,161 @@ describe('applyReturnClawback', () => {
       'snapshot-read',
     ]);
     expect(tx.orderItemCommission.findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('reserveReturnClawback', () => {
+  it('returns the existing reservation without locking when present', async () => {
+    const existing = {
+      id: 'claw-existing',
+      returnRequestId: 'ret-1',
+      commissionAmount: 5,
+    };
+    const service = new CommissionLedgerService(
+      {} as never,
+      { record: jest.fn() } as never,
+      {} as never,
+    );
+    const tx = {
+      $queryRaw: jest.fn(),
+      commissionClawback: {
+        findUnique: jest.fn(async () => existing),
+        findMany: jest.fn(),
+        create: jest.fn(),
+      },
+    };
+    const result = await service.reserveReturnClawback(tx as never, {
+      orderItemId: 'item-1',
+      returnRequestId: 'ret-1',
+      quantity: 1,
+      unitPrice: 50,
+      lineQuantity: 2,
+    });
+    expect(result).toBe(existing);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.commissionClawback.create).not.toHaveBeenCalled();
+  });
+
+  it('locks OIC then recalculates the slice from post-lock clawbacks', async () => {
+    const service = new CommissionLedgerService(
+      {} as never,
+      { record: jest.fn() } as never,
+      {} as never,
+    );
+    const created = { id: 'claw-new' };
+    const prior = [
+      {
+        id: 'claw-prior',
+        quantity: 1,
+        commissionAmount: 5,
+      },
+    ];
+    let findUniqueCalls = 0;
+    const $queryRaw = jest.fn(
+      async (_strings: TemplateStringsArray, ..._values: unknown[]) => [
+        {
+          id: 'snap-1',
+          status: CommissionRecognitionStatus.SETTLEABLE,
+          commissionAmount: 10,
+        },
+      ],
+    );
+    const tx = {
+      $queryRaw,
+      commissionClawback: {
+        findUnique: jest.fn(async () => {
+          findUniqueCalls += 1;
+          return null;
+        }),
+        findMany: jest.fn(async () => prior),
+        create: jest.fn(async ({ data }: { data: { commissionAmount: { toFixed(n: number): string } } }) => {
+          expect(data.commissionAmount.toFixed(2)).toBe('5.00');
+          return created;
+        }),
+      },
+    };
+    const result = await service.reserveReturnClawback(tx as never, {
+      orderItemId: 'item-1',
+      returnRequestId: 'ret-2',
+      quantity: 1,
+      unitPrice: 50,
+      lineQuantity: 2,
+    });
+    expect(result).toBe(created);
+    expect(findUniqueCalls).toBe(2);
+    expect($queryRaw).toHaveBeenCalled();
+    expect(classifyLockSql($queryRaw.mock.calls[0][0])).toBe('oic-nku');
+    expect(tx.commissionClawback.findMany).toHaveBeenCalledWith({
+      where: { orderItemCommissionId: 'snap-1' },
+    });
+  });
+
+  it('refuses a new reservation when the OIC is already CLAWED_BACK', async () => {
+    const service = new CommissionLedgerService(
+      {} as never,
+      { record: jest.fn() } as never,
+      {} as never,
+    );
+    const tx = {
+      $queryRaw: jest.fn(async () => [
+        {
+          id: 'snap-1',
+          status: CommissionRecognitionStatus.CLAWED_BACK,
+          commissionAmount: 10,
+        },
+      ]),
+      commissionClawback: {
+        findUnique: jest.fn(async () => null),
+        findMany: jest.fn(),
+        create: jest.fn(),
+      },
+    };
+    await expect(
+      service.reserveReturnClawback(tx as never, {
+        orderItemId: 'item-1',
+        returnRequestId: 'ret-late',
+        quantity: 1,
+        unitPrice: 100,
+        lineQuantity: 1,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.commissionClawback.create).not.toHaveBeenCalled();
+  });
+
+  it('returns the reservation discovered after the OIC lock', async () => {
+    const raced = { id: 'claw-raced', returnRequestId: 'ret-race' };
+    const service = new CommissionLedgerService(
+      {} as never,
+      { record: jest.fn() } as never,
+      {} as never,
+    );
+    let finds = 0;
+    const tx = {
+      $queryRaw: jest.fn(async () => [
+        {
+          id: 'snap-1',
+          status: CommissionRecognitionStatus.SETTLEABLE,
+          commissionAmount: 10,
+        },
+      ]),
+      commissionClawback: {
+        findUnique: jest.fn(async () => {
+          finds += 1;
+          return finds === 1 ? null : raced;
+        }),
+        findMany: jest.fn(),
+        create: jest.fn(),
+      },
+    };
+    const result = await service.reserveReturnClawback(tx as never, {
+      orderItemId: 'item-1',
+      returnRequestId: 'ret-race',
+      quantity: 1,
+      unitPrice: 100,
+      lineQuantity: 1,
+    });
+    expect(result).toBe(raced);
+    expect(tx.commissionClawback.create).not.toHaveBeenCalled();
   });
 });
 

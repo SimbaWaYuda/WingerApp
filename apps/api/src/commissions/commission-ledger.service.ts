@@ -12,6 +12,7 @@ import {
   CommissionCreditReason,
   CommissionEvidenceStatus,
   CommissionRecognitionJobStatus,
+  CommissionRecognitionStatus,
   CommissionRemittanceMethod,
   CommissionRemittanceStatus,
   OrderStatus,
@@ -1050,6 +1051,9 @@ export class CommissionLedgerService {
   /**
    * Fixes this return's commission slice from the original snapshot.
    * A repeated approval finds the same row and does not take another slice.
+   * Slice calculation serialises on OrderItemCommission FOR NO KEY UPDATE so
+   * concurrent reserves for the same OIC cannot over-allocate (caller may also
+   * hold OrderItem FOR UPDATE for returnedQuantity / stock).
    */
   async reserveReturnClawback(
     tx: Prisma.TransactionClient,
@@ -1065,14 +1069,34 @@ export class CommissionLedgerService {
       where: { returnRequestId: params.returnRequestId },
     });
     if (existing) return existing;
-    const item = await tx.orderItem.findUnique({
-      where: { id: params.orderItemId },
-      include: { commission: { include: { clawbacks: true } } },
+
+    const lockedOic = await tx.$queryRaw<
+      { id: string; status: string; commissionAmount: Prisma.Decimal | number }[]
+    >`
+      SELECT c.id, c.status, c."commissionAmount"
+      FROM "OrderItemCommission" c
+      WHERE c."orderItemId" = ${params.orderItemId}
+      FOR NO KEY UPDATE OF c
+    `;
+    if (!lockedOic.length) return null;
+
+    const afterLock = await tx.commissionClawback.findUnique({
+      where: { returnRequestId: params.returnRequestId },
     });
-    if (!item?.commission) return null;
-    const prior = item.commission.clawbacks;
+    if (afterLock) return afterLock;
+
+    const oic = lockedOic[0];
+    if (oic.status === CommissionRecognitionStatus.CLAWED_BACK) {
+      throw new BadRequestException(
+        'Commission for this line has already been clawed back',
+      );
+    }
+
+    const prior = await tx.commissionClawback.findMany({
+      where: { orderItemCommissionId: oic.id },
+    });
     const slice = proportionalCommissionSlice({
-      commissionAmount: Number(item.commission.commissionAmount),
+      commissionAmount: Number(oic.commissionAmount),
       lineQuantity: params.lineQuantity,
       alreadyReturned: prior.reduce((sum, row) => sum + row.quantity, 0),
       quantity: params.quantity,
@@ -1082,7 +1106,7 @@ export class CommissionLedgerService {
     });
     return tx.commissionClawback.create({
       data: {
-        orderItemCommissionId: item.commission.id,
+        orderItemCommissionId: oic.id,
         returnRequestId: params.returnRequestId,
         quantity: params.quantity,
         merchandiseAmount: new Prisma.Decimal(
