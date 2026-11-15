@@ -252,8 +252,8 @@ export function isRefundAttemptV1Enabled(
 }
 
 /**
- * S2.2 must only apply when this is true — never on pending/requires_action/failed,
- * investigation, or when more than one submission version succeeded at Stripe.
+ * S2.2 Stripe-side eligibility for a single succeeded submission.
+ * Attempt status for apply entry is checked separately (STRIPE_SUCCEEDED | APPLY_FAILED).
  */
 export function isApplyEligibleStripeSuccess(input: {
   attemptStatus: string;
@@ -261,7 +261,12 @@ export function isApplyEligibleStripeSuccess(input: {
   submissionStripeRefundId: string | null | undefined;
   succeededSubmissionCount?: number;
 }): boolean {
-  if (input.attemptStatus !== 'STRIPE_SUCCEEDED') return false;
+  if (
+    input.attemptStatus !== 'STRIPE_SUCCEEDED' &&
+    input.attemptStatus !== 'APPLY_FAILED'
+  ) {
+    return false;
+  }
   if (input.submissionOutcome !== 'SUCCEEDED') return false;
   if (!input.submissionStripeRefundId) return false;
   if (
@@ -271,4 +276,42 @@ export function isApplyEligibleStripeSuccess(input: {
     return false;
   }
   return true;
+}
+
+export type ApplyCompletionMarkers = {
+  status: string;
+  appliedAt: Date | null | undefined;
+  shipmentRefundApplied: boolean;
+  clawbackAppliedAt: Date | null | undefined;
+};
+
+/** Idempotent success requires the full consistent APPLIED quadruple. */
+export function isConsistentlyApplied(m: ApplyCompletionMarkers): boolean {
+  return (
+    m.status === 'APPLIED' &&
+    m.appliedAt != null &&
+    m.shipmentRefundApplied === true &&
+    m.clawbackAppliedAt != null
+  );
+}
+
+/** Any apply marker without the full quadruple — fail closed, investigate. */
+export function hasInconsistentApplyMarkers(m: ApplyCompletionMarkers): boolean {
+  const anyMarker =
+    m.appliedAt != null ||
+    m.shipmentRefundApplied === true ||
+    m.clawbackAppliedAt != null ||
+    m.status === 'APPLIED';
+  return anyMarker && !isConsistentlyApplied(m);
+}
+
+export function canStartApplyFromStatus(status: string): boolean {
+  return status === 'STRIPE_SUCCEEDED' || status === 'APPLY_FAILED';
+}
+
+export function isApplyActorAllowed(
+  actor: { sub: string; role: string },
+  attemptActorUserId: string,
+): boolean {
+  return actor.role === 'ADMIN' || actor.sub === attemptActorUserId;
 }

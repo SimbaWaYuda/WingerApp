@@ -1,4 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import {
   Prisma,
   RefundAttemptKind,
@@ -6,6 +10,9 @@ import {
   RefundReconciliationResult,
   RefundSubmissionOutcome,
 } from '@prisma/client';
+import type { AuthUser } from '../auth/auth.types';
+import { CommissionLedgerService } from '../commissions/commission-ledger.service';
+import { roundMoney, shipmentPaymentTotal } from './settlement-allocation';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from './stripe.service';
 import {
@@ -19,8 +26,12 @@ import {
 import {
   canInsertNextSubmissionVersion,
   canRetryStripeCreateSameVersion,
+  canStartApplyFromStatus,
+  hasInconsistentApplyMarkers,
   INFLIGHT_UNRESOLVED_REASON,
+  isApplyActorAllowed,
   isApplyEligibleStripeSuccess,
+  isConsistentlyApplied,
   isInFlightUncertainSubmission,
   isRefundAttemptV1Enabled,
   isUnresolvedClaimedStripeCreate,
@@ -42,10 +53,18 @@ type AttemptRow = {
   status: RefundAttemptStatus;
   orderId: string;
   returnRequestId: string | null;
+  orderItemId: string | null;
+  orderShipmentId: string | null;
+  supplierId: string | null;
+  actorUserId: string;
   stripePaymentIntentId: string;
   stripeRefundId: string | null;
   amountCents: number;
   currency: string;
+  shipmentRefundApplied: boolean;
+  clawbackAppliedAt: Date | null;
+  appliedAt: Date | null;
+  applyError: string | null;
   lastError: string | null;
   investigationReason: string | null;
 };
@@ -88,10 +107,31 @@ export type SubmitCurrentSubmissionResult = {
   blockedReason?: string;
 };
 
+export type ApplySuccessfulRefundResult = {
+  attempt: AttemptRow;
+  idempotent: boolean;
+};
+
+/** Validation / invariant failures that must not leave money half-applied. */
+class ApplyInvariantError extends Error {
+  readonly code: string;
+  readonly needsInvestigation: boolean;
+
+  constructor(
+    code: string,
+    message: string,
+    opts?: { needsInvestigation?: boolean },
+  ) {
+    super(message);
+    this.name = 'ApplyInvariantError';
+    this.code = code;
+    this.needsInvestigation = opts?.needsInvestigation === true;
+  }
+}
+
 /**
- * Phase 3 RefundAttempt orchestration (S2.1).
- * Stripe submit + reconcile only. Apply/clawback remain S2.2.
- * Not injected into OrdersService refund paths yet.
+ * Phase 3 RefundAttempt orchestration (S2.1 + S2.2 apply).
+ * Apply is RETURN-only and unwired from OrdersService until S2.3+.
  */
 @Injectable()
 export class RefundAttemptService {
@@ -100,6 +140,7 @@ export class RefundAttemptService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
+    private readonly ledger: CommissionLedgerService,
   ) {}
 
   /** When false, OrdersService must keep using legacy refundPaidCard paths. */
@@ -621,13 +662,303 @@ export class RefundAttemptService {
   }
 
   /**
-   * S2.2+: apply shipment.refundedAmount + clawback in one short transaction.
+   * S2.2: atomically apply shipment.refundedAmount + RETURN clawback after Stripe success.
+   * Lock order: RefundAttempt → OrderShipment → ledger supplier credits (inside applyReturnClawback).
+   * Never calls Stripe. Never uses clawbackForOrderItem.
    */
-  async applySuccessfulRefund(_params: {
+  async applySuccessfulRefund(params: {
     refundAttemptId: string;
-  }): Promise<never> {
-    this.logger.warn('applySuccessfulRefund is not implemented until S2.2');
-    throw new Error('RefundAttemptService.applySuccessfulRefund: S2.2 not started');
+    actor: AuthUser;
+  }): Promise<ApplySuccessfulRefundResult> {
+    if (!params.actor?.sub || !params.actor.role) {
+      throw new ForbiddenException('apply_requires_auth_user');
+    }
+
+    type TxOutcome =
+      | { kind: 'ok'; result: ApplySuccessfulRefundResult }
+      | { kind: 'investigation'; attempt: AttemptRow };
+
+    let outcome: TxOutcome;
+    try {
+      outcome = await this.prisma.$transaction(async (tx) => {
+        // 1) RefundAttempt FOR UPDATE
+        await this.lockAttempt(tx, params.refundAttemptId);
+        const attempt = await tx.refundAttempt.findUniqueOrThrow({
+          where: { id: params.refundAttemptId },
+        });
+
+        if (
+          !isApplyActorAllowed(
+            { sub: params.actor.sub, role: params.actor.role },
+            attempt.actorUserId,
+          )
+        ) {
+          throw new ForbiddenException('apply_actor_not_allowed');
+        }
+
+        const markers = {
+          status: attempt.status,
+          appliedAt: attempt.appliedAt,
+          shipmentRefundApplied: attempt.shipmentRefundApplied,
+          clawbackAppliedAt: attempt.clawbackAppliedAt,
+        };
+
+        // 2) Fully consistent APPLIED → idempotent success
+        if (isConsistentlyApplied(markers)) {
+          return {
+            kind: 'ok' as const,
+            result: { attempt: asAttempt(attempt), idempotent: true },
+          };
+        }
+
+        // 3) Partial / inconsistent markers → investigate, no money movement.
+        // Return (do not throw) so NEEDS_INVESTIGATION commits with the txn.
+        if (hasInconsistentApplyMarkers(markers)) {
+          const updated = await tx.refundAttempt.update({
+            where: { id: attempt.id },
+            data: {
+              status: RefundAttemptStatus.NEEDS_INVESTIGATION,
+              investigationReason: 'apply_flags_inconsistent',
+              applyError: sanitizeRefundErrorDetail({
+                code: 'apply_flags_inconsistent',
+                message: 'partial or inconsistent apply markers',
+              }),
+              lastError: sanitizeRefundErrorDetail({
+                code: 'apply_flags_inconsistent',
+                message: 'partial or inconsistent apply markers',
+              }),
+            },
+          });
+          return {
+            kind: 'investigation' as const,
+            attempt: asAttempt(updated),
+          };
+        }
+
+        if (!canStartApplyFromStatus(attempt.status)) {
+          throw new ApplyInvariantError(
+            'apply_status_not_eligible',
+            `RefundAttempt status ${attempt.status} cannot start apply`,
+          );
+        }
+
+        if (attempt.kind !== RefundAttemptKind.RETURN) {
+          throw new ApplyInvariantError(
+            'apply_kind_not_supported',
+            `RefundAttempt kind ${attempt.kind} is not supported by S2.2 apply`,
+          );
+        }
+
+        if (
+          !attempt.returnRequestId ||
+          !attempt.orderShipmentId ||
+          !attempt.orderItemId
+        ) {
+          throw new ApplyInvariantError(
+            'apply_links_incomplete',
+            'RETURN apply requires returnRequestId, orderShipmentId, and orderItemId',
+          );
+        }
+
+        const succeededSubs = await tx.refundAttemptSubmission.findMany({
+          where: {
+            refundAttemptId: attempt.id,
+            outcome: RefundSubmissionOutcome.SUCCEEDED,
+            stripeRefundId: { not: null },
+          },
+          orderBy: { version: 'asc' },
+        });
+        if (succeededSubs.length !== 1) {
+          throw new ApplyInvariantError(
+            succeededSubs.length === 0
+              ? 'apply_no_succeeded_submission'
+              : 'apply_multiple_succeeded_submissions',
+            `Expected exactly one SUCCEEDED submission with refund id, found ${succeededSubs.length}`,
+            { needsInvestigation: succeededSubs.length > 1 },
+          );
+        }
+        const successSub = succeededSubs[0]!;
+        if (
+          !attempt.stripeRefundId ||
+          successSub.stripeRefundId !== attempt.stripeRefundId
+        ) {
+          throw new ApplyInvariantError(
+            'apply_stripe_refund_id_mismatch',
+            'Attempt stripeRefundId must match the sole SUCCEEDED submission',
+            { needsInvestigation: true },
+          );
+        }
+        if (
+          !isApplyEligibleStripeSuccess({
+            attemptStatus: attempt.status,
+            submissionOutcome: successSub.outcome,
+            submissionStripeRefundId: successSub.stripeRefundId,
+            succeededSubmissionCount: 1,
+          })
+        ) {
+          throw new ApplyInvariantError(
+            'apply_stripe_not_eligible',
+            'Stripe success eligibility check failed',
+          );
+        }
+
+        // Validate frozen amount before locking shipment or any money writes.
+        const frozenAmount = resolveFrozenRefundAmount(attempt);
+
+        // 4) OrderShipment FOR UPDATE (after attempt; before ledger locks)
+        await this.lockShipment(tx, attempt.orderShipmentId);
+        const shipment = await tx.orderShipment.findUniqueOrThrow({
+          where: { id: attempt.orderShipmentId },
+        });
+        if (shipment.orderId !== attempt.orderId) {
+          throw new ApplyInvariantError(
+            'apply_shipment_order_mismatch',
+            'OrderShipment.orderId does not match RefundAttempt.orderId',
+            { needsInvestigation: true },
+          );
+        }
+        if (
+          attempt.supplierId != null &&
+          shipment.supplierId !== attempt.supplierId
+        ) {
+          throw new ApplyInvariantError(
+            'apply_shipment_supplier_mismatch',
+            'OrderShipment.supplierId does not match RefundAttempt.supplierId',
+            { needsInvestigation: true },
+          );
+        }
+
+        const order = await tx.order.findUniqueOrThrow({
+          where: { id: attempt.orderId },
+          select: { currency: true },
+        });
+        if (
+          order.currency.toLowerCase() !== attempt.currency.toLowerCase()
+        ) {
+          throw new ApplyInvariantError(
+            'apply_currency_mismatch',
+            'Frozen attempt currency does not match order payment currency',
+          );
+        }
+
+        const paymentTotal = shipmentPaymentTotal({
+          paymentMerchandise: Number(shipment.paymentMerchandise),
+          paymentDelivery: Number(shipment.paymentDelivery),
+          paymentTax: Number(shipment.paymentTax),
+        });
+        const alreadyRefunded = roundMoney(Number(shipment.refundedAmount));
+        const nextRefunded = roundMoney(alreadyRefunded + frozenAmount);
+        if (nextRefunded - paymentTotal > 0.001) {
+          throw new ApplyInvariantError(
+            'shipment_refund_capacity',
+            'Frozen refund amount exceeds remaining shipment payment capacity',
+          );
+        }
+
+        const now = new Date();
+        if (!attempt.shipmentRefundApplied) {
+          await tx.orderShipment.update({
+            where: { id: shipment.id },
+            data: {
+              refundedAmount: new Prisma.Decimal(nextRefunded.toFixed(2)),
+            },
+          });
+        }
+
+        // 5) Clawback: verified no-op OR applyReturnClawback (never clawbackForOrderItem)
+        await this.applyReturnClawbackForAttempt(tx, {
+          returnRequestId: attempt.returnRequestId,
+          orderItemId: attempt.orderItemId,
+          actor: params.actor,
+        });
+
+        const updated = await tx.refundAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: RefundAttemptStatus.APPLIED,
+            shipmentRefundApplied: true,
+            clawbackAppliedAt: now,
+            appliedAt: now,
+            applyError: null,
+            lastError: null,
+            investigationReason: null,
+          },
+        });
+
+        return {
+          kind: 'ok' as const,
+          result: { attempt: asAttempt(updated), idempotent: false },
+        };
+      });
+    } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+
+      // Concurrent winner may have committed APPLIED after our txn rolled back.
+      // Re-read before and after failure recording / transient exits.
+      // Only the fully consistent APPLIED quadruple counts as success.
+      const readIdempotentApplied =
+        async (): Promise<ApplySuccessfulRefundResult | null> => {
+          const fresh = await this.prisma.refundAttempt.findUnique({
+            where: { id: params.refundAttemptId },
+          });
+          if (
+            fresh &&
+            isConsistentlyApplied({
+              status: fresh.status,
+              appliedAt: fresh.appliedAt,
+              shipmentRefundApplied: fresh.shipmentRefundApplied,
+              clawbackAppliedAt: fresh.clawbackAppliedAt,
+            })
+          ) {
+            return { attempt: asAttempt(fresh), idempotent: true };
+          }
+          return null;
+        };
+
+      const early = await readIdempotentApplied();
+      if (early) return early;
+
+      if (isTransientDbError(error)) {
+        const afterTransient = await readIdempotentApplied();
+        if (afterTransient) return afterTransient;
+        throw error;
+      }
+
+      try {
+        await this.recordApplyFailure({
+          refundAttemptId: params.refundAttemptId,
+          error,
+        });
+      } catch (recordError) {
+        const afterRecordError = await readIdempotentApplied();
+        if (afterRecordError) return afterRecordError;
+        const original =
+          error instanceof Error ? error.message : String(error);
+        const recording =
+          recordError instanceof Error
+            ? recordError.message
+            : String(recordError);
+        throw new Error(
+          `applySuccessfulRefund failed: ${original}; also failed to record failure: ${recording}`,
+        );
+      }
+
+      const afterFailureRecord = await readIdempotentApplied();
+      if (afterFailureRecord) return afterFailureRecord;
+
+      throw error;
+    }
+
+    if (outcome.kind === 'investigation') {
+      throw new ApplyInvariantError(
+        'apply_flags_inconsistent',
+        'RefundAttempt apply markers are inconsistent',
+        { needsInvestigation: true },
+      );
+    }
+    return outcome.result;
   }
 
   /** Exposed for tests — S2.2 eligibility helper. */
@@ -809,6 +1140,141 @@ export class RefundAttemptService {
     await tx.$executeRaw`
       SELECT id FROM "RefundAttempt" WHERE id = ${attemptId} FOR UPDATE
     `;
+  }
+
+  private async lockShipment(
+    tx: Prisma.TransactionClient,
+    shipmentId: string,
+  ): Promise<void> {
+    await tx.$executeRaw`
+      SELECT id FROM "OrderShipment" WHERE id = ${shipmentId} FOR UPDATE
+    `;
+  }
+
+  /**
+   * RETURN clawback under the apply txn.
+   * Verified no-commission no-op only when neither snapshot nor reservation exists.
+   */
+  private async applyReturnClawbackForAttempt(
+    tx: Prisma.TransactionClient,
+    params: {
+      returnRequestId: string;
+      orderItemId: string;
+      actor: AuthUser;
+    },
+  ): Promise<void> {
+    const reservation = await tx.commissionClawback.findUnique({
+      where: { returnRequestId: params.returnRequestId },
+    });
+    const snapshot = await tx.orderItemCommission.findUnique({
+      where: { orderItemId: params.orderItemId },
+    });
+
+    if (!reservation && !snapshot) {
+      return;
+    }
+    if (!reservation && snapshot) {
+      throw new ApplyInvariantError(
+        'clawback_reservation_missing',
+        'OrderItemCommission exists but CommissionClawback reservation is missing',
+      );
+    }
+
+    const result = await this.ledger.applyReturnClawback(tx, {
+      returnRequestId: params.returnRequestId,
+      actor: params.actor,
+    });
+
+    if (result.legacy) {
+      // Reservation vanished or never existed while we expected one — never fall back to clawbackForOrderItem.
+      const stillMissing = !(await tx.commissionClawback.findUnique({
+        where: { returnRequestId: params.returnRequestId },
+      }));
+      if (stillMissing && snapshot) {
+        throw new ApplyInvariantError(
+          'clawback_reservation_missing',
+          'applyReturnClawback returned legacy while commission snapshot exists',
+        );
+      }
+      if (stillMissing && !snapshot) {
+        return;
+      }
+      throw new ApplyInvariantError(
+        'clawback_legacy_unexpected',
+        'applyReturnClawback returned legacy unexpectedly',
+      );
+    }
+
+    if (!result.applied) {
+      const current = await tx.commissionClawback.findUnique({
+        where: { returnRequestId: params.returnRequestId },
+      });
+      if (current?.appliedAt) {
+        return;
+      }
+      throw new ApplyInvariantError(
+        'clawback_apply_noop_unexpected',
+        'applyReturnClawback did not apply and reservation has no appliedAt',
+      );
+    }
+  }
+
+  /**
+   * Conditional failure write — never matches APPLIED / appliedAt set.
+   */
+  private async recordApplyFailure(params: {
+    refundAttemptId: string;
+    error: unknown;
+  }): Promise<void> {
+    const invariant =
+      params.error instanceof ApplyInvariantError ? params.error : null;
+    const code = invariant?.code ?? 'apply_transaction_failed';
+    const message =
+      params.error instanceof Error
+        ? params.error.message
+        : String(params.error);
+    const detail = sanitizeRefundErrorDetail({ code, message });
+
+    if (invariant?.needsInvestigation) {
+      await this.prisma.refundAttempt.updateMany({
+        where: {
+          id: params.refundAttemptId,
+          appliedAt: null,
+          status: {
+            in: [
+              RefundAttemptStatus.STRIPE_SUCCEEDED,
+              RefundAttemptStatus.APPLY_FAILED,
+              RefundAttemptStatus.NEEDS_INVESTIGATION,
+            ],
+          },
+        },
+        data: {
+          status: RefundAttemptStatus.NEEDS_INVESTIGATION,
+          investigationReason: truncateReason(code),
+          applyError: detail,
+          lastError: detail,
+        },
+      });
+      return;
+    }
+
+    await this.prisma.refundAttempt.updateMany({
+      where: {
+        id: params.refundAttemptId,
+        appliedAt: null,
+        status: {
+          in: [
+            RefundAttemptStatus.STRIPE_SUCCEEDED,
+            RefundAttemptStatus.APPLY_FAILED,
+          ],
+        },
+      },
+      data: {
+        status: RefundAttemptStatus.APPLY_FAILED,
+        applyError: detail,
+        lastError: detail,
+      },
+    });
   }
 
   private async persistNoMatchOrOpenNext(params: {
@@ -1231,10 +1697,18 @@ function asAttempt(row: {
   status: RefundAttemptStatus;
   orderId: string;
   returnRequestId: string | null;
+  orderItemId?: string | null;
+  orderShipmentId?: string | null;
+  supplierId?: string | null;
+  actorUserId?: string;
   stripePaymentIntentId: string;
   stripeRefundId: string | null;
   amountCents: number;
   currency: string;
+  shipmentRefundApplied?: boolean;
+  clawbackAppliedAt?: Date | null;
+  appliedAt?: Date | null;
+  applyError?: string | null;
   lastError: string | null;
   investigationReason: string | null;
 }): AttemptRow {
@@ -1245,13 +1719,83 @@ function asAttempt(row: {
     status: row.status,
     orderId: row.orderId,
     returnRequestId: row.returnRequestId,
+    orderItemId: row.orderItemId ?? null,
+    orderShipmentId: row.orderShipmentId ?? null,
+    supplierId: row.supplierId ?? null,
+    actorUserId: row.actorUserId ?? '',
     stripePaymentIntentId: row.stripePaymentIntentId,
     stripeRefundId: row.stripeRefundId,
     amountCents: row.amountCents,
     currency: row.currency,
+    shipmentRefundApplied: row.shipmentRefundApplied ?? false,
+    clawbackAppliedAt: row.clawbackAppliedAt ?? null,
+    appliedAt: row.appliedAt ?? null,
+    applyError: row.applyError ?? null,
     lastError: row.lastError,
     investigationReason: row.investigationReason,
   };
+}
+
+function isTransientDbError(error: unknown): boolean {
+  if (error == null || typeof error !== 'object') return false;
+  const code = (error as { code?: string }).code;
+  if (
+    code === 'P2034' ||
+    code === 'P1001' ||
+    code === 'P1017' ||
+    code === 'P2024'
+  ) {
+    return true;
+  }
+  const message = String((error as Error).message ?? '');
+  return /deadlock|could not serialize|connection (?:reset|refused|terminated)/i.test(
+    message,
+  );
+}
+
+/**
+ * Fail closed before money movement: frozen amount must be finite and &gt; 0,
+ * and amountCents must equal roundMoney(amount) in minor units.
+ */
+function resolveFrozenRefundAmount(attempt: {
+  amount: unknown;
+  amountCents: number;
+}): number {
+  const raw = Number(attempt.amount);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ApplyInvariantError(
+      'apply_amount_invalid',
+      'Frozen RefundAttempt.amount must be finite and greater than zero',
+      { needsInvestigation: true },
+    );
+  }
+  const frozenAmount = roundMoney(raw);
+  if (!Number.isFinite(frozenAmount) || frozenAmount <= 0) {
+    throw new ApplyInvariantError(
+      'apply_amount_invalid',
+      'Frozen RefundAttempt.amount rounds to a non-positive value',
+      { needsInvestigation: true },
+    );
+  }
+  if (
+    !Number.isInteger(attempt.amountCents) ||
+    attempt.amountCents <= 0
+  ) {
+    throw new ApplyInvariantError(
+      'apply_amount_cents_mismatch',
+      'Frozen RefundAttempt.amountCents must be a positive integer',
+      { needsInvestigation: true },
+    );
+  }
+  const expectedCents = Math.round(frozenAmount * 100);
+  if (attempt.amountCents !== expectedCents) {
+    throw new ApplyInvariantError(
+      'apply_amount_cents_mismatch',
+      `Frozen amount ${frozenAmount} does not match amountCents ${attempt.amountCents} (expected ${expectedCents})`,
+      { needsInvestigation: true },
+    );
+  }
+  return frozenAmount;
 }
 
 function asSubmission(row: {

@@ -2,7 +2,10 @@ import {
   RefundAttemptStatus,
   RefundReconciliationResult,
   RefundSubmissionOutcome,
+  UserRole,
 } from '@prisma/client';
+import type { AuthUser } from '../auth/auth.types';
+import type { CommissionLedgerService } from '../commissions/commission-ledger.service';
 import { RefundAttemptService } from './refund-attempt.service';
 import { REFUND_ATTEMPT_V1_ENV } from './refund-attempt.types';
 import { StripeService } from './stripe.service';
@@ -20,10 +23,14 @@ type Attempt = {
   actorUserId: string;
   stripePaymentIntentId: string;
   stripeRefundId: string | null;
-  amount: { toString(): string };
+  amount: { toString(): string; valueOf?: () => number } | number;
   amountCents: number;
   currency: string;
   includeDelivery: boolean;
+  shipmentRefundApplied: boolean;
+  clawbackAppliedAt: Date | null;
+  appliedAt: Date | null;
+  applyError: string | null;
   lastError: string | null;
   investigationReason: string | null;
 };
@@ -39,10 +46,61 @@ type Submission = {
   outcome: RefundSubmissionOutcome;
 };
 
+type Shipment = {
+  id: string;
+  orderId: string;
+  supplierId: string;
+  paymentMerchandise: number;
+  paymentDelivery: number;
+  paymentTax: number;
+  refundedAmount: number;
+};
+
+type OrderRow = { id: string; currency: string };
+type ClawbackRow = {
+  id: string;
+  returnRequestId: string;
+  orderItemCommissionId: string;
+  appliedAt: Date | null;
+};
+type CommissionSnap = { id: string; orderItemId: string };
+
+function cloneRow<T extends object>(row: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (value instanceof Date) {
+      out[key] = new Date(value.getTime());
+    } else if (
+      value != null &&
+      typeof value === 'object' &&
+      'toString' in value &&
+      typeof (value as { toString(): string }).toString === 'function' &&
+      !(value instanceof Date)
+    ) {
+      // Prisma.Decimal and similar — keep numeric snapshot via toString.
+      const asNum = Number(value);
+      out[key] = Number.isFinite(asNum)
+        ? asNum
+        : (value as { toString(): string }).toString();
+    } else {
+      out[key] = value;
+    }
+  }
+  return out as T;
+}
+
+function cloneMap<K, V extends object>(src: Map<K, V>): Map<K, V> {
+  return new Map([...src.entries()].map(([k, v]) => [k, cloneRow(v)]));
+}
+
 function createMemoryPrisma() {
   const attempts = new Map<string, Attempt>();
   const byKey = new Map<string, string>();
   const submissions = new Map<string, Submission>();
+  const shipments = new Map<string, Shipment>();
+  const orders = new Map<string, OrderRow>();
+  const clawbacks = new Map<string, ClawbackRow>();
+  const commissions = new Map<string, CommissionSnap>();
   let attemptSeq = 0;
   let subSeq = 0;
 
@@ -95,6 +153,10 @@ function createMemoryPrisma() {
           amountCents: args.data.amountCents,
           currency: args.data.currency,
           includeDelivery: args.data.includeDelivery ?? false,
+          shipmentRefundApplied: args.data.shipmentRefundApplied ?? false,
+          clawbackAppliedAt: args.data.clawbackAppliedAt ?? null,
+          appliedAt: args.data.appliedAt ?? null,
+          applyError: args.data.applyError ?? null,
           lastError: args.data.lastError ?? null,
           investigationReason: args.data.investigationReason ?? null,
         };
@@ -114,6 +176,32 @@ function createMemoryPrisma() {
           }
         }
         return { ...row };
+      },
+      async updateMany(args: {
+        where: {
+          id: string;
+          appliedAt?: null;
+          status?: { in: RefundAttemptStatus[] };
+        };
+        data: Partial<Attempt>;
+      }) {
+        const row = attempts.get(args.where.id);
+        if (!row) return { count: 0 };
+        if (args.where.appliedAt === null && row.appliedAt != null) {
+          return { count: 0 };
+        }
+        if (
+          args.where.status?.in &&
+          !args.where.status.in.includes(row.status)
+        ) {
+          return { count: 0 };
+        }
+        for (const [key, value] of Object.entries(args.data)) {
+          if (value !== undefined) {
+            (row as Record<string, unknown>)[key] = value;
+          }
+        }
+        return { count: 1 };
       },
     },
     refundAttemptSubmission: {
@@ -205,19 +293,119 @@ function createMemoryPrisma() {
         return { ...row };
       },
     },
+    orderShipment: {
+      async findUniqueOrThrow(args: { where: { id: string } }) {
+        const row = shipments.get(args.where.id);
+        if (!row) throw new Error('shipment not found');
+        return { ...row };
+      },
+      async update(args: {
+        where: { id: string };
+        data: { refundedAmount: { toString(): string } | number };
+      }) {
+        const row = shipments.get(args.where.id);
+        if (!row) throw new Error('shipment not found');
+        row.refundedAmount = Number(args.data.refundedAmount);
+        return { ...row };
+      },
+    },
+    order: {
+      async findUniqueOrThrow(args: {
+        where: { id: string };
+        select?: { currency?: true };
+      }) {
+        const row = orders.get(args.where.id);
+        if (!row) throw new Error('order not found');
+        return { ...row };
+      },
+    },
+    commissionClawback: {
+      async findUnique(args: { where: { returnRequestId: string } }) {
+        const row = [...clawbacks.values()].find(
+          (c) => c.returnRequestId === args.where.returnRequestId,
+        );
+        return row ? { ...row } : null;
+      },
+    },
+    orderItemCommission: {
+      async findUnique(args: { where: { orderItemId: string } }) {
+        const row = [...commissions.values()].find(
+          (c) => c.orderItemId === args.where.orderItemId,
+        );
+        return row ? { ...row } : null;
+      },
+    },
   };
+
+  // Serialize interactive txns so concurrent apply tests honor FOR UPDATE ordering.
+  let txnChain: Promise<unknown> = Promise.resolve();
 
   const prisma = {
     ...api,
     async $transaction<T>(fn: (tx: typeof api) => Promise<T>) {
-      return fn(api);
+      const run = txnChain.then(async () => {
+        const snapAttempts = cloneMap(attempts);
+        const snapByKey = new Map(byKey);
+        const snapSubs = cloneMap(submissions);
+        const snapShip = cloneMap(shipments);
+        const snapOrders = cloneMap(orders);
+        const snapClaw = cloneMap(clawbacks);
+        const snapComm = cloneMap(commissions);
+        try {
+          return await fn(api);
+        } catch (error) {
+          attempts.clear();
+          for (const [k, v] of snapAttempts) attempts.set(k, v);
+          byKey.clear();
+          for (const [k, v] of snapByKey) byKey.set(k, v);
+          submissions.clear();
+          for (const [k, v] of snapSubs) submissions.set(k, v);
+          shipments.clear();
+          for (const [k, v] of snapShip) shipments.set(k, v);
+          orders.clear();
+          for (const [k, v] of snapOrders) orders.set(k, v);
+          clawbacks.clear();
+          for (const [k, v] of snapClaw) clawbacks.set(k, v);
+          commissions.clear();
+          for (const [k, v] of snapComm) commissions.set(k, v);
+          throw error;
+        }
+      });
+      txnChain = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
     },
     _attempts: attempts,
     _submissions: submissions,
+    _shipments: shipments,
+    _orders: orders,
+    _clawbacks: clawbacks,
+    _commissions: commissions,
+    seedShipment(row: Shipment) {
+      shipments.set(row.id, { ...row });
+    },
+    seedOrder(row: OrderRow) {
+      orders.set(row.id, { ...row });
+    },
+    seedClawback(row: ClawbackRow) {
+      clawbacks.set(row.id, { ...row });
+    },
+    seedCommission(row: CommissionSnap) {
+      commissions.set(row.id, { ...row });
+    },
   };
 
   return prisma;
 }
+
+const actorUser: AuthUser = {
+  sub: 'u-1',
+  email: 'a@b.co',
+  role: UserRole.ADMIN,
+  name: 'Admin',
+};
 
 describe('RefundAttemptService (S2.1)', () => {
   const previousFlag = process.env[REFUND_ATTEMPT_V1_ENV];
@@ -227,15 +415,29 @@ describe('RefundAttemptService (S2.1)', () => {
     else process.env[REFUND_ATTEMPT_V1_ENV] = previousFlag;
   });
 
-  function build(stripeOverrides?: Partial<StripeService>) {
+  function build(
+    stripeOverrides?: Partial<StripeService>,
+    ledgerOverrides?: Partial<CommissionLedgerService>,
+  ) {
     const prisma = createMemoryPrisma();
     const stripe = {
       listRefundsForPaymentIntent: jest.fn(),
       createRefundForAttempt: jest.fn(),
       ...stripeOverrides,
     } as unknown as StripeService;
-    const service = new RefundAttemptService(prisma as never, stripe);
-    return { service, prisma, stripe };
+    const ledger = {
+      applyReturnClawback: jest.fn().mockResolvedValue({
+        legacy: false,
+        applied: true,
+      }),
+      ...ledgerOverrides,
+    } as unknown as CommissionLedgerService;
+    const service = new RefundAttemptService(
+      prisma as never,
+      stripe,
+      ledger,
+    );
+    return { service, prisma, stripe, ledger };
   }
 
   const ensureParams = {
@@ -248,6 +450,9 @@ describe('RefundAttemptService (S2.1)', () => {
     amountCents: 1000,
     currency: 'usd',
     returnRequestId: 'ret-1',
+    orderItemId: 'item-1',
+    orderShipmentId: 'ship-1',
+    supplierId: 'sup-1',
   };
 
   it('reports the feature flag without touching refund execution paths', () => {
@@ -541,13 +746,6 @@ describe('RefundAttemptService (S2.1)', () => {
     expect(v1!.stripeRefundId).toBe('re_v1');
   });
 
-  it('keeps applySuccessfulRefund unimplemented for S2.2', async () => {
-    const { service } = build();
-    await expect(
-      service.applySuccessfulRefund({ refundAttemptId: 'ra-1' }),
-    ).rejects.toThrow(/S2\.2 not started/);
-  });
-
   it('does not call Stripe inside the claim transaction (ordering)', async () => {
     const events: string[] = [];
     const prisma = createMemoryPrisma();
@@ -569,8 +767,11 @@ describe('RefundAttemptService (S2.1)', () => {
         };
       }),
     } as unknown as StripeService;
+    const ledger = {
+      applyReturnClawback: jest.fn(),
+    } as unknown as CommissionLedgerService;
 
-    const service = new RefundAttemptService(prisma as never, stripe);
+    const service = new RefundAttemptService(prisma as never, stripe, ledger);
     const ensured = await service.ensureAttemptForOperation(ensureParams);
     events.length = 0;
     await service.submitCurrentSubmission({
@@ -1003,5 +1204,785 @@ describe('RefundAttemptService (S2.1)', () => {
     expect(versions.map((v) => v.version).sort()).toEqual([1, 2]);
     expect(x.submission.version).toBe(2);
     expect(y.submission.version).toBe(2);
+  });
+});
+
+describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
+  function build(
+    stripeOverrides?: Partial<StripeService>,
+    ledgerOverrides?: Partial<CommissionLedgerService>,
+  ) {
+    const prisma = createMemoryPrisma();
+    const stripe = {
+      listRefundsForPaymentIntent: jest.fn(),
+      createRefundForAttempt: jest.fn(),
+      ...stripeOverrides,
+    } as unknown as StripeService;
+    const ledger = {
+      applyReturnClawback: jest.fn().mockResolvedValue({
+        legacy: false,
+        applied: true,
+      }),
+      ...ledgerOverrides,
+    } as unknown as CommissionLedgerService;
+    const service = new RefundAttemptService(
+      prisma as never,
+      stripe,
+      ledger,
+    );
+    return { service, prisma, stripe, ledger };
+  }
+
+  function seedReadyApply(opts?: {
+    amount?: number;
+    amountCents?: number;
+    paymentTotal?: number;
+    refundedAmount?: number;
+    currency?: string;
+    orderCurrency?: string;
+    withClawback?: boolean;
+    withSnapshot?: boolean;
+    kind?: string;
+    status?: RefundAttemptStatus;
+    stripeRefundId?: string | null;
+    submissionOutcome?: RefundSubmissionOutcome;
+    extraSucceeded?: boolean;
+    shipmentRefundApplied?: boolean;
+    clawbackAppliedAt?: Date | null;
+    appliedAt?: Date | null;
+  }) {
+    const { service, prisma, stripe, ledger } = build();
+    const amount = opts?.amount ?? 10;
+    const amountCents =
+      opts?.amountCents ?? Math.round(amount * 100);
+    const currency = opts?.currency ?? 'usd';
+    prisma.seedOrder({
+      id: 'ord-1',
+      currency: opts?.orderCurrency ?? currency.toUpperCase(),
+    });
+    // Order currency in schema is typically uppercase; attempt stores lowercase from Stripe.
+    // Match both via toLowerCase() in service — seed with same letters as attempt unless overridden.
+    prisma.seedOrder({
+      id: 'ord-1',
+      currency: opts?.orderCurrency ?? currency,
+    });
+    const paymentTotal = opts?.paymentTotal ?? amount;
+    prisma.seedShipment({
+      id: 'ship-1',
+      orderId: 'ord-1',
+      supplierId: 'sup-1',
+      paymentMerchandise: paymentTotal,
+      paymentDelivery: 0,
+      paymentTax: 0,
+      refundedAmount: opts?.refundedAmount ?? 0,
+    });
+    if (opts?.withSnapshot !== false && opts?.withClawback !== false) {
+      prisma.seedCommission({ id: 'oic-1', orderItemId: 'item-1' });
+      prisma.seedClawback({
+        id: 'cb-1',
+        returnRequestId: 'ret-1',
+        orderItemCommissionId: 'oic-1',
+        appliedAt: null,
+      });
+    } else if (opts?.withSnapshot && opts?.withClawback === false) {
+      prisma.seedCommission({ id: 'oic-1', orderItemId: 'item-1' });
+    } else if (opts?.withSnapshot === false && opts?.withClawback === false) {
+      // verified no-commission
+    }
+
+    return (async () => {
+      const ensured = await service.ensureAttemptForOperation({
+        kind: 'RETURN',
+        operationKey: 'return:ret-1',
+        orderId: 'ord-1',
+        actorUserId: 'u-1',
+        stripePaymentIntentId: 'pi_1',
+        amount,
+        amountCents,
+        currency,
+        returnRequestId: 'ret-1',
+        orderItemId: 'item-1',
+        orderShipmentId: 'ship-1',
+        supplierId: 'sup-1',
+      });
+
+      if (opts?.kind && opts.kind !== 'RETURN') {
+        await prisma.refundAttempt.update({
+          where: { id: ensured.attempt.id },
+          data: { kind: opts.kind as Attempt['kind'] },
+        });
+      }
+
+      const refundId = opts?.stripeRefundId === undefined ? 're_ok' : opts.stripeRefundId;
+      const outcome = opts?.submissionOutcome ?? 'SUCCEEDED';
+      if (opts?.status === 'PENDING' || outcome === 'PENDING') {
+        await prisma.refundAttemptSubmission.update({
+          where: { id: ensured.submission.id },
+          data: {
+            outcome: outcome,
+            submittedAt: new Date(),
+            stripeRefundId: refundId,
+            reconciliationResult: 'NONE',
+          },
+        });
+        await prisma.refundAttempt.update({
+          where: { id: ensured.attempt.id },
+          data: {
+            status: opts?.status ?? 'PENDING',
+            stripeRefundId: null,
+          },
+        });
+      } else if (outcome === 'FAILED') {
+        await prisma.refundAttemptSubmission.update({
+          where: { id: ensured.submission.id },
+          data: {
+            outcome: 'FAILED',
+            submittedAt: new Date(),
+            stripeRefundId: refundId,
+            reconciliationResult: 'MATCHED',
+          },
+        });
+        await prisma.refundAttempt.update({
+          where: { id: ensured.attempt.id },
+          data: {
+            status: opts?.status ?? 'STRIPE_FAILED',
+            stripeRefundId: null,
+          },
+        });
+      } else if (outcome === 'SUBMISSION_UNKNOWN') {
+        await prisma.refundAttemptSubmission.update({
+          where: { id: ensured.submission.id },
+          data: {
+            outcome: 'SUBMISSION_UNKNOWN',
+            submittedAt: new Date(),
+            stripeRefundId: null,
+          },
+        });
+        await prisma.refundAttempt.update({
+          where: { id: ensured.attempt.id },
+          data: {
+            status: 'SUBMISSION_UNKNOWN',
+            stripeRefundId: null,
+          },
+        });
+      } else {
+        (stripe.createRefundForAttempt as jest.Mock).mockResolvedValue({
+          ok: true,
+          refund: { id: refundId, status: 'succeeded', failureReason: null },
+        });
+        await service.submitCurrentSubmission({
+          refundAttemptId: ensured.attempt.id,
+        });
+        if (opts?.status === 'APPLY_FAILED') {
+          await prisma.refundAttempt.update({
+            where: { id: ensured.attempt.id },
+            data: { status: 'APPLY_FAILED', applyError: 'prior' },
+          });
+        }
+        if (opts?.extraSucceeded) {
+          await prisma.refundAttemptSubmission.create({
+            data: {
+              refundAttemptId: ensured.attempt.id,
+              version: 2,
+              stripeIdempotencyKey: 'winger-ra:return:ret-1:v2',
+              outcome: 'SUCCEEDED',
+              reconciliationResult: 'MATCHED',
+              stripeRefundId: 're_extra',
+              submittedAt: new Date(),
+            },
+          });
+        }
+      }
+
+      if (
+        opts?.shipmentRefundApplied != null ||
+        opts?.clawbackAppliedAt !== undefined ||
+        opts?.appliedAt !== undefined
+      ) {
+        await prisma.refundAttempt.update({
+          where: { id: ensured.attempt.id },
+          data: {
+            shipmentRefundApplied: opts.shipmentRefundApplied ?? false,
+            clawbackAppliedAt: opts.clawbackAppliedAt ?? null,
+            appliedAt: opts.appliedAt ?? null,
+            status:
+              opts.appliedAt &&
+              opts.shipmentRefundApplied &&
+              opts.clawbackAppliedAt
+                ? 'APPLIED'
+                : (opts.status ??
+                  (
+                    await prisma.refundAttempt.findUnique({
+                      where: { id: ensured.attempt.id },
+                    })
+                  )!.status),
+          },
+        });
+      }
+
+      return {
+        service,
+        prisma,
+        stripe,
+        ledger,
+        attemptId: ensured.attempt.id,
+      };
+    })();
+  }
+
+  it('applies a full RETURN refund atomically', async () => {
+    const ctx = await seedReadyApply({ amount: 25, paymentTotal: 25 });
+    const result = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(result.idempotent).toBe(false);
+    expect(result.attempt.status).toBe('APPLIED');
+    expect(result.attempt.shipmentRefundApplied).toBe(true);
+    expect(result.attempt.clawbackAppliedAt).toBeTruthy();
+    expect(result.attempt.appliedAt).toBeTruthy();
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(25);
+    expect(ctx.ledger.applyReturnClawback).toHaveBeenCalledTimes(1);
+    expect(ctx.stripe.createRefundForAttempt).toHaveBeenCalled(); // from setup only
+  });
+
+  it('applies a partial RETURN refund for less than shipment total', async () => {
+    const ctx = await seedReadyApply({
+      amount: 4.5,
+      amountCents: 450,
+      paymentTotal: 20,
+    });
+    await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(4.5);
+    expect(ctx.ledger.applyReturnClawback).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns idempotent success on duplicate apply', async () => {
+    const ctx = await seedReadyApply();
+    const first = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    const second = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(first.idempotent).toBe(false);
+    expect(second.idempotent).toBe(true);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(10);
+    expect(ctx.ledger.applyReturnClawback).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes concurrent apply to a single financial effect', async () => {
+    const ctx = await seedReadyApply();
+    const [a, b] = await Promise.all([
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ]);
+    expect([a.idempotent, b.idempotent].sort()).toEqual([false, true]);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(10);
+    expect(ctx.ledger.applyReturnClawback).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back shipment and flags when clawback throws', async () => {
+    const ctx = await seedReadyApply();
+    (ctx.ledger.applyReturnClawback as jest.Mock).mockRejectedValueOnce(
+      new Error('ledger boom'),
+    );
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/ledger boom/);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    const attempt = ctx.prisma._attempts.get(ctx.attemptId)!;
+    expect(attempt.shipmentRefundApplied).toBe(false);
+    expect(attempt.appliedAt).toBeNull();
+    expect(attempt.status).toBe('APPLY_FAILED');
+  });
+
+  it('retries successfully from APPLY_FAILED', async () => {
+    const ctx = await seedReadyApply({ status: 'APPLY_FAILED' });
+    const result = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(result.attempt.status).toBe('APPLIED');
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(10);
+  });
+
+  it('treats lost response after commit as idempotent APPLIED', async () => {
+    const ctx = await seedReadyApply();
+    await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    // Simulate caller losing the response and retrying.
+    const again = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(again.idempotent).toBe(true);
+    expect(again.attempt.status).toBe('APPLIED');
+  });
+
+  it('returns idempotent success when flags are fully consistent APPLIED', async () => {
+    const now = new Date();
+    const ctx = await seedReadyApply({
+      shipmentRefundApplied: true,
+      clawbackAppliedAt: now,
+      appliedAt: now,
+    });
+    // Force consistent APPLIED without going through apply (already set in seed).
+    await ctx.prisma.refundAttempt.update({
+      where: { id: ctx.attemptId },
+      data: {
+        status: 'APPLIED',
+        shipmentRefundApplied: true,
+        clawbackAppliedAt: now,
+        appliedAt: now,
+      },
+    });
+    const result = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(result.idempotent).toBe(true);
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+  });
+
+  it('moves inconsistent flags to investigation without financial writes', async () => {
+    const ctx = await seedReadyApply({
+      shipmentRefundApplied: true,
+      clawbackAppliedAt: null,
+      appliedAt: null,
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/inconsistent/);
+    const attempt = ctx.prisma._attempts.get(ctx.attemptId)!;
+    expect(attempt.status).toBe('NEEDS_INVESTIGATION');
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+  });
+
+  it('failure handler cannot overwrite APPLIED via conditional updateMany', async () => {
+    const ctx = await seedReadyApply();
+    const now = new Date();
+    await ctx.prisma.refundAttempt.update({
+      where: { id: ctx.attemptId },
+      data: {
+        status: 'APPLIED',
+        shipmentRefundApplied: true,
+        clawbackAppliedAt: now,
+        appliedAt: now,
+      },
+    });
+    const recorded = await ctx.prisma.refundAttempt.updateMany({
+      where: {
+        id: ctx.attemptId,
+        appliedAt: null,
+        status: { in: ['STRIPE_SUCCEEDED', 'APPLY_FAILED'] },
+      },
+      data: { status: 'APPLY_FAILED', applyError: 'should_not_stick' },
+    });
+    expect(recorded.count).toBe(0);
+    expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLIED');
+  });
+
+  it('catch path returns idempotent success when APPLIED commits during failure recording', async () => {
+    const ctx = await seedReadyApply();
+    const now = new Date();
+    (ctx.ledger.applyReturnClawback as jest.Mock).mockRejectedValueOnce(
+      new Error('loser_txn_boom'),
+    );
+
+    let findUniquePasses = 0;
+    const origFindUnique = ctx.prisma.refundAttempt.findUnique.bind(
+      ctx.prisma.refundAttempt,
+    );
+    ctx.prisma.refundAttempt.findUnique = (async (args: {
+      where: { id?: string; operationKey?: string };
+      include?: { submissions?: unknown };
+    }) => {
+      const row = await origFindUnique(args);
+      if (args.where.id === ctx.attemptId) {
+        findUniquePasses += 1;
+        // First catch re-read: still pre-apply. Concurrent winner lands in updateMany.
+        if (findUniquePasses === 1) {
+          return row;
+        }
+      }
+      return row;
+    }) as typeof ctx.prisma.refundAttempt.findUnique;
+
+    const origUpdateMany = ctx.prisma.refundAttempt.updateMany.bind(
+      ctx.prisma.refundAttempt,
+    );
+    ctx.prisma.refundAttempt.updateMany = (async (args: {
+      where: {
+        id: string;
+        appliedAt?: null;
+        status?: { in: RefundAttemptStatus[] };
+      };
+      data: Partial<Attempt>;
+    }) => {
+      // Simulate concurrent winner committing the full APPLIED quadruple while
+      // the loser records failure. Conditional update must not overwrite it.
+      await ctx.prisma.refundAttempt.update({
+        where: { id: ctx.attemptId },
+        data: {
+          status: 'APPLIED',
+          shipmentRefundApplied: true,
+          clawbackAppliedAt: now,
+          appliedAt: now,
+          applyError: null,
+        },
+      });
+      return origUpdateMany(args);
+    }) as typeof ctx.prisma.refundAttempt.updateMany;
+
+    const result = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(result.idempotent).toBe(true);
+    expect(result.attempt.status).toBe('APPLIED');
+    expect(result.attempt.appliedAt).toBeTruthy();
+    expect(result.attempt.shipmentRefundApplied).toBe(true);
+    expect(result.attempt.clawbackAppliedAt).toBeTruthy();
+    expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLIED');
+    expect(ctx.prisma._attempts.get(ctx.attemptId)!.applyError).toBeNull();
+    // Loser txn rolled back: no shipment bump from the failed attempt.
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+  });
+
+  it('catch path does not treat partial markers as success after race', async () => {
+    const ctx = await seedReadyApply();
+    (ctx.ledger.applyReturnClawback as jest.Mock).mockRejectedValueOnce(
+      new Error('partial_race_boom'),
+    );
+
+    const origUpdateMany = ctx.prisma.refundAttempt.updateMany.bind(
+      ctx.prisma.refundAttempt,
+    );
+    ctx.prisma.refundAttempt.updateMany = (async (args: {
+      where: {
+        id: string;
+        appliedAt?: null;
+        status?: { in: RefundAttemptStatus[] };
+      };
+      data: Partial<Attempt>;
+    }) => {
+      // Concurrent mess: only one apply marker, not the full quadruple.
+      await ctx.prisma.refundAttempt.update({
+        where: { id: ctx.attemptId },
+        data: {
+          status: 'STRIPE_SUCCEEDED',
+          shipmentRefundApplied: true,
+          clawbackAppliedAt: null,
+          appliedAt: null,
+        },
+      });
+      return origUpdateMany(args);
+    }) as typeof ctx.prisma.refundAttempt.updateMany;
+
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/partial_race_boom/);
+    const attempt = ctx.prisma._attempts.get(ctx.attemptId)!;
+    expect(attempt.status).not.toBe('APPLIED');
+    expect(attempt.appliedAt).toBeNull();
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+  });
+
+  it('preserves both errors when failure recording fails', async () => {
+    const ctx = await seedReadyApply();
+    (ctx.ledger.applyReturnClawback as jest.Mock).mockRejectedValueOnce(
+      new Error('primary_apply_error'),
+    );
+    const orig = ctx.prisma.refundAttempt.updateMany.bind(
+      ctx.prisma.refundAttempt,
+    );
+    ctx.prisma.refundAttempt.updateMany = (async () => {
+      throw new Error('record_failed');
+    }) as typeof ctx.prisma.refundAttempt.updateMany;
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/primary_apply_error[\s\S]*record_failed/);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    expect(ctx.ledger.applyReturnClawback).toHaveBeenCalled();
+    ctx.prisma.refundAttempt.updateMany = orig;
+  });
+
+  it('rejects zero frozen amount without financial writes', async () => {
+    const ctx = await seedReadyApply();
+    await ctx.prisma.refundAttempt.update({
+      where: { id: ctx.attemptId },
+      data: { amount: 0, amountCents: 0 },
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/amount|greater than zero|invalid/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+  });
+
+  it('rejects negative frozen amount without financial writes', async () => {
+    const ctx = await seedReadyApply();
+    await ctx.prisma.refundAttempt.update({
+      where: { id: ctx.attemptId },
+      data: { amount: -5, amountCents: -500 },
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/amount|greater than zero|invalid/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-finite frozen amount without financial writes', async () => {
+    const ctx = await seedReadyApply();
+    await ctx.prisma.refundAttempt.update({
+      where: { id: ctx.attemptId },
+      data: { amount: Number.NaN, amountCents: 1000 },
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/amount|finite|invalid/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+
+    await ctx.prisma.refundAttempt.update({
+      where: { id: ctx.attemptId },
+      data: {
+        amount: Number.POSITIVE_INFINITY,
+        amountCents: 1000,
+        status: 'STRIPE_SUCCEEDED',
+        applyError: null,
+      },
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/amount|finite|invalid/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+  });
+
+  it('rejects amount / amountCents mismatch without financial writes', async () => {
+    const ctx = await seedReadyApply();
+    await ctx.prisma.refundAttempt.update({
+      where: { id: ctx.attemptId },
+      data: { amount: 10, amountCents: 999 },
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/amountCents|mismatch/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+    const attempt = ctx.prisma._attempts.get(ctx.attemptId)!;
+    expect(attempt.amount).toBe(10);
+    expect(attempt.amountCents).toBe(999);
+    expect(attempt.status).toBe('NEEDS_INVESTIGATION');
+  });
+
+  it('rejects actors that are neither ADMIN nor attempt actor', async () => {
+    const ctx = await seedReadyApply();
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: {
+          sub: 'u-other',
+          email: 'x@y.z',
+          role: UserRole.CUSTOMER,
+          name: 'Nope',
+        },
+      }),
+    ).rejects.toThrow(/apply_actor_not_allowed/);
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+  });
+
+  it('allows matching actorUserId without ADMIN', async () => {
+    const ctx = await seedReadyApply();
+    const result = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: {
+        sub: 'u-1',
+        email: 'x@y.z',
+        role: UserRole.CUSTOMER,
+        name: 'Owner',
+      },
+    });
+    expect(result.attempt.status).toBe('APPLIED');
+  });
+
+  it('verified no-commission no-op sets clawbackAppliedAt without ledger apply', async () => {
+    const ctx = await seedReadyApply({
+      withClawback: false,
+      withSnapshot: false,
+    });
+    const result = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(result.attempt.status).toBe('APPLIED');
+    expect(result.attempt.clawbackAppliedAt).toBeTruthy();
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+  });
+
+  it('fails when snapshot exists without reservation', async () => {
+    const ctx = await seedReadyApply({
+      withSnapshot: true,
+      withClawback: false,
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/clawback_reservation_missing|reservation/);
+    expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLY_FAILED');
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+  });
+
+  it('rejects multiple successful Stripe submissions', async () => {
+    const ctx = await seedReadyApply({ extraSucceeded: true });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/multiple_succeeded|exactly one/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+  });
+
+  it('rejects pending Stripe submissions', async () => {
+    const ctx = await seedReadyApply({
+      submissionOutcome: 'PENDING',
+      status: 'PENDING',
+      stripeRefundId: 're_pending',
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/not eligible|no_succeeded|status/i);
+  });
+
+  it('rejects failed Stripe submissions', async () => {
+    const ctx = await seedReadyApply({
+      submissionOutcome: 'FAILED',
+      status: 'STRIPE_FAILED',
+      stripeRefundId: 're_fail',
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/not eligible|no_succeeded|status/i);
+  });
+
+  it('rejects unresolved Stripe submissions', async () => {
+    const ctx = await seedReadyApply({
+      submissionOutcome: 'SUBMISSION_UNKNOWN',
+      status: 'SUBMISSION_UNKNOWN',
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/not eligible|no_succeeded|status/i);
+  });
+
+  it('rejects wrong refund kind without financial changes', async () => {
+    const ctx = await seedReadyApply({ kind: 'ORDER_CANCEL' });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/not supported|kind/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    expect(ctx.ledger.applyReturnClawback).not.toHaveBeenCalled();
+  });
+
+  it('rejects over-refund against shipment payment capacity', async () => {
+    const ctx = await seedReadyApply({
+      amount: 15,
+      amountCents: 1500,
+      paymentTotal: 10,
+      refundedAmount: 0,
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/capacity|shipment_refund/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+    expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLY_FAILED');
+  });
+
+  it('rejects currency mismatch between attempt and order', async () => {
+    const ctx = await seedReadyApply({
+      currency: 'usd',
+      orderCurrency: 'eur',
+    });
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/currency/i);
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+  });
+
+  it('never calls Stripe during apply', async () => {
+    const ctx = await seedReadyApply();
+    (ctx.stripe.createRefundForAttempt as jest.Mock).mockClear();
+    (ctx.stripe.listRefundsForPaymentIntent as jest.Mock).mockClear();
+    await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(ctx.stripe.createRefundForAttempt).not.toHaveBeenCalled();
+    expect(ctx.stripe.listRefundsForPaymentIntent).not.toHaveBeenCalled();
   });
 });

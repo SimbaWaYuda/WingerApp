@@ -1,7 +1,11 @@
 import {
   canInsertNextSubmissionVersion,
   canRetryStripeCreateSameVersion,
+  canStartApplyFromStatus,
+  hasInconsistentApplyMarkers,
+  isApplyActorAllowed,
   isApplyEligibleStripeSuccess,
+  isConsistentlyApplied,
   isInFlightUncertainSubmission,
   isRefundAttemptV1Enabled,
   isUnresolvedClaimedStripeCreate,
@@ -232,10 +236,17 @@ describe('refund-attempt.types', () => {
   });
 
   describe('isApplyEligibleStripeSuccess', () => {
-    it('requires attempt STRIPE_SUCCEEDED and submission SUCCEEDED with id', () => {
+    it('allows STRIPE_SUCCEEDED or APPLY_FAILED with one SUCCEEDED submission id', () => {
       expect(
         isApplyEligibleStripeSuccess({
           attemptStatus: 'STRIPE_SUCCEEDED',
+          submissionOutcome: 'SUCCEEDED',
+          submissionStripeRefundId: 're_1',
+        }),
+      ).toBe(true);
+      expect(
+        isApplyEligibleStripeSuccess({
+          attemptStatus: 'APPLY_FAILED',
           submissionOutcome: 'SUCCEEDED',
           submissionStripeRefundId: 're_1',
         }),
@@ -254,6 +265,47 @@ describe('refund-attempt.types', () => {
           submissionStripeRefundId: 're_1',
           succeededSubmissionCount: 2,
         }),
+      ).toBe(false);
+    });
+  });
+
+  describe('apply completion helpers', () => {
+    it('requires the full APPLIED quadruple for consistent success', () => {
+      expect(
+        isConsistentlyApplied({
+          status: 'APPLIED',
+          appliedAt: new Date(),
+          shipmentRefundApplied: true,
+          clawbackAppliedAt: new Date(),
+        }),
+      ).toBe(true);
+      expect(
+        isConsistentlyApplied({
+          status: 'APPLIED',
+          appliedAt: new Date(),
+          shipmentRefundApplied: true,
+          clawbackAppliedAt: null,
+        }),
+      ).toBe(false);
+      expect(
+        hasInconsistentApplyMarkers({
+          status: 'STRIPE_SUCCEEDED',
+          appliedAt: null,
+          shipmentRefundApplied: true,
+          clawbackAppliedAt: null,
+        }),
+      ).toBe(true);
+      expect(canStartApplyFromStatus('STRIPE_SUCCEEDED')).toBe(true);
+      expect(canStartApplyFromStatus('APPLY_FAILED')).toBe(true);
+      expect(canStartApplyFromStatus('PENDING')).toBe(false);
+      expect(
+        isApplyActorAllowed({ sub: 'u-1', role: 'ADMIN' }, 'u-other'),
+      ).toBe(true);
+      expect(
+        isApplyActorAllowed({ sub: 'u-1', role: 'CUSTOMER' }, 'u-1'),
+      ).toBe(true);
+      expect(
+        isApplyActorAllowed({ sub: 'u-1', role: 'CUSTOMER' }, 'u-other'),
       ).toBe(false);
     });
   });
