@@ -301,7 +301,51 @@ describe('StripeService payment safety', () => {
     );
   });
 
-  it('classifies definitive card declines as failed and preserves PaymentIntent id', async () => {
+  it('rejects invalid local payment methods without calling Stripe', async () => {
+    const create = jest.fn();
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { create } } as never, 'test');
+
+    const result = await service.chargeOrder({
+      amountCents: 1000,
+      currency: 'usd',
+      orderId: 'ord-1',
+      orderDisplayId: 'WG-1',
+      customerEmail: 'a@example.com',
+      idempotencyKey: 'winger-charge-ord-1',
+      paymentMethodId: 'not-a-pm',
+    });
+
+    expect(result).toMatchObject({ status: 'failed', mode: 'test' });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('classifies ambiguous Stripe errors without a PaymentIntent id as uncertain', async () => {
+    const err = Object.assign(new Error('Invalid API Key provided'), {
+      type: 'StripeAuthenticationError',
+    });
+    const create = jest.fn().mockRejectedValue(err);
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { create } } as never, 'test');
+
+    const result = await service.chargeOrder({
+      amountCents: 1000,
+      currency: 'usd',
+      orderId: 'ord-1',
+      orderDisplayId: 'WG-1',
+      customerEmail: 'a@example.com',
+      idempotencyKey: 'winger-charge-ord-1',
+      paymentMethodId: 'pm_card_visa',
+    });
+
+    expect(result).toMatchObject({
+      status: 'uncertain',
+      mode: 'test',
+    });
+    expect(result.paymentIntentId).toBeUndefined();
+  });
+
+  it('classifies card declines with a retryable PaymentIntent as uncertain', async () => {
     const err = Object.assign(new Error('Your card was declined.'), {
       type: 'StripeCardError',
       code: 'card_declined',
@@ -322,36 +366,35 @@ describe('StripeService payment safety', () => {
     });
 
     expect(result).toMatchObject({
-      status: 'failed',
+      status: 'uncertain',
       paymentIntentId: 'pi_declined',
       mode: 'test',
     });
   });
 
-  it('classifies definitive terminal PaymentIntent statuses as failed', async () => {
+  it('classifies only canceled PaymentIntent status as failed', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'pi_canceled', status: 'canceled' });
     const service = new StripeService();
-    for (const status of ['canceled', 'requires_payment_method'] as const) {
-      const create = jest.fn().mockResolvedValue({ id: `pi_${status}`, status });
-      service.bindForTests({ paymentIntents: { create } } as never, 'test');
-      const result = await service.chargeOrder({
-        amountCents: 1000,
-        currency: 'usd',
-        orderId: 'ord-1',
-        orderDisplayId: 'WG-1',
-        customerEmail: 'a@example.com',
-        idempotencyKey: 'winger-charge-ord-1',
-        paymentMethodId: 'pm_card_visa',
-      });
-      expect(result).toMatchObject({
-        status: 'failed',
-        paymentIntentId: `pi_${status}`,
-      });
-    }
+    service.bindForTests({ paymentIntents: { create } } as never, 'test');
+    const result = await service.chargeOrder({
+      amountCents: 1000,
+      currency: 'usd',
+      orderId: 'ord-1',
+      orderDisplayId: 'WG-1',
+      customerEmail: 'a@example.com',
+      idempotencyKey: 'winger-charge-ord-1',
+      paymentMethodId: 'pm_card_visa',
+    });
+    expect(result).toMatchObject({
+      status: 'failed',
+      paymentIntentId: 'pi_canceled',
+    });
   });
 
-  it('classifies known non-terminal PaymentIntent statuses as uncertain', async () => {
+  it('classifies requires_payment_method and other open PaymentIntent statuses as uncertain', async () => {
     const service = new StripeService();
     for (const status of [
+      'requires_payment_method',
       'processing',
       'requires_action',
       'requires_confirmation',
@@ -373,6 +416,30 @@ describe('StripeService payment safety', () => {
         paymentIntentId: `pi_${status}`,
       });
     }
+  });
+
+  it('returns PaymentIntent status from retrievePaymentIntentStatus', async () => {
+    const retrieve = jest.fn().mockResolvedValue({
+      id: 'pi_1',
+      status: 'requires_payment_method',
+    });
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { retrieve } } as never, 'test');
+    await expect(service.retrievePaymentIntentStatus('pi_1')).resolves.toEqual({
+      ok: true,
+      id: 'pi_1',
+      status: 'requires_payment_method',
+    });
+  });
+
+  it('marks retrievePaymentIntentStatus failures as not ok', async () => {
+    const retrieve = jest.fn().mockRejectedValue(new Error('socket hang up'));
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { retrieve } } as never, 'test');
+    await expect(service.retrievePaymentIntentStatus('pi_1')).resolves.toMatchObject({
+      ok: false,
+      message: 'socket hang up',
+    });
   });
 
   it('classifies unrecognised PaymentIntent statuses as uncertain and preserves PaymentIntent id', async () => {

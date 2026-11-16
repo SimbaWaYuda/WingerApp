@@ -3528,22 +3528,29 @@ export class OrdersService {
     }
 
     if (charge.status === 'failed') {
-      if (current.paymentStatus === PaymentStatus.PAID) {
+      if (
+        current.paymentStatus === PaymentStatus.PAID ||
+        current.paymentStatus === PaymentStatus.REFUNDED
+      ) {
         return this.toResponse(current, charge.message);
       }
       if (current.paymentStatus === PaymentStatus.FAILED) {
         throw new BadRequestException(charge.message);
       }
-      await this.prisma.order.update({
-        where: { id: orderId },
-        data: {
-          paymentStatus: PaymentStatus.FAILED,
-          paymentMode: charge.mode,
-          stripePaymentIntentId: charge.paymentIntentId,
-          status: OrderStatus.CANCELLED,
-        },
+      // Only PENDING may fail locally; concurrent paid/refunded wins the race.
+      const failed = await this.failPendingCardOrder({
+        orderId,
+        paymentMode: charge.mode,
+        paymentIntentId: charge.paymentIntentId,
+        actorUserId: user.sub,
       });
-      await this.restoreStock(orderId, user.sub);
+      if (!failed) {
+        const latest = await this.prisma.order.findUniqueOrThrow({
+          where: { id: orderId },
+          include: orderWithItems,
+        });
+        return this.toResponse(latest, charge.message);
+      }
       throw new BadRequestException(charge.message);
     }
 
@@ -3571,16 +3578,37 @@ export class OrdersService {
       return this.toResponse(current, charge.message);
     }
 
+    if (
+      current.paymentStatus === PaymentStatus.FAILED ||
+      current.paymentStatus === PaymentStatus.REFUNDED
+    ) {
+      // Late success must use recoverStockForLatePayment + claimPaidAfterRecovery.
+      return this.toResponse(current, charge.message);
+    }
+
     const claimed = await this.claimPaidOrder(orderId, charge, current.status);
+    if (claimed.count === 0) {
+      const latest = await this.prisma.order.findUniqueOrThrow({
+        where: { id: orderId },
+        include: orderWithItems,
+      });
+      if (latest.paymentStatus === PaymentStatus.PAID) {
+        await this.commissions.createSnapshotsForOrder({
+          orderId,
+          paymentMode: charge.mode,
+          isDemo: charge.mode !== 'live',
+          initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+        });
+      }
+      return this.toResponse(latest, charge.message);
+    }
     await this.commissions.createSnapshotsForOrder({
       orderId,
       paymentMode: charge.mode,
       isDemo: charge.mode !== 'live',
       initialStatus: CommissionRecognitionStatus.RECOGNIZED,
     });
-    if (claimed.count > 0) {
-      await this.onboarding.onOrderPlaced(user.sub, user.role);
-    }
+    await this.onboarding.onOrderPlaced(user.sub, user.role);
     const saved = await this.prisma.order.findUniqueOrThrow({
       where: { id: orderId },
       include: orderWithItems,
@@ -3588,6 +3616,10 @@ export class OrdersService {
     return this.toResponse(saved, charge.message);
   }
 
+  /**
+   * Claim PAID only from PENDING. FAILED/CANCELLED must go through
+   * recoverStockForLatePayment then claimPaidAfterRecovery — never bypass.
+   */
   private async claimPaidOrder(
     orderId: string,
     charge: ChargeResult,
@@ -3606,7 +3638,7 @@ export class OrdersService {
       this.prisma.order.updateMany({
         where: {
           id: orderId,
-          paymentStatus: { not: PaymentStatus.PAID },
+          paymentStatus: PaymentStatus.PENDING,
         },
         data,
       });
@@ -3620,6 +3652,184 @@ export class OrdersService {
         throw firstError;
       }
     }
+  }
+
+  /** After re-reserve (or equivalent), claim PAID only from FAILED — never from REFUNDED. */
+  private async claimPaidAfterRecovery(
+    orderId: string,
+    charge: ChargeResult,
+  ) {
+    return this.prisma.order.updateMany({
+      where: {
+        id: orderId,
+        paymentStatus: PaymentStatus.FAILED,
+      },
+      data: {
+        paymentStatus: PaymentStatus.PAID,
+        paymentMode: charge.mode,
+        stripePaymentIntentId: charge.paymentIntentId,
+        status: OrderStatus.PROCESSING,
+      },
+    });
+  }
+
+  /**
+   * Fail + restore atomically under a row lock so a concurrent paid claim cannot
+   * interleave between FAILED and stock restoration.
+   */
+  private async failPendingCardOrder(params: {
+    orderId: string;
+    paymentMode: string;
+    paymentIntentId?: string;
+    actorUserId: string;
+  }): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT id FROM "Order" WHERE id = ${params.orderId} FOR UPDATE
+      `;
+      const current = await tx.order.findUnique({ where: { id: params.orderId } });
+      if (!current) return false;
+      if (current.paymentStatus === PaymentStatus.REFUNDED) return false;
+      if (current.paymentStatus === PaymentStatus.PAID) return false;
+      if (current.paymentStatus !== PaymentStatus.PENDING) return false;
+
+      await tx.order.update({
+        where: { id: params.orderId },
+        data: {
+          paymentStatus: PaymentStatus.FAILED,
+          paymentMode: params.paymentMode,
+          status: OrderStatus.CANCELLED,
+          ...(params.paymentIntentId
+            ? { stripePaymentIntentId: params.paymentIntentId }
+            : {}),
+        },
+      });
+      await this.restoreStockInTx(tx, params.orderId, params.actorUserId);
+      return true;
+    });
+  }
+
+  /**
+   * Bind webhook PaymentIntent to the order, or reject mismatches.
+   * Never replaces an already-bound different PI id.
+   */
+  private async associateWebhookPaymentIntent<
+    T extends {
+      id: string;
+      stripePaymentIntentId: string | null;
+      paymentStatus: PaymentStatus;
+    },
+  >(
+    order: T,
+    paymentIntentId: string,
+  ): Promise<{ ok: true; order: T } | { ok: false; reason: 'pi_mismatch' }> {
+    const bound = (order.stripePaymentIntentId ?? '').trim();
+    if (bound) {
+      if (bound !== paymentIntentId) {
+        this.logger.warn(
+          `Ignoring webhook PI ${paymentIntentId} for order ${order.id}; bound PI is ${bound}`,
+        );
+        return { ok: false, reason: 'pi_mismatch' };
+      }
+      return { ok: true, order };
+    }
+
+    const attached = await this.prisma.order.updateMany({
+      where: {
+        id: order.id,
+        stripePaymentIntentId: null,
+      },
+      data: { stripePaymentIntentId: paymentIntentId },
+    });
+    if (attached.count === 1) {
+      return {
+        ok: true,
+        order: { ...order, stripePaymentIntentId: paymentIntentId },
+      };
+    }
+
+    const latest = await this.prisma.order.findUnique({ where: { id: order.id } });
+    if (!latest) return { ok: false, reason: 'pi_mismatch' };
+    if ((latest.stripePaymentIntentId ?? '').trim() === paymentIntentId) {
+      return { ok: true, order: { ...order, ...latest } };
+    }
+    this.logger.warn(
+      `Ignoring webhook PI ${paymentIntentId} for order ${order.id}; concurrent bind is ${latest.stripePaymentIntentId}`,
+    );
+    return { ok: false, reason: 'pi_mismatch' };
+  }
+
+  /**
+   * payment_failed is not proof the PI is canceled. Retrieve outside any DB
+   * transaction, then apply paid / guarded fail / or keep PENDING.
+   */
+  private async handlePaymentFailedWebhook(
+    order: {
+      id: string;
+      customerId: string;
+      customerEmail: string;
+      customerName: string;
+      paymentStatus: PaymentStatus;
+      paymentMethod: string;
+      paymentMode: string;
+      stripePaymentIntentId: string | null;
+      status: OrderStatus;
+    },
+    paymentIntentId: string,
+    mode: 'test' | 'live',
+    actor: AuthUser,
+  ) {
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      return { received: true, ignored: true };
+    }
+    if (order.paymentStatus === PaymentStatus.REFUNDED) {
+      return { received: true, ignored: true };
+    }
+    if (order.paymentStatus === PaymentStatus.FAILED) {
+      return { received: true, duplicate: true };
+    }
+
+    const retrieved =
+      await this.stripe.retrievePaymentIntentStatus(paymentIntentId);
+    if (!retrieved.ok) {
+      this.logger.warn(
+        `payment_failed webhook kept order ${order.id} PENDING (retrieve failed: ${retrieved.message})`,
+      );
+      return { received: true, pending: true, reason: 'retrieve_failed' };
+    }
+
+    const status = retrieved.status.trim().toLowerCase();
+    if (status === 'succeeded') {
+      await this.recordCardCharge(
+        order.id,
+        {
+          mode,
+          status: 'paid',
+          paymentIntentId: retrieved.id,
+          message: 'Stripe payment succeeded',
+        },
+        actor,
+      );
+      return { received: true, paid: true };
+    }
+
+    if (status === 'canceled') {
+      const failed = await this.failPendingCardOrder({
+        orderId: order.id,
+        paymentMode: mode,
+        paymentIntentId: retrieved.id,
+        actorUserId: order.customerId,
+      });
+      return failed
+        ? { received: true, failed: true }
+        : { received: true, ignored: true };
+    }
+
+    // requires_payment_method, processing, requires_*, unknown — hold stock.
+    this.logger.warn(
+      `payment_failed webhook kept order ${order.id} PENDING (PaymentIntent status: ${retrieved.status})`,
+    );
+    return { received: true, pending: true, reason: 'non_terminal' };
   }
 
   private checkoutKey(dto: CreateOrderDto): string | null {
@@ -3816,8 +4026,17 @@ export class OrdersService {
       return { received: true };
     }
     const intent = event.data.object;
-    const order = await this.findOrderForIntent(intent);
-    if (!order) return { received: true, matched: false };
+    const found = await this.findOrderForIntent(intent);
+    if (!found) return { received: true, matched: false };
+
+    const associated = await this.associateWebhookPaymentIntent(
+      found,
+      intent.id,
+    );
+    if (!associated.ok) {
+      return { received: true, ignored: true, reason: 'pi_mismatch' };
+    }
+    const order = associated.order;
 
     const mode: 'test' | 'live' = event.livemode ? 'live' : 'test';
     const actor = {
@@ -3828,23 +4047,7 @@ export class OrdersService {
     };
 
     if (event.type === 'payment_intent.payment_failed') {
-      if (order.paymentStatus === PaymentStatus.PAID) {
-        return { received: true, ignored: true };
-      }
-      if (order.paymentStatus === PaymentStatus.FAILED) {
-        return { received: true, duplicate: true };
-      }
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: {
-          paymentStatus: PaymentStatus.FAILED,
-          paymentMode: mode,
-          stripePaymentIntentId: intent.id,
-          status: OrderStatus.CANCELLED,
-        },
-      });
-      await this.restoreStock(order.id, order.customerId);
-      return { received: true };
+      return this.handlePaymentFailedWebhook(order, intent.id, mode, actor);
     }
 
     if (order.paymentStatus === PaymentStatus.REFUNDED) {
@@ -3864,6 +4067,13 @@ export class OrdersService {
       return { received: true, duplicate: true };
     }
 
+    const charge: ChargeResult = {
+      mode,
+      status: 'paid',
+      paymentIntentId: intent.id,
+      message: 'Stripe payment succeeded',
+    };
+
     if (
       order.paymentStatus === PaymentStatus.FAILED ||
       order.status === OrderStatus.CANCELLED
@@ -3876,18 +4086,20 @@ export class OrdersService {
       if (!recovered) {
         return { received: true, unsellable: true };
       }
+      const claimed = await this.claimPaidAfterRecovery(order.id, charge);
+      if (claimed.count > 0) {
+        await this.commissions.createSnapshotsForOrder({
+          orderId: order.id,
+          paymentMode: mode,
+          isDemo: !event.livemode,
+          initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+        });
+        await this.onboarding.onOrderPlaced(order.customerId, UserRole.CUSTOMER);
+      }
+      return { received: true, recovered: true };
     }
 
-    await this.recordCardCharge(
-      order.id,
-      {
-        mode,
-        status: 'paid',
-        paymentIntentId: intent.id,
-        message: 'Stripe payment succeeded',
-      },
-      actor,
-    );
+    await this.recordCardCharge(order.id, charge, actor);
     return { received: true };
   }
 
@@ -4170,74 +4382,85 @@ export class OrdersService {
     reason = 'ORDER_PAYMENT_FAILED',
     options?: { itemIds?: string[] },
   ) {
-    const items = await this.prisma.orderItem.findMany({ where: { orderId } });
+    await this.prisma.$transaction(async (tx) => {
+      await this.restoreStockInTx(tx, orderId, userId, reason, options);
+    });
+  }
+
+  /** Stock restore that joins an existing transaction (e.g. locked fail-pending). */
+  private async restoreStockInTx(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    userId: string,
+    reason = 'ORDER_PAYMENT_FAILED',
+    options?: { itemIds?: string[] },
+  ) {
+    const items = await tx.orderItem.findMany({ where: { orderId } });
     const selected = options?.itemIds
       ? items.filter((item) => options.itemIds!.includes(item.id))
       : items;
-    await this.prisma.$transaction(async (tx) => {
-      for (const item of selected) {
-        const variantId =
-          (item as { variantId?: string | null }).variantId ?? null;
-        const eventId = `order-restore-${reason}-${orderId}-${item.productId}-${variantId ?? 'base'}`;
-        const already = await tx.inventoryLedger.findUnique({ where: { eventId } });
-        if (already) continue;
-        const product = await tx.product.findUnique({
-          where: { id: item.productId },
+    for (const item of selected) {
+      const variantId =
+        (item as { variantId?: string | null }).variantId ?? null;
+      const eventId = `order-restore-${reason}-${orderId}-${item.productId}-${variantId ?? 'base'}`;
+      const already = await tx.inventoryLedger.findUnique({ where: { eventId } });
+      if (already) continue;
+      const product = await tx.product.findUnique({
+        where: { id: item.productId },
+      });
+      if (!product) continue;
+      if (variantId) {
+        const variant = await tx.productVariant.findUnique({
+          where: { id: variantId },
         });
-        if (!product) continue;
-        if (variantId) {
-          const variant = await tx.productVariant.findUnique({
-            where: { id: variantId },
-          });
-          if (!variant) continue;
-          const nextVariant = variant.stock + item.quantity;
-          await tx.productVariant.update({
-            where: { id: variant.id },
-            data: {
-              stock: nextVariant,
-              stockStatus: stockStatusFor(nextVariant),
-            },
-          });
-          const siblings = await tx.productVariant.findMany({
-            where: { productId: product.id },
-          });
-          const total = aggregateVariantStock(siblings);
-          await tx.product.update({
-            where: { id: product.id },
-            data: { stock: total, stockStatus: stockStatusFor(total) },
-          });
-          await tx.inventoryLedger.create({
-            data: {
-              productId: product.id,
-              variantId: variant.id,
-              supplierId: product.supplierId,
-              delta: item.quantity,
-              reason,
-              eventId,
-              userId,
-              quantityAfter: nextVariant,
-            },
-          });
-        } else {
-          const next = product.stock + item.quantity;
-          await tx.product.update({
-            where: { id: product.id },
-            data: { stock: next, stockStatus: stockStatusFor(next) },
-          });
-          await tx.inventoryLedger.create({
-            data: {
-              productId: product.id,
-              supplierId: product.supplierId,
-              delta: item.quantity,
-              reason,
-              eventId,
-              userId,
-              quantityAfter: next,
-            },
-          });
-        }
+        if (!variant) continue;
+        const nextVariant = variant.stock + item.quantity;
+        await tx.productVariant.update({
+          where: { id: variant.id },
+          data: {
+            stock: nextVariant,
+            stockStatus: stockStatusFor(nextVariant),
+          },
+        });
+        const siblings = await tx.productVariant.findMany({
+          where: { productId: product.id },
+        });
+        const total = aggregateVariantStock(siblings);
+        await tx.product.update({
+          where: { id: product.id },
+          data: { stock: total, stockStatus: stockStatusFor(total) },
+        });
+        await tx.inventoryLedger.create({
+          data: {
+            productId: product.id,
+            variantId: variant.id,
+            supplierId: product.supplierId,
+            delta: item.quantity,
+            reason,
+            eventId,
+            userId,
+            quantityAfter: nextVariant,
+          },
+        });
+      } else {
+        const next = product.stock + item.quantity;
+        await tx.product.update({
+          where: { id: product.id },
+          data: { stock: next, stockStatus: stockStatusFor(next) },
+        });
+        await tx.inventoryLedger.create({
+          data: {
+            productId: product.id,
+            supplierId: product.supplierId,
+            delta: item.quantity,
+            reason,
+            eventId,
+            userId,
+            quantityAfter: next,
+          },
+        });
       }
-    });
+    }
   }
 
   private assertCanView(

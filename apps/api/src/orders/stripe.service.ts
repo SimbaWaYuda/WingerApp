@@ -184,8 +184,8 @@ export class StripeService {
         };
       }
 
-      // Only known terminal failure statuses restore stock; unknown/future stay uncertain.
-      if (isDefinitiveFailedPaymentIntentStatus(intent.status)) {
+      // Only verified canceled closes the PI for charging; all other statuses stay uncertain.
+      if (isCanceledPaymentIntentStatus(intent.status)) {
         return {
           mode: this.checkoutMode,
           status: 'failed',
@@ -213,13 +213,43 @@ export class StripeService {
           message,
         };
       }
-      this.logger.warn(`Stripe charge failed: ${message}`);
+      // Card declines, open PIs, and any ambiguous Stripe error: do not restore stock.
+      // Only a verified canceled PaymentIntent status (above) is a definitive charge failure.
+      this.logger.warn(`Stripe charge outcome uncertain: ${message}`);
       return {
         mode: this.checkoutMode,
-        status: 'failed',
+        status: 'uncertain',
         paymentIntentId,
         message,
       };
+    }
+  }
+
+  /**
+   * Fresh PaymentIntent status for webhook/reconcile decisions.
+   * Stripe I/O only — callers must not hold a DB transaction open.
+   */
+  async retrievePaymentIntentStatus(
+    paymentIntentId: string,
+  ): Promise<
+    | { ok: true; id: string; status: string }
+    | { ok: false; message: string }
+  > {
+    const id = paymentIntentId.trim();
+    if (!id.startsWith('pi_')) {
+      return { ok: false, message: 'Invalid PaymentIntent id' };
+    }
+    if (!this.stripe) {
+      return { ok: false, message: 'Stripe is not configured' };
+    }
+    try {
+      const intent = await this.stripe.paymentIntents.retrieve(id);
+      return { ok: true, id: intent.id, status: String(intent.status ?? '') };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Stripe retrieve failed';
+      this.logger.warn(`Stripe PaymentIntent retrieve failed: ${message}`);
+      return { ok: false, message };
     }
   }
 
@@ -554,16 +584,12 @@ function isAlreadyRefunded(error: unknown): boolean {
   return message.includes('already refunded');
 }
 
-/**
- * Definitive terminal PaymentIntent failure statuses from Stripe.PaymentIntent.Status
- * (apiVersion 2025-02-24.acacia). Known non-terminal and any unrecognised/future
- * status must NOT use this path — they stay uncertain so stock is not restored.
- */
-function isDefinitiveFailedPaymentIntentStatus(
+/** Only `canceled` is a definitive closed-for-charging failure (Stripe.PaymentIntent.Status). */
+function isCanceledPaymentIntentStatus(
   status: string | null | undefined,
 ): boolean {
-  const value = (status ?? '').trim().toLowerCase();
-  return value === 'canceled' || value === 'requires_payment_method';}
+  return (status ?? '').trim().toLowerCase() === 'canceled';
+}
 
 /** Best-effort PaymentIntent id from a Stripe SDK error payload (never logs card data). */
 function paymentIntentIdFromStripeError(error: unknown): string | undefined {

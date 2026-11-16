@@ -50,8 +50,8 @@ function orderShell(overrides: Record<string, unknown> = {}) {
     customerId: 'cust-1',
     customerName: 'Amina',
     customerEmail: 'amina@example.com',
-    status: OrderStatus.PROCESSING,
-    paymentStatus: PaymentStatus.PENDING,
+    status: OrderStatus.PROCESSING as OrderStatus,
+    paymentStatus: PaymentStatus.PENDING as PaymentStatus,
     paymentMethod: 'card',
     paymentMode: 'test',
     stripePaymentIntentId: null as string | null,
@@ -82,6 +82,7 @@ describe('payment and commission reliability', () => {
   let stripe: {
     chargeOrder: jest.Mock;
     checkoutMode: string;
+    retrievePaymentIntentStatus: jest.Mock;
     refundCardCharge: jest.Mock;
     listRefundsForPaymentIntent: jest.Mock;
   };
@@ -358,6 +359,11 @@ describe('payment and commission reliability', () => {
     stripe = {
       chargeOrder: jest.fn(),
       checkoutMode: 'test',
+      retrievePaymentIntentStatus: jest.fn().mockResolvedValue({
+        ok: true,
+        id: 'pi_1',
+        status: 'requires_payment_method',
+      }),
       refundCardCharge: jest
         .fn()
         .mockResolvedValue({ ok: true, refundId: 're_1', status: 'succeeded' }),
@@ -489,7 +495,7 @@ describe('payment and commission reliability', () => {
     expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
   });
 
-  it('marks FAILED and restores stock on a definitive card decline', async () => {
+  it('marks FAILED and restores stock when charge result is verified canceled', async () => {
     const state = orderShell({
       paymentStatus: PaymentStatus.PENDING,
       status: OrderStatus.PROCESSING,
@@ -514,17 +520,329 @@ describe('payment and commission reliability', () => {
         {
           mode: 'test',
           status: 'failed',
-          paymentIntentId: 'pi_declined',
-          message: 'Your card was declined.',
+          paymentIntentId: 'pi_canceled',
+          message: 'Stripe payment status: canceled',
         },
         customer(),
       ),
-    ).rejects.toThrow(/declined/i);
+    ).rejects.toThrow(/canceled/i);
 
     expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
     expect(state.status).toBe(OrderStatus.CANCELLED);
     expect(prisma.inventoryLedger.create).toHaveBeenCalled();
     expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('keeps PENDING when payment_failed retrieves requires_payment_method', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.PROCESSING,
+      stripePaymentIntentId: null,
+    });
+    prisma.order.findUnique.mockResolvedValue(state);
+    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { count: 1 };
+    });
+    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+      ok: true,
+      id: 'pi_open',
+      status: 'requires_payment_method',
+    });
+
+    const result = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_open', metadata: { orderId: 'ord-1' } } },
+    });
+
+    expect(result).toMatchObject({ pending: true, reason: 'non_terminal' });
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(state.status).toBe(OrderStatus.PROCESSING);
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('keeps PENDING when payment_failed retrieves processing', async () => {
+    const state = orderShell({ paymentStatus: PaymentStatus.PENDING });
+    prisma.order.findUnique.mockResolvedValue(state);
+    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+      ok: true,
+      id: 'pi_processing',
+      status: 'processing',
+    });
+
+    const result = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_processing', metadata: { orderId: 'ord-1' } } },
+    });
+
+    expect(result).toMatchObject({ pending: true });
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+  });
+
+  it('fails once when payment_failed retrieves canceled', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.PROCESSING,
+      stripePaymentIntentId: null,
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { count: 1 };
+    });
+    prisma.order.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { ...state };
+    });
+    prisma.orderItem.findMany.mockResolvedValue([
+      lineItem({ status: OrderStatus.PROCESSING }),
+    ]);
+    prisma.product.findUnique.mockResolvedValue({
+      id: 'p1',
+      stock: 4,
+      supplierId: 'sup-1',
+    });
+    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+      ok: true,
+      id: 'pi_canceled',
+      status: 'canceled',
+    });
+
+    const first = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_canceled', metadata: { orderId: 'ord-1' } } },
+    });
+    const second = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_canceled', metadata: { orderId: 'ord-1' } } },
+    });
+
+    expect(first).toMatchObject({ failed: true });
+    expect(second).toMatchObject({ duplicate: true });
+    expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+    expect(state.status).toBe(OrderStatus.CANCELLED);
+    expect(prisma.inventoryLedger.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks paid when payment_failed retrieves succeeded', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.PROCESSING,
+    });
+    prisma.order.findUnique.mockResolvedValue(state);
+    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { count: 1 };
+    });
+    prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+      ok: true,
+      id: 'pi_won',
+      status: 'succeeded',
+    });
+
+    const result = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_won', metadata: { orderId: 'ord-1' } } },
+    });
+
+    expect(result).toMatchObject({ paid: true });
+    expect(state.paymentStatus).toBe(PaymentStatus.PAID);
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).toHaveBeenCalled();
+  });
+
+  it('keeps PENDING when payment_failed retrieve times out', async () => {
+    const state = orderShell({ paymentStatus: PaymentStatus.PENDING });
+    prisma.order.findUnique.mockResolvedValue(state);
+    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+      ok: false,
+      message: 'socket hang up',
+    });
+
+    const result = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_timeout', metadata: { orderId: 'ord-1' } } },
+    });
+
+    expect(result).toMatchObject({ pending: true, reason: 'retrieve_failed' });
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+  });
+
+  it('ignores payment_failed for PAID and REFUNDED orders without restore', async () => {
+    for (const paymentStatus of [PaymentStatus.PAID, PaymentStatus.REFUNDED] as const) {
+      const state = orderShell({
+        paymentStatus,
+        stripePaymentIntentId: 'pi_done',
+      });
+      prisma.order.findUnique.mockResolvedValue(state);
+      stripe.retrievePaymentIntentStatus.mockClear();
+
+      const result = await service.handleStripeEvent({
+        type: 'payment_intent.payment_failed',
+        livemode: false,
+        data: { object: { id: 'pi_done', metadata: { orderId: 'ord-1' } } },
+      });
+
+      expect(result).toMatchObject({ ignored: true });
+      expect(state.paymentStatus).toBe(paymentStatus);
+      expect(stripe.retrievePaymentIntentStatus).not.toHaveBeenCalled();
+      expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not restore stock when fail-pending finds the order already PAID under lock', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      stripePaymentIntentId: 'pi_1',
+    });
+    prisma.order.findUnique.mockImplementation(async () => {
+      // Simulate concurrent claimPaidOrder winning before fail reads under FOR UPDATE.
+      state.paymentStatus = PaymentStatus.PAID;
+      return { ...state };
+    });
+    prisma.order.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { ...state };
+    });
+    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+      ok: true,
+      id: 'pi_1',
+      status: 'canceled',
+    });
+
+    const result = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+    });
+
+    expect(result).toMatchObject({ ignored: true });
+    expect(state.paymentStatus).toBe(PaymentStatus.PAID);
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('does not claim PAID from FAILED via recordCardCharge (late recovery required)', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_1',
+    });
+    prisma.order.findUnique.mockResolvedValue(state);
+    prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.recordCardCharge(
+      'ord-1',
+      {
+        mode: 'test',
+        status: 'paid',
+        paymentIntentId: 'pi_1',
+        message: 'Stripe payment succeeded',
+      },
+      customer(),
+    );
+
+    expect(result.paymentStatus).toBe(PaymentStatus.FAILED);
+    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('ignores mismatched PaymentIntent success and failure webhooks', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      stripePaymentIntentId: 'pi_bound',
+    });
+    prisma.order.findUnique.mockResolvedValue(state);
+
+    const failed = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: {
+        object: {
+          id: 'pi_other',
+          metadata: { orderId: 'ord-1' },
+        },
+      },
+    });
+    const succeeded = await service.handleStripeEvent({
+      type: 'payment_intent.succeeded',
+      livemode: false,
+      data: {
+        object: {
+          id: 'pi_other',
+          metadata: { orderId: 'ord-1' },
+        },
+      },
+    });
+
+    expect(failed).toMatchObject({ ignored: true, reason: 'pi_mismatch' });
+    expect(succeeded).toMatchObject({ ignored: true, reason: 'pi_mismatch' });
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(state.stripePaymentIntentId).toBe('pi_bound');
+    expect(stripe.retrievePaymentIntentStatus).not.toHaveBeenCalled();
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('binds a PaymentIntent id atomically when the order has none', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      stripePaymentIntentId: null,
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(
+      async ({
+        where,
+        data,
+      }: {
+        where?: { stripePaymentIntentId?: null | string };
+        data: Record<string, unknown>;
+      }) => {
+        if (
+          where &&
+          Object.prototype.hasOwnProperty.call(where, 'stripePaymentIntentId') &&
+          where.stripePaymentIntentId === null
+        ) {
+          if (state.stripePaymentIntentId) return { count: 0 };
+          Object.assign(state, data);
+          return { count: 1 };
+        }
+        Object.assign(state, data);
+        return { count: 1 };
+      },
+    );
+    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+      ok: true,
+      id: 'pi_first',
+      status: 'requires_payment_method',
+    });
+
+    const first = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_first', metadata: { orderId: 'ord-1' } } },
+    });
+    const second = await service.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: 'pi_second', metadata: { orderId: 'ord-1' } } },
+    });
+
+    expect(first).toMatchObject({ pending: true });
+    expect(state.stripePaymentIntentId).toBe('pi_first');
+    expect(second).toMatchObject({ ignored: true, reason: 'pi_mismatch' });
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
   });
 
   it('retries the same PENDING checkout with the same Stripe charge idempotency key', async () => {
@@ -640,25 +958,57 @@ describe('payment and commission reliability', () => {
     );
   });
 
-  it('applies a success webhook that arrives after a failure webhook', async () => {
-    const state = orderShell();
+  it('applies a success webhook after payment_failed while PaymentIntent was still open', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.PROCESSING,
+      stripePaymentIntentId: null,
+    });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
     prisma.order.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
       Object.assign(state, data);
       return { ...state };
     });
-    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(state, data);
-      return { count: 1 };
-    });
+    prisma.order.updateMany.mockImplementation(
+      async ({
+        where,
+        data,
+      }: {
+        where?: { paymentStatus?: PaymentStatus };
+        data: Record<string, unknown>;
+      }) => {
+        if (
+          where?.paymentStatus === PaymentStatus.PENDING &&
+          (state.paymentStatus as PaymentStatus) !== PaymentStatus.PENDING
+        ) {
+          return { count: 0 };
+        }
+        if (
+          where?.paymentStatus &&
+          (state.paymentStatus as PaymentStatus) === PaymentStatus.PAID &&
+          data.paymentStatus === PaymentStatus.FAILED
+        ) {
+          return { count: 0 };
+        }
+        Object.assign(state, data);
+        return { count: 1 };
+      },
+    );
     prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+      ok: true,
+      id: 'pi_live',
+      status: 'requires_payment_method',
+    });
 
-    await service.handleStripeEvent({
+    const failed = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
       livemode: true,
       data: { object: { id: 'pi_live', metadata: { orderId: 'ord-1' } } },
     });
-    expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+    expect(failed).toMatchObject({ pending: true });
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
 
     await service.handleStripeEvent({
       type: 'payment_intent.succeeded',
