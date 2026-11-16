@@ -214,6 +214,8 @@ concurrencyDescribe('PostgreSQL payment reconcile lease races (S2.6.20.1)', () =
     leaseOwner?: string | null;
     leaseExpiresAt?: Date | null;
     attemptCount?: number;
+    /** Bound-only stage default; pass null to assert unbound exclusion. */
+    stripePaymentIntentId?: string | null;
   }) {
     const id = `${run}-ord-${overrides.idSuffix}`;
     orderIds.push(id);
@@ -225,6 +227,11 @@ concurrencyDescribe('PostgreSQL payment reconcile lease races (S2.6.20.1)', () =
     const leaseExpiresIso = overrides.leaseExpiresAt
       ? utcWallClockIso(overrides.leaseExpiresAt.getTime())
       : null;
+    // Full order id keeps stripePaymentIntentId unique under the DB unique constraint.
+    const piId =
+      overrides.stripePaymentIntentId === undefined
+        ? `pi_${id}`
+        : overrides.stripePaymentIntentId;
     await sessionGate.order.create({
       data: {
         id,
@@ -241,6 +248,7 @@ concurrencyDescribe('PostgreSQL payment reconcile lease races (S2.6.20.1)', () =
         subtotal: 10,
         total: 10,
         paymentAmount: 10,
+        stripePaymentIntentId: piId,
         paymentReconcileLeaseOwner: overrides.leaseOwner ?? null,
         paymentReconcileAttemptCount: overrides.attemptCount ?? 0,
       } as never,
@@ -286,6 +294,62 @@ concurrencyDescribe('PostgreSQL payment reconcile lease races (S2.6.20.1)', () =
       },
     };
   }
+
+  /** Keep earlier fixtures out of later claimEligibleBatch calls in this suite. */
+  async function quarantineRaceFixtures() {
+    if (!orderIds.length) return;
+    await sessionGate.order.updateMany({
+      where: { id: { in: [...orderIds] } },
+      data: {
+        paymentReconcileManualReviewAt: new Date(fixedNow - 1),
+        paymentReconcileLeaseOwner: null,
+        paymentReconcileLeaseExpiresAt: null,
+      },
+    });
+  }
+
+  it('Bound-only: literal pi_ prefix (LEFT=pi_); excludes LIKE wildcards', async () => {
+    await quarantineRaceFixtures();
+    // Run-scoped values avoid unique-constraint clashes across suite re-runs;
+    // `pi_` alone still proves LEFT(...,3)='pi_' for the bare-prefix edge case.
+    const cases: { suffix: string; pi: string | null; expectClaim: boolean }[] =
+      [
+        { suffix: 'pi-123', pi: `pi_123_${run}`, expectClaim: true },
+        { suffix: 'pi-bare', pi: 'pi_', expectClaim: true },
+        { suffix: 'pixa', pi: `pixa123_${run}`, expectClaim: false },
+        { suffix: 'pix', pi: 'pix', expectClaim: false },
+        { suffix: 'pi-only', pi: 'pi', expectClaim: false },
+        { suffix: 'empty', pi: '', expectClaim: false },
+        { suffix: 'null-pi', pi: null, expectClaim: false },
+        { suffix: 'ch', pi: `ch_123_${run}`, expectClaim: false },
+      ];
+    const seeded: { id: string; expectClaim: boolean }[] = [];
+    for (const c of cases) {
+      const id = await seedPendingCard({
+        idSuffix: c.suffix,
+        stripePaymentIntentId: c.pi,
+      });
+      seeded.push({ id, expectClaim: c.expectClaim });
+    }
+
+    const claimed = await leaseA.claimEligibleBatch({
+      limit: 20,
+      nowMs: fixedNow,
+      graceMs: PAYMENT_RECONCILE_DEFAULT_GRACE_MS,
+      leaseTtlMs: 60_000,
+    });
+    const ids = new Set(claimed.map((c) => c.id));
+    for (const row of seeded) {
+      expect(ids.has(row.id)).toBe(row.expectClaim);
+      if (!row.expectClaim) {
+        const db = await sessionGate.order.findUniqueOrThrow({
+          where: { id: row.id },
+        });
+        expect(db.paymentReconcileAttemptCount).toBe(0);
+        expect(db.paymentReconcileLeaseOwner).toBeNull();
+      }
+    }
+  });
 
   it('Race A: two workers claim the same eligible order — only one wins', async () => {
     const id = await seedPendingCard({ idSuffix: 'a1' });
@@ -583,6 +647,7 @@ concurrencyDescribe('PostgreSQL UTC timestamp semantics (S2.6.20.4)', () => {
         subtotal: 10,
         total: 10,
         paymentAmount: 10,
+        stripePaymentIntentId: `pi_${id}`,
         paymentReconcileAttemptCount: 0,
       },
     });
@@ -597,6 +662,7 @@ concurrencyDescribe('PostgreSQL UTC timestamp semantics (S2.6.20.4)', () => {
       leaseExpiresAtMs?: number;
       attemptCount?: number;
       quarantine?: boolean;
+      stripePaymentIntentId?: string | null;
     },
   ) {
     if (extras?.quarantine !== false) {
@@ -608,6 +674,10 @@ concurrencyDescribe('PostgreSQL UTC timestamp semantics (S2.6.20.4)', () => {
       extras?.leaseExpiresAtMs != null
         ? utcWallClockIso(extras.leaseExpiresAtMs)
         : null;
+    const piId =
+      extras && Object.prototype.hasOwnProperty.call(extras, 'stripePaymentIntentId')
+        ? extras.stripePaymentIntentId
+        : `pi_${id}`;
     await sessionGate.order.create({
       data: {
         id,
@@ -624,6 +694,7 @@ concurrencyDescribe('PostgreSQL UTC timestamp semantics (S2.6.20.4)', () => {
         subtotal: 10,
         total: 10,
         paymentAmount: 10,
+        stripePaymentIntentId: piId,
         paymentReconcileLeaseOwner: extras?.leaseOwner ?? null,
         paymentReconcileAttemptCount: extras?.attemptCount ?? 0,
       },

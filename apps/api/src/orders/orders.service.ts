@@ -68,11 +68,19 @@ import {
   toStripeAmountMinor,
 } from './stripe-amount';
 import { assertStripePaymentIntentMatchesOrder } from './stripe-payment-intent-identity';
-import { writeStripeChargeAttemptAtUtc } from './payment-reconcile-utc';
+import {
+  utcWallClockIso,
+  writeStripeChargeAttemptAtUtc,
+} from './payment-reconcile-utc';
 import {
   aggregateVariantStock,
   resolveLineStock,
 } from '../products/product-variants';
+
+/** Origin for shared validated card-success application (S2.6.20.6b). */
+export type ApplyValidatedCardSuccessOrigin =
+  | 'WEBHOOK'
+  | 'RECONCILIATION_WORKER';
 
 export type CreateOrderItemDto = {
   productId: string;
@@ -3652,6 +3660,7 @@ export class OrdersService {
   /**
    * Claim PAID only from PENDING. FAILED/CANCELLED must go through
    * recoverStockForLatePayment then claimPaidAfterRecovery — never bypass.
+   * Lease-independent (webhook / checkout).
    */
   private async claimPaidOrder(
     orderId: string,
@@ -3687,6 +3696,42 @@ export class OrdersService {
     }
   }
 
+  /**
+   * Worker-only PENDING→PAID with atomic lease fence (S2.6.20.6b).
+   * Preliminary isLeaseHeld must not be treated as the terminal fence.
+   */
+  private async claimPaidOrderWithLeaseFence(params: {
+    orderId: string;
+    charge: ChargeResult;
+    leaseOwner: string;
+    nowMs?: number;
+  }): Promise<{ count: number }> {
+    const paymentIntentId = (params.charge.paymentIntentId ?? '').trim();
+    if (!paymentIntentId) return { count: 0 };
+    const nowIso = utcWallClockIso(params.nowMs ?? Date.now());
+    const mode = params.charge.mode;
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      UPDATE "Order"
+      SET
+        "paymentStatus" = 'PAID'::"PaymentStatus",
+        "paymentMode" = ${mode},
+        "stripePaymentIntentId" = ${paymentIntentId},
+        "status" = 'PROCESSING'::"OrderStatus",
+        "paymentReconcileLeaseOwner" = NULL,
+        "paymentReconcileLeaseExpiresAt" = NULL
+      WHERE id = ${params.orderId}
+        AND "paymentStatus" = 'PENDING'::"PaymentStatus"
+        AND "paymentReconcileLeaseOwner" = ${params.leaseOwner}
+        AND "paymentReconcileLeaseExpiresAt" > ${nowIso}::timestamp
+        AND (
+          "stripePaymentIntentId" IS NULL
+          OR "stripePaymentIntentId" = ${paymentIntentId}
+        )
+      RETURNING id
+    `;
+    return { count: rows.length === 1 ? 1 : 0 };
+  }
+
   /** After re-reserve (or equivalent), claim PAID only from FAILED — never from REFUNDED. */
   private async claimPaidAfterRecovery(
     orderId: string,
@@ -3709,12 +3754,15 @@ export class OrdersService {
   /**
    * Fail + restore atomically under a row lock so a concurrent paid claim cannot
    * interleave between FAILED and stock restoration.
+   * Optional leaseFence: worker-only ownership check inside the same locked tx.
    */
   private async failPendingCardOrder(params: {
     orderId: string;
     paymentMode: string;
     paymentIntentId?: string;
     actorUserId: string;
+    /** When set, require live lease ownership before FAIL + stock restore. */
+    leaseFence?: { leaseOwner: string; nowMs?: number };
   }): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`
@@ -3726,6 +3774,22 @@ export class OrdersService {
       if (current.paymentStatus === PaymentStatus.PAID) return false;
       if (current.paymentStatus !== PaymentStatus.PENDING) return false;
 
+      if (params.leaseFence) {
+        const nowIso = utcWallClockIso(params.leaseFence.nowMs ?? Date.now());
+        const fenceOk = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id
+          FROM "Order"
+          WHERE id = ${params.orderId}
+            AND "paymentStatus" = 'PENDING'::"PaymentStatus"
+            AND "paymentReconcileLeaseOwner" = ${params.leaseFence.leaseOwner}
+            AND "paymentReconcileLeaseExpiresAt" > ${nowIso}::timestamp
+        `;
+        if (fenceOk.length !== 1) return false;
+        const bound = (current.stripePaymentIntentId ?? '').trim();
+        const expected = (params.paymentIntentId ?? '').trim();
+        if (bound && expected && bound !== expected) return false;
+      }
+
       await tx.order.update({
         where: { id: params.orderId },
         data: {
@@ -3734,6 +3798,12 @@ export class OrdersService {
           status: OrderStatus.CANCELLED,
           ...(params.paymentIntentId
             ? { stripePaymentIntentId: params.paymentIntentId }
+            : {}),
+          ...(params.leaseFence
+            ? {
+                paymentReconcileLeaseOwner: null,
+                paymentReconcileLeaseExpiresAt: null,
+              }
             : {}),
         },
       });
@@ -4534,6 +4604,176 @@ export class OrdersService {
   }
 
   /**
+   * Worker façade for lease-fenced PAID (S2.6.20.9).
+   * Does not create PaymentIntents; callers must already validate Stripe identity.
+   */
+  async applyWorkerCardSuccess(params: {
+    orderId: string;
+    customerId: string;
+    statusHint: OrderStatus;
+    paymentIntentId: string;
+    mode: 'test' | 'live';
+    leaseOwner: string;
+    nowMs?: number;
+  }) {
+    return this.applyValidatedCardSuccess({
+      origin: 'RECONCILIATION_WORKER',
+      orderId: params.orderId,
+      customerId: params.customerId,
+      statusHint: params.statusHint,
+      paymentIntentId: params.paymentIntentId,
+      mode: params.mode,
+      leaseOwner: params.leaseOwner,
+      nowMs: params.nowMs,
+    });
+  }
+
+  /**
+   * Worker façade for lease-fenced cancel/fail + stock restore (S2.6.20.9).
+   */
+  async failWorkerCardOrder(params: {
+    orderId: string;
+    paymentMode: string;
+    paymentIntentId: string;
+    actorUserId: string;
+    leaseOwner: string;
+    nowMs?: number;
+  }): Promise<boolean> {
+    return this.failPendingCardOrder({
+      orderId: params.orderId,
+      paymentMode: params.paymentMode,
+      paymentIntentId: params.paymentIntentId,
+      actorUserId: params.actorUserId,
+      leaseFence: {
+        leaseOwner: params.leaseOwner,
+        nowMs: params.nowMs,
+      },
+    });
+  }
+
+  /**
+   * Shared validated card-success application (S2.6.20.6b).
+   * WEBHOOK: lease-independent PENDING claim.
+   * RECONCILIATION_WORKER: atomic lease-fenced PENDING claim only (no FAILED recovery).
+   */
+  private async applyValidatedCardSuccess(params: {
+    origin: ApplyValidatedCardSuccessOrigin;
+    orderId: string;
+    customerId: string;
+    statusHint: OrderStatus;
+    paymentIntentId: string;
+    mode: 'test' | 'live';
+    leaseOwner?: string;
+    nowMs?: number;
+  }): Promise<
+    | { kind: 'claimed' }
+    | { kind: 'duplicate' }
+    | { kind: 'ignored_pi_mismatch' }
+    | { kind: 'ignored_refunded' }
+    | {
+        kind: 'late_recovery_candidate';
+        order: {
+          id: string;
+          customerId: string;
+          paymentMode: string;
+          paymentStatus: PaymentStatus;
+          status: OrderStatus;
+          stripePaymentIntentId: string | null;
+          paymentAmount: Prisma.Decimal | null;
+          paymentCurrency?: string | null;
+          currency: string;
+          total: Prisma.Decimal;
+        };
+        charge: ChargeResult;
+      }
+    | { kind: 'still_pending'; statusHint: OrderStatus }
+    | { kind: 'lost_race' }
+    | { kind: 'missing_order' }
+    | { kind: 'unresolved'; paymentStatus: PaymentStatus }
+  > {
+    const charge: ChargeResult = {
+      mode: params.mode,
+      status: 'paid',
+      paymentIntentId: params.paymentIntentId,
+      message: 'Stripe payment succeeded',
+    };
+
+    let claimed: { count: number };
+    if (params.origin === 'RECONCILIATION_WORKER') {
+      const token = (params.leaseOwner ?? '').trim();
+      if (!token) return { kind: 'lost_race' };
+      claimed = await this.claimPaidOrderWithLeaseFence({
+        orderId: params.orderId,
+        charge,
+        leaseOwner: token,
+        nowMs: params.nowMs,
+      });
+    } else {
+      claimed = await this.claimPaidOrder(
+        params.orderId,
+        charge,
+        params.statusHint,
+      );
+    }
+
+    if (claimed.count === 1) {
+      await this.commissions.createSnapshotsForOrder({
+        orderId: params.orderId,
+        paymentMode: params.mode,
+        isDemo: params.mode !== 'live',
+        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+      });
+      await this.onboarding.onOrderPlaced(params.customerId, UserRole.CUSTOMER);
+      return { kind: 'claimed' };
+    }
+
+    const fresh = await this.prisma.order.findUnique({
+      where: { id: params.orderId },
+    });
+    if (!fresh) return { kind: 'missing_order' };
+
+    const boundPi = (fresh.stripePaymentIntentId ?? '').trim();
+    if (boundPi && boundPi !== params.paymentIntentId) {
+      return { kind: 'ignored_pi_mismatch' };
+    }
+
+    if (fresh.paymentStatus === PaymentStatus.REFUNDED) {
+      return { kind: 'ignored_refunded' };
+    }
+
+    if (fresh.paymentStatus === PaymentStatus.PAID) {
+      if (boundPi === params.paymentIntentId) {
+        await this.commissions.createSnapshotsForOrder({
+          orderId: params.orderId,
+          paymentMode: params.mode,
+          isDemo: params.mode !== 'live',
+          initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+        });
+        return { kind: 'duplicate' };
+      }
+      return { kind: 'ignored_pi_mismatch' };
+    }
+
+    if (params.origin === 'RECONCILIATION_WORKER') {
+      // Worker does not recover FAILED in this stage.
+      return { kind: 'lost_race' };
+    }
+
+    if (
+      fresh.paymentStatus === PaymentStatus.FAILED ||
+      fresh.status === OrderStatus.CANCELLED
+    ) {
+      return { kind: 'late_recovery_candidate', order: fresh, charge };
+    }
+
+    if (fresh.paymentStatus === PaymentStatus.PENDING) {
+      return { kind: 'still_pending', statusHint: fresh.status };
+    }
+
+    return { kind: 'unresolved', paymentStatus: fresh.paymentStatus };
+  }
+
+  /**
    * After identity validation + null-only PI association: PENDING-only claim first,
    * then branch on a fresh DB read. Never ACK a validated success while the order
    * remains FAILED without completed recovery (or legitimate REFUNDED/unsellable).
@@ -4545,72 +4785,53 @@ export class OrdersService {
     paymentIntentId: string;
     mode: 'test' | 'live';
   }) {
-    const charge: ChargeResult = {
-      mode: params.mode,
-      status: 'paid',
+    const applied = await this.applyValidatedCardSuccess({
+      origin: 'WEBHOOK',
+      orderId: params.orderId,
+      customerId: params.customerId,
+      statusHint: params.statusHint,
       paymentIntentId: params.paymentIntentId,
-      message: 'Stripe payment succeeded',
-    };
+      mode: params.mode,
+    });
 
-    const claimed = await this.claimPaidOrder(
-      params.orderId,
-      charge,
-      params.statusHint,
-    );
-    if (claimed.count === 1) {
-      await this.commissions.createSnapshotsForOrder({
-        orderId: params.orderId,
-        paymentMode: params.mode,
-        isDemo: params.mode !== 'live',
-        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
-      });
-      await this.onboarding.onOrderPlaced(params.customerId, UserRole.CUSTOMER);
+    if (applied.kind === 'claimed') {
       return { received: true };
     }
-
-    const fresh = await this.prisma.order.findUnique({
-      where: { id: params.orderId },
-    });
-    if (!fresh) {
+    if (applied.kind === 'duplicate') {
+      return { received: true, duplicate: true };
+    }
+    if (applied.kind === 'ignored_pi_mismatch') {
+      this.logger.warn(
+        `Succeeded webhook PI mismatch after claim for ${params.orderId}`,
+      );
+      return { received: true, ignored: true, reason: 'pi_mismatch' };
+    }
+    if (applied.kind === 'ignored_refunded') {
+      return { received: true, ignored: true };
+    }
+    if (applied.kind === 'missing_order') {
       throw new ServiceUnavailableException(
         'Order missing after payment claim; retry webhook',
       );
     }
-
-    const boundPi = (fresh.stripePaymentIntentId ?? '').trim();
-    if (boundPi !== params.paymentIntentId) {
-      this.logger.warn(
-        `Succeeded webhook PI mismatch after claim for ${params.orderId}: bound ${boundPi || '(none)'}, expected ${params.paymentIntentId}`,
+    if (applied.kind === 'late_recovery_candidate') {
+      return this.completeLateSuccessAfterFailedClaim(
+        applied.order,
+        applied.charge,
+        params.mode,
       );
-      return { received: true, ignored: true, reason: 'pi_mismatch' };
     }
-
-    if (fresh.paymentStatus === PaymentStatus.REFUNDED) {
-      return { received: true, ignored: true };
-    }
-
-    if (fresh.paymentStatus === PaymentStatus.PAID) {
-      await this.commissions.createSnapshotsForOrder({
-        orderId: params.orderId,
-        paymentMode: params.mode,
-        isDemo: params.mode !== 'live',
-        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
-      });
-      return { received: true, duplicate: true };
-    }
-
-    if (
-      fresh.paymentStatus === PaymentStatus.FAILED ||
-      fresh.status === OrderStatus.CANCELLED
-    ) {
-      return this.completeLateSuccessAfterFailedClaim(fresh, charge, params.mode);
-    }
-
-    if (fresh.paymentStatus === PaymentStatus.PENDING) {
+    if (applied.kind === 'still_pending') {
+      const charge: ChargeResult = {
+        mode: params.mode,
+        status: 'paid',
+        paymentIntentId: params.paymentIntentId,
+        message: 'Stripe payment succeeded',
+      };
       const retry = await this.claimPaidOrder(
         params.orderId,
         charge,
-        fresh.status,
+        applied.statusHint,
       );
       if (retry.count === 1) {
         await this.commissions.createSnapshotsForOrder({
@@ -4628,7 +4849,9 @@ export class OrdersService {
     }
 
     this.logger.warn(
-      `Succeeded webhook unexpected paymentStatus ${fresh.paymentStatus} for ${params.orderId}`,
+      `Succeeded webhook unexpected paymentStatus ${
+        applied.kind === 'unresolved' ? applied.paymentStatus : applied.kind
+      } for ${params.orderId}`,
     );
     throw new ServiceUnavailableException(
       'Payment state unresolved; retry webhook',

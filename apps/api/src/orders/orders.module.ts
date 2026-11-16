@@ -10,8 +10,10 @@ import { ConnectController, SupplierConnectController } from './connect.controll
 import { OrdersController } from './orders.controller';
 import { PayoutsService } from './payouts.service';
 import { OrdersService } from './orders.service';
+import { PaymentReconcileBoundProcessor } from './payment-reconcile-bound.processor';
 import { PaymentReconcileEscalateService } from './payment-reconcile-escalate.service';
 import { PaymentReconcileLeaseService } from './payment-reconcile-lease.service';
+import { PaymentReconcileWorker } from './payment-reconcile.worker';
 import { RefundAttemptService } from './refund-attempt.service';
 import { ShipmentRefundHoldService } from './shipment-refund-hold.service';
 import { StripeService } from './stripe.service';
@@ -41,6 +43,9 @@ import { StripeWebhookController } from './stripe-webhook.controller';
     ShipmentRefundHoldService,
     PaymentReconcileLeaseService,
     PaymentReconcileEscalateService,
+    // Worker before BoundProcessor so constructor wiring can setProcessor.
+    PaymentReconcileWorker,
+    PaymentReconcileBoundProcessor,
   ],
   exports: [
     OrdersService,
@@ -49,6 +54,8 @@ import { StripeWebhookController } from './stripe-webhook.controller';
     ShipmentRefundHoldService,
     PaymentReconcileLeaseService,
     PaymentReconcileEscalateService,
+    PaymentReconcileWorker,
+    PaymentReconcileBoundProcessor,
   ],
 })
 export class OrdersModule {}

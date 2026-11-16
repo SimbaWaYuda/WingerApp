@@ -271,6 +271,9 @@ describe('PaymentReconcileEscalateService', () => {
       PaymentReconcileManualReviewReason.RETRY_EXHAUSTED,
     );
     expect(update!.values).not.toContain(
+      PaymentReconcileManualReviewReason.IDENTITY_MISMATCH,
+    );
+    expect(update!.values).not.toContain(
       PaymentReconcileManualReviewReason.SEARCH_AMBIGUOUS,
     );
     expect(update!.values).not.toContain(

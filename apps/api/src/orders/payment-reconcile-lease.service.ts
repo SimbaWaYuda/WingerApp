@@ -14,6 +14,9 @@ export const PAYMENT_RECONCILE_DEFAULT_GRACE_MS = 2 * 60 * 1000;
 /** Default lease TTL once claimed. */
 export const PAYMENT_RECONCILE_DEFAULT_LEASE_TTL_MS = 5 * 60 * 1000;
 
+/** Maximum lease claims that may perform Stripe work (S2.6.20.7 Option C). */
+export const PAYMENT_RECONCILE_MAX_CLAIMS = 8;
+
 export type PaymentReconcileClaimedOrder = {
   id: string;
   leaseOwner: string;
@@ -64,6 +67,7 @@ export class PaymentReconcileLeaseService {
     const leaseExpiresIso = utcWallClockIso(nowMs + leaseTtlMs);
 
     return this.prisma.$transaction(async (tx) => {
+      // S2.6.20.9 — bound PaymentIntents only. Unbound Search is a later stage.
       const candidates = await tx.$queryRaw<{ id: string }[]>`
         SELECT id
         FROM "Order"
@@ -81,6 +85,9 @@ export class PaymentReconcileLeaseService {
           )
           AND "stripeChargeAttemptAt" IS NOT NULL
           AND "stripeChargeAttemptAt" <= ${graceIso}::timestamp
+          AND "paymentReconcileAttemptCount" < ${PAYMENT_RECONCILE_MAX_CLAIMS}
+          AND "stripePaymentIntentId" IS NOT NULL
+          AND LEFT("stripePaymentIntentId", 3) = 'pi_'
         ORDER BY
           COALESCE("paymentReconcileNextAt", "stripeChargeAttemptAt") ASC,
           id ASC
@@ -272,7 +279,10 @@ export function paymentReconcileEligibilityWhere(
     paymentStatus: PaymentStatus.PENDING,
     paymentMode: { in: ['test', 'live'] },
     paymentReconcileManualReviewAt: null,
+    paymentReconcileAttemptCount: { lt: PAYMENT_RECONCILE_MAX_CLAIMS },
     stripeChargeAttemptAt: { not: null, lte: graceDeadline },
+    // Bound-only (S2.6.20.9); unbound Search is a later stage.
+    stripePaymentIntentId: { not: null, startsWith: 'pi_' },
     AND: [
       {
         OR: [

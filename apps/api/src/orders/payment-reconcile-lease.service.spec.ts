@@ -1,6 +1,7 @@
 import { PaymentReconcileManualReviewReason, PaymentStatus } from '@prisma/client';
 import {
   PAYMENT_RECONCILE_DEFAULT_GRACE_MS,
+  PAYMENT_RECONCILE_MAX_CLAIMS,
   PaymentReconcileLeaseService,
 } from './payment-reconcile-lease.service';
 import { utcWallClockIso } from './payment-reconcile-utc';
@@ -66,6 +67,12 @@ function createMemoryPrisma(rows: Map<string, OrderRow>) {
         if (leaseActive) return false;
         if (!o.stripeChargeAttemptAt) return false;
         if (o.stripeChargeAttemptAt.getTime() > graceDeadline) return false;
+        if (o.paymentReconcileAttemptCount >= PAYMENT_RECONCILE_MAX_CLAIMS) {
+          return false;
+        }
+        // Bound-only literal prefix (S2.6.20.9d) — matches LEFT(id, 3) = 'pi_'.
+        const pi = o.stripePaymentIntentId ?? '';
+        if (pi.length < 3 || pi.slice(0, 3) !== 'pi_') return false;
         return true;
       })
       .sort((a, b) => {
@@ -276,6 +283,39 @@ describe('PaymentReconcileLeaseService', () => {
         paymentReconcileManualReviewAt: new Date(fixedNow - 1000),
       }),
       eligibleRow({ id: 'ok' }),
+    ]);
+    expect((await claim(10)).map((c) => c.id)).toEqual(['ok']);
+  });
+
+  it('literal pi_ prefix: claims only true pi_ ids (not LIKE wildcards)', async () => {
+    const { claim, rows } = build([
+      eligibleRow({ id: 'pi-123', stripePaymentIntentId: 'pi_123' }),
+      eligibleRow({ id: 'pi-bare', stripePaymentIntentId: 'pi_' }),
+      eligibleRow({ id: 'pixa', stripePaymentIntentId: 'pixa123' }),
+      eligibleRow({ id: 'pix', stripePaymentIntentId: 'pix' }),
+      eligibleRow({ id: 'pi-only', stripePaymentIntentId: 'pi' }),
+      eligibleRow({ id: 'empty', stripePaymentIntentId: '' }),
+      eligibleRow({ id: 'null-pi', stripePaymentIntentId: null }),
+      eligibleRow({ id: 'ch', stripePaymentIntentId: 'ch_123' }),
+    ]);
+    const claimed = await claim(10);
+    expect(claimed.map((c) => c.id).sort()).toEqual(['pi-123', 'pi-bare']);
+    for (const id of ['pixa', 'pix', 'pi-only', 'empty', 'null-pi', 'ch']) {
+      expect(rows.get(id)!.paymentReconcileAttemptCount).toBe(0);
+      expect(rows.get(id)!.paymentReconcileLeaseOwner).toBeNull();
+    }
+  });
+
+  it('excludes orders already at max claim attempts', async () => {
+    const { claim } = build([
+      eligibleRow({
+        id: 'exhausted',
+        paymentReconcileAttemptCount: PAYMENT_RECONCILE_MAX_CLAIMS,
+      }),
+      eligibleRow({
+        id: 'ok',
+        paymentReconcileAttemptCount: PAYMENT_RECONCILE_MAX_CLAIMS - 1,
+      }),
     ]);
     expect((await claim(10)).map((c) => c.id)).toEqual(['ok']);
   });

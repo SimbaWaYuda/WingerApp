@@ -1407,7 +1407,9 @@ describe('payment and commission reliability', () => {
       stripePaymentIntentId: null,
       stripeChargeAttemptAt: null,
     });
-    const attemptAt = new Date('2026-11-15T20:00:00.000Z');
+    // Relative to now so the resume retry stays inside the 20h idempotency window
+    // without weakening production policy or depending on a fixed calendar day.
+    const attemptAt = new Date(Date.now() - 60 * 60 * 1000);
     const callOrder: string[] = [];
     prisma.order.findUnique.mockResolvedValue(pending);
     prisma.$executeRaw.mockImplementation(async () => {

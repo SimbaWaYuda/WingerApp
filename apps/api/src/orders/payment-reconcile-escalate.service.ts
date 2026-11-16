@@ -30,7 +30,7 @@ export type EscalateUnleaseableParams = {
  * Does not call Stripe, change payment status, or touch stock.
  *
  * Writable reasons in this stage: MISSING_ATTEMPT_AT, INCONSISTENT_ATTEMPT_AT only.
- * RETRY_EXHAUSTED / SEARCH_* are reserved for the future reconciliation worker.
+ * RETRY_EXHAUSTED / IDENTITY_MISMATCH / SEARCH_* are written by the reconciliation worker.
  */
 @Injectable()
 export class PaymentReconcileEscalateService {

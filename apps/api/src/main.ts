@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { getLocalUploadRoot, storageDriver } from './storage/upload-paths';
+import { isPaymentReconcileWorkerEnabled } from './orders/payment-reconcile.worker';
 
 // Windows shells often default libpq to WIN1252; supplier names need UTF-8.
 if (!process.env.PGCLIENTENCODING) {
@@ -17,6 +18,10 @@ async function bootstrap() {
     origin: true,
     credentials: true,
   });
+  // Only when the reconcile worker is enabled — preserves default API shutdown otherwise.
+  if (isPaymentReconcileWorkerEnabled()) {
+    app.enableShutdownHooks();
+  }
   if (storageDriver() === 'local') {
     const uploadRoot = getLocalUploadRoot();
     app.useStaticAssets(uploadRoot, {
