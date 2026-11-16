@@ -67,6 +67,7 @@ import {
   StripeAmountError,
   toStripeAmountMinor,
 } from './stripe-amount';
+import { assertStripePaymentIntentMatchesOrder } from './stripe-payment-intent-identity';
 import {
   aggregateVariantStock,
   resolveLineStock,
@@ -3791,8 +3792,8 @@ export class OrdersService {
   }
 
   /**
-   * payment_failed is not proof the PI is canceled. Retrieve outside any DB
-   * transaction, then apply paid / guarded fail / or keep PENDING.
+   * payment_failed after retrieve+identity validation. Authoritative status comes
+   * from the retrieved PaymentIntent, not the event name.
    */
   private async handlePaymentFailedWebhook(
     order: {
@@ -3807,6 +3808,7 @@ export class OrdersService {
       status: OrderStatus;
     },
     paymentIntentId: string,
+    status: string,
     mode: 'test' | 'live',
     actor: AuthUser,
   ) {
@@ -3820,23 +3822,14 @@ export class OrdersService {
       return { received: true, duplicate: true };
     }
 
-    const retrieved =
-      await this.stripe.retrievePaymentIntentStatus(paymentIntentId);
-    if (!retrieved.ok) {
-      this.logger.warn(
-        `payment_failed webhook kept order ${order.id} PENDING (retrieve failed: ${retrieved.message})`,
-      );
-      return { received: true, pending: true, reason: 'retrieve_failed' };
-    }
-
-    const status = retrieved.status.trim().toLowerCase();
-    if (status === 'succeeded') {
+    const normalized = status.trim().toLowerCase();
+    if (normalized === 'succeeded') {
       await this.recordCardCharge(
         order.id,
         {
           mode,
           status: 'paid',
-          paymentIntentId: retrieved.id,
+          paymentIntentId,
           message: 'Stripe payment succeeded',
         },
         actor,
@@ -3844,11 +3837,11 @@ export class OrdersService {
       return { received: true, paid: true };
     }
 
-    if (status === 'canceled') {
+    if (normalized === 'canceled') {
       const failed = await this.failPendingCardOrder({
         orderId: order.id,
         paymentMode: mode,
-        paymentIntentId: retrieved.id,
+        paymentIntentId,
         actorUserId: order.customerId,
       });
       return failed
@@ -3858,7 +3851,7 @@ export class OrdersService {
 
     // requires_payment_method, processing, requires_*, unknown — hold stock.
     this.logger.warn(
-      `payment_failed webhook kept order ${order.id} PENDING (PaymentIntent status: ${retrieved.status})`,
+      `payment_failed webhook kept order ${order.id} PENDING (PaymentIntent status: ${status})`,
     );
     return { received: true, pending: true, reason: 'non_terminal' };
   }
@@ -4096,10 +4089,11 @@ export class OrdersService {
     id: string;
     metadata?: Record<string, string> | null;
   }) {
-    const orderId = intent.metadata?.orderId;
+    const orderId = (intent.metadata?.orderId ?? '').trim();
     if (orderId) {
       const byId = await this.prisma.order.findUnique({ where: { id: orderId } });
-      if (byId) return byId;
+      // Candidate lookup only — metadata match must still equal the row id.
+      if (byId && byId.id === orderId) return byId;
     }
     if (!intent.id) return null;
     return this.prisma.order.findUnique({
@@ -4219,20 +4213,65 @@ export class OrdersService {
     ) {
       return { received: true };
     }
-    const intent = event.data.object;
-    const found = await this.findOrderForIntent(intent);
+    const eventIntent = event.data.object;
+    const eventPaymentIntentId = (eventIntent.id ?? '').trim();
+    if (!eventPaymentIntentId) {
+      return { received: true, matched: false };
+    }
+
+    const found = await this.findOrderForIntent(eventIntent);
     if (!found) return { received: true, matched: false };
+
+    // Stripe I/O outside any DB transaction.
+    const retrieved =
+      await this.stripe.retrievePaymentIntentForWebhook(eventPaymentIntentId);
+    if (!retrieved.ok) {
+      this.logger.warn(
+        `Webhook PaymentIntent retrieve failed for ${eventPaymentIntentId}: ${retrieved.message}`,
+      );
+      throw new ServiceUnavailableException(
+        'Stripe PaymentIntent retrieval failed; retry webhook',
+      );
+    }
+    if (retrieved.intent.id !== eventPaymentIntentId) {
+      this.logger.warn(
+        `Webhook PaymentIntent id mismatch: event ${eventPaymentIntentId}, retrieved ${retrieved.intent.id}`,
+      );
+      return {
+        received: true,
+        ignored: true,
+        reason: 'payment_intent_id_mismatch',
+      };
+    }
+
+    const status = retrieved.intent.status.trim().toLowerCase();
+    const requireSucceeded =
+      event.type === 'payment_intent.succeeded' || status === 'succeeded';
+    const validated = assertStripePaymentIntentMatchesOrder({
+      order: found,
+      intent: retrieved.intent,
+      requireSucceeded,
+    });
+    if (!validated.ok) {
+      this.logger.warn(
+        `Webhook PaymentIntent rejected for order ${found.id}: ${validated.code} (${validated.message})`,
+      );
+      return {
+        received: true,
+        ignored: true,
+        reason: validated.code,
+      };
+    }
 
     const associated = await this.associateWebhookPaymentIntent(
       found,
-      intent.id,
+      retrieved.intent.id,
     );
     if (!associated.ok) {
       return { received: true, ignored: true, reason: 'pi_mismatch' };
     }
     const order = associated.order;
-
-    const mode: 'test' | 'live' = event.livemode ? 'live' : 'test';
+    const mode = validated.paymentMode;
     const actor = {
       sub: order.customerId,
       email: order.customerEmail,
@@ -4241,7 +4280,13 @@ export class OrdersService {
     };
 
     if (event.type === 'payment_intent.payment_failed') {
-      return this.handlePaymentFailedWebhook(order, intent.id, mode, actor);
+      return this.handlePaymentFailedWebhook(
+        order,
+        retrieved.intent.id,
+        status,
+        mode,
+        actor,
+      );
     }
 
     if (order.paymentStatus === PaymentStatus.REFUNDED) {
@@ -4250,12 +4295,12 @@ export class OrdersService {
 
     if (
       order.paymentStatus === PaymentStatus.PAID &&
-      order.stripePaymentIntentId === intent.id
+      order.stripePaymentIntentId === retrieved.intent.id
     ) {
       await this.commissions.createSnapshotsForOrder({
         orderId: order.id,
         paymentMode: mode,
-        isDemo: !event.livemode,
+        isDemo: mode !== 'live',
         initialStatus: CommissionRecognitionStatus.RECOGNIZED,
       });
       return { received: true, duplicate: true };
@@ -4264,7 +4309,7 @@ export class OrdersService {
     const charge: ChargeResult = {
       mode,
       status: 'paid',
-      paymentIntentId: intent.id,
+      paymentIntentId: retrieved.intent.id,
       message: 'Stripe payment succeeded',
     };
 
@@ -4274,7 +4319,7 @@ export class OrdersService {
     ) {
       const recovered = await this.recoverStockForLatePayment(
         order,
-        intent.id,
+        retrieved.intent.id,
         mode,
       );
       if (!recovered) {
@@ -4285,7 +4330,7 @@ export class OrdersService {
         await this.commissions.createSnapshotsForOrder({
           orderId: order.id,
           paymentMode: mode,
-          isDemo: !event.livemode,
+          isDemo: mode !== 'live',
           initialStatus: CommissionRecognitionStatus.RECOGNIZED,
         });
         await this.onboarding.onOrderPlaced(order.customerId, UserRole.CUSTOMER);

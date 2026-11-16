@@ -72,6 +72,36 @@ function orderShell(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Deterministic retrieved PI matching orderShell defaults (USD 58.99 → 5899). */
+function webhookPaymentIntent(
+  overrides: Record<string, unknown> = {},
+): {
+  ok: true;
+  intent: {
+    id: string;
+    status: string;
+    amount: number;
+    amountReceived: number | null;
+    currency: string;
+    livemode: boolean;
+    metadataOrderId: string | null;
+  };
+} {
+  return {
+    ok: true,
+    intent: {
+      id: 'pi_1',
+      status: 'succeeded',
+      amount: 5899,
+      amountReceived: 5899,
+      currency: 'usd',
+      livemode: false,
+      metadataOrderId: 'ord-1',
+      ...overrides,
+    },
+  };
+}
+
 describe('payment and commission reliability', () => {
   let service: OrdersService;
   let prisma: any;
@@ -85,6 +115,7 @@ describe('payment and commission reliability', () => {
     confirmPaymentIntent: jest.Mock;
     checkoutMode: string;
     retrievePaymentIntentStatus: jest.Mock;
+    retrievePaymentIntentForWebhook: jest.Mock;
     refundCardCharge: jest.Mock;
     listRefundsForPaymentIntent: jest.Mock;
   };
@@ -381,6 +412,9 @@ describe('payment and commission reliability', () => {
         id: 'pi_1',
         status: 'requires_payment_method',
       }),
+      retrievePaymentIntentForWebhook: jest.fn().mockImplementation(
+        async (id: string) => webhookPaymentIntent({ id }),
+      ),
       refundCardCharge: jest
         .fn()
         .mockResolvedValue({ ok: true, refundId: 're_1', status: 'succeeded' }),
@@ -561,11 +595,13 @@ describe('payment and commission reliability', () => {
       Object.assign(state, data);
       return { count: 1 };
     });
-    stripe.retrievePaymentIntentStatus.mockResolvedValue({
-      ok: true,
-      id: 'pi_open',
-      status: 'requires_payment_method',
-    });
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({
+        id: 'pi_open',
+        status: 'requires_payment_method',
+        amountReceived: null,
+      }),
+    );
 
     const result = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
@@ -583,11 +619,13 @@ describe('payment and commission reliability', () => {
   it('keeps PENDING when payment_failed retrieves processing', async () => {
     const state = orderShell({ paymentStatus: PaymentStatus.PENDING });
     prisma.order.findUnique.mockResolvedValue(state);
-    stripe.retrievePaymentIntentStatus.mockResolvedValue({
-      ok: true,
-      id: 'pi_processing',
-      status: 'processing',
-    });
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({
+        id: 'pi_processing',
+        status: 'processing',
+        amountReceived: null,
+      }),
+    );
 
     const result = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
@@ -623,11 +661,13 @@ describe('payment and commission reliability', () => {
       stock: 4,
       supplierId: 'sup-1',
     });
-    stripe.retrievePaymentIntentStatus.mockResolvedValue({
-      ok: true,
-      id: 'pi_canceled',
-      status: 'canceled',
-    });
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({
+        id: 'pi_canceled',
+        status: 'canceled',
+        amountReceived: null,
+      }),
+    );
 
     const first = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
@@ -658,11 +698,9 @@ describe('payment and commission reliability', () => {
       return { count: 1 };
     });
     prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
-    stripe.retrievePaymentIntentStatus.mockResolvedValue({
-      ok: true,
-      id: 'pi_won',
-      status: 'succeeded',
-    });
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ id: 'pi_won', status: 'succeeded' }),
+    );
 
     const result = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
@@ -676,21 +714,21 @@ describe('payment and commission reliability', () => {
     expect(commissions.createSnapshotsForOrder).toHaveBeenCalled();
   });
 
-  it('keeps PENDING when payment_failed retrieve times out', async () => {
+  it('NACKs when PaymentIntent retrieve times out so Stripe can retry', async () => {
     const state = orderShell({ paymentStatus: PaymentStatus.PENDING });
     prisma.order.findUnique.mockResolvedValue(state);
-    stripe.retrievePaymentIntentStatus.mockResolvedValue({
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue({
       ok: false,
       message: 'socket hang up',
     });
 
-    const result = await service.handleStripeEvent({
-      type: 'payment_intent.payment_failed',
-      livemode: false,
-      data: { object: { id: 'pi_timeout', metadata: { orderId: 'ord-1' } } },
-    });
-
-    expect(result).toMatchObject({ pending: true, reason: 'retrieve_failed' });
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.payment_failed',
+        livemode: false,
+        data: { object: { id: 'pi_timeout', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).rejects.toThrow(/retry webhook/i);
     expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
     expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
   });
@@ -702,7 +740,9 @@ describe('payment and commission reliability', () => {
         stripePaymentIntentId: 'pi_done',
       });
       prisma.order.findUnique.mockResolvedValue(state);
-      stripe.retrievePaymentIntentStatus.mockClear();
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({ id: 'pi_done', status: 'canceled', amountReceived: null }),
+      );
 
       const result = await service.handleStripeEvent({
         type: 'payment_intent.payment_failed',
@@ -712,7 +752,6 @@ describe('payment and commission reliability', () => {
 
       expect(result).toMatchObject({ ignored: true });
       expect(state.paymentStatus).toBe(paymentStatus);
-      expect(stripe.retrievePaymentIntentStatus).not.toHaveBeenCalled();
       expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
     }
   });
@@ -731,11 +770,9 @@ describe('payment and commission reliability', () => {
       Object.assign(state, data);
       return { ...state };
     });
-    stripe.retrievePaymentIntentStatus.mockResolvedValue({
-      ok: true,
-      id: 'pi_1',
-      status: 'canceled',
-    });
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ id: 'pi_1', status: 'canceled', amountReceived: null }),
+    );
 
     const result = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
@@ -781,6 +818,9 @@ describe('payment and commission reliability', () => {
       stripePaymentIntentId: 'pi_bound',
     });
     prisma.order.findUnique.mockResolvedValue(state);
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ id: 'pi_other' }),
+    );
 
     const failed = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
@@ -803,12 +843,98 @@ describe('payment and commission reliability', () => {
       },
     });
 
-    expect(failed).toMatchObject({ ignored: true, reason: 'pi_mismatch' });
-    expect(succeeded).toMatchObject({ ignored: true, reason: 'pi_mismatch' });
+    expect(failed).toMatchObject({
+      ignored: true,
+      reason: 'payment_intent_mismatch',
+    });
+    expect(succeeded).toMatchObject({
+      ignored: true,
+      reason: 'payment_intent_mismatch',
+    });
     expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
     expect(state.stripePaymentIntentId).toBe('pi_bound');
-    expect(stripe.retrievePaymentIntentStatus).not.toHaveBeenCalled();
     expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('rejects wrong metadata, amount, currency, livemode, and non-card modes', async () => {
+    const state = orderShell({ paymentStatus: PaymentStatus.PENDING });
+    prisma.order.findUnique.mockResolvedValue(state);
+    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { count: 1 };
+    });
+
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ metadataOrderId: 'ord-other' }),
+    );
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).resolves.toMatchObject({ ignored: true, reason: 'metadata_order_mismatch' });
+
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ amount: 1000, amountReceived: 1000 }),
+    );
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).resolves.toMatchObject({ ignored: true, reason: 'amount_mismatch' });
+
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ currency: 'tzs' }),
+    );
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).resolves.toMatchObject({ ignored: true, reason: 'currency_mismatch' });
+
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ livemode: true }),
+    );
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: true,
+        data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).resolves.toMatchObject({ ignored: true, reason: 'livemode_mismatch' });
+
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ amountReceived: 5898 }),
+    );
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).resolves.toMatchObject({ ignored: true, reason: 'amount_received_mismatch' });
+
+    for (const paymentMode of ['demo', 'cod', 'lipa']) {
+      prisma.order.findUnique.mockResolvedValue(
+        orderShell({ paymentMode, paymentStatus: PaymentStatus.PENDING }),
+      );
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(webhookPaymentIntent());
+      await expect(
+        service.handleStripeEvent({
+          type: 'payment_intent.succeeded',
+          livemode: false,
+          data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+        }),
+      ).resolves.toMatchObject({ ignored: true, reason: 'payment_mode_not_card' });
+    }
+
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
     expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
   });
 
@@ -839,11 +965,21 @@ describe('payment and commission reliability', () => {
         return { count: 1 };
       },
     );
-    stripe.retrievePaymentIntentStatus.mockResolvedValue({
-      ok: true,
-      id: 'pi_first',
-      status: 'requires_payment_method',
-    });
+    stripe.retrievePaymentIntentForWebhook
+      .mockResolvedValueOnce(
+        webhookPaymentIntent({
+          id: 'pi_first',
+          status: 'requires_payment_method',
+          amountReceived: null,
+        }),
+      )
+      .mockResolvedValueOnce(
+        webhookPaymentIntent({
+          id: 'pi_second',
+          status: 'requires_payment_method',
+          amountReceived: null,
+        }),
+      );
 
     const first = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
@@ -858,7 +994,10 @@ describe('payment and commission reliability', () => {
 
     expect(first).toMatchObject({ pending: true });
     expect(state.stripePaymentIntentId).toBe('pi_first');
-    expect(second).toMatchObject({ ignored: true, reason: 'pi_mismatch' });
+    expect(second).toMatchObject({
+      ignored: true,
+      reason: 'payment_intent_mismatch',
+    });
     expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
   });
 
@@ -1665,6 +1804,9 @@ describe('payment and commission reliability', () => {
       livemode: false,
       data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
     };
+    stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+      webhookPaymentIntent({ id: 'pi_1' }),
+    );
 
     await service.handleStripeEvent(succeeded);
     const lateFailure = await service.handleStripeEvent(failed);
@@ -1675,7 +1817,7 @@ describe('payment and commission reliability', () => {
     expect(state.paymentStatus).toBe(PaymentStatus.PAID);
     expect(state.stripePaymentIntentId).toBe('pi_1');
     expect(commissions.createSnapshotsForOrder).toHaveBeenCalledWith(
-      expect.objectContaining({ isDemo: true }),
+      expect.objectContaining({ isDemo: true, paymentMode: 'test' }),
     );
   });
 
@@ -1683,6 +1825,7 @@ describe('payment and commission reliability', () => {
     const state = orderShell({
       paymentStatus: PaymentStatus.PENDING,
       status: OrderStatus.PROCESSING,
+      paymentMode: 'live',
       stripePaymentIntentId: null,
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
@@ -1716,11 +1859,22 @@ describe('payment and commission reliability', () => {
       },
     );
     prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
-    stripe.retrievePaymentIntentStatus.mockResolvedValue({
-      ok: true,
-      id: 'pi_live',
-      status: 'requires_payment_method',
-    });
+    stripe.retrievePaymentIntentForWebhook
+      .mockResolvedValueOnce(
+        webhookPaymentIntent({
+          id: 'pi_live',
+          status: 'requires_payment_method',
+          amountReceived: null,
+          livemode: true,
+        }),
+      )
+      .mockResolvedValueOnce(
+        webhookPaymentIntent({
+          id: 'pi_live',
+          status: 'succeeded',
+          livemode: true,
+        }),
+      );
 
     const failed = await service.handleStripeEvent({
       type: 'payment_intent.payment_failed',
@@ -2318,7 +2472,9 @@ describe('payment and commission reliability', () => {
       }),
     );
     expect(stripe.refundCardCharge).not.toHaveBeenCalled();
-    expect(commissions.createSnapshotsForOrder).toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ isDemo: true, paymentMode: 'test' }),
+    );
   });
 
   it('re-reserves variant stock for a late success when the line has a variant', async () => {

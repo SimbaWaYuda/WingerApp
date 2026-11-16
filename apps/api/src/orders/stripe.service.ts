@@ -229,13 +229,39 @@ export class StripeService {
   }
 
   /**
-   * Fresh PaymentIntent status for webhook/reconcile decisions.
+   * Fresh PaymentIntent status for checkout retry / reconcile.
    * Stripe I/O only — callers must not hold a DB transaction open.
    */
   async retrievePaymentIntentStatus(
     paymentIntentId: string,
   ): Promise<
     | { ok: true; id: string; status: string }
+    | { ok: false; message: string }
+  > {
+    const detailed = await this.retrievePaymentIntentForWebhook(paymentIntentId);
+    if (!detailed.ok) return detailed;
+    return { ok: true, id: detailed.intent.id, status: detailed.intent.status };
+  }
+
+  /**
+   * Full PaymentIntent snapshot for webhook identity/amount validation.
+   * Stripe I/O only — callers must not hold a DB transaction open.
+   */
+  async retrievePaymentIntentForWebhook(
+    paymentIntentId: string,
+  ): Promise<
+    | {
+        ok: true;
+        intent: {
+          id: string;
+          status: string;
+          amount: number;
+          amountReceived: number | null;
+          currency: string;
+          livemode: boolean;
+          metadataOrderId: string | null;
+        };
+      }
     | { ok: false; message: string }
   > {
     const id = paymentIntentId.trim();
@@ -246,8 +272,24 @@ export class StripeService {
       return { ok: false, message: 'Stripe is not configured' };
     }
     try {
-      const intent = await this.stripe.paymentIntents.retrieve(id);
-      return { ok: true, id: intent.id, status: String(intent.status ?? '') };
+      const intent: Stripe.PaymentIntent =
+        await this.stripe.paymentIntents.retrieve(id);
+      const metadataOrderId = intent.metadata?.orderId?.trim() || null;
+      return {
+        ok: true,
+        intent: {
+          id: intent.id,
+          status: String(intent.status ?? ''),
+          amount: intent.amount,
+          amountReceived:
+            typeof intent.amount_received === 'number'
+              ? intent.amount_received
+              : null,
+          currency: String(intent.currency ?? ''),
+          livemode: intent.livemode === true,
+          metadataOrderId,
+        },
+      };
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Stripe retrieve failed';

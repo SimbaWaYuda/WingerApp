@@ -504,6 +504,11 @@ describe('StripeService payment safety', () => {
     const retrieve = jest.fn().mockResolvedValue({
       id: 'pi_1',
       status: 'requires_payment_method',
+      amount: 1000,
+      amount_received: null,
+      currency: 'usd',
+      livemode: false,
+      metadata: { orderId: 'ord-1' },
     });
     const service = new StripeService();
     service.bindForTests({ paymentIntents: { retrieve } } as never, 'test');
@@ -511,6 +516,32 @@ describe('StripeService payment safety', () => {
       ok: true,
       id: 'pi_1',
       status: 'requires_payment_method',
+    });
+  });
+
+  it('returns full PaymentIntent fields for webhook validation', async () => {
+    const retrieve = jest.fn().mockResolvedValue({
+      id: 'pi_1',
+      status: 'succeeded',
+      amount: 5899,
+      amount_received: 5899,
+      currency: 'usd',
+      livemode: false,
+      metadata: { orderId: 'ord-1' },
+    });
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { retrieve } } as never, 'test');
+    await expect(service.retrievePaymentIntentForWebhook('pi_1')).resolves.toEqual({
+      ok: true,
+      intent: {
+        id: 'pi_1',
+        status: 'succeeded',
+        amount: 5899,
+        amountReceived: 5899,
+        currency: 'usd',
+        livemode: false,
+        metadataOrderId: 'ord-1',
+      },
     });
   });
 
