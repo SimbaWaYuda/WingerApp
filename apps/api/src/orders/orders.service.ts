@@ -2009,9 +2009,12 @@ export class OrdersService {
           select: {
             paymentMode: true,
             currency: true,
+            paymentCurrency: true,
             stripePaymentIntentId: true,
           },
         });
+        const holdPaymentCurrency =
+          order.paymentCurrency || order.currency || 'USD';
         let drive = rr.refundDrive;
         if (drive === ReturnRefundDrive.UNCLAIMED) {
           if (rr.refundAbandonRequestedAt) {
@@ -2079,11 +2082,12 @@ export class OrdersService {
 
         if (drive === ReturnRefundDrive.ATTEMPT) {
           // Reserve hold first to freeze amount, then create attempt with frozen values.
+          // Hold currency is the Stripe charge / payment currency of the reserved amount.
           const hold = await this.shipmentRefundHolds.reserveInTransaction(tx, {
             returnRequestId: rr.id,
             orderShipmentId: shipment.id,
             supplierId: params.row.orderItem.supplierId,
-            currency: order.currency,
+            currency: holdPaymentCurrency,
             returnedMerchandise,
             includeDelivery,
             siblingHadLiveLine,
@@ -2121,12 +2125,12 @@ export class OrdersService {
           };
         }
 
-        // LEGACY card
+        // LEGACY card — same payment-currency identity as ATTEMPT holds.
         const hold = await this.shipmentRefundHolds.reserveInTransaction(tx, {
           returnRequestId: rr.id,
           orderShipmentId: shipment.id,
           supplierId: params.row.orderItem.supplierId,
-          currency: order.currency,
+          currency: holdPaymentCurrency,
           returnedMerchandise,
           includeDelivery,
           siblingHadLiveLine,

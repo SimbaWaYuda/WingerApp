@@ -1007,11 +1007,14 @@ export class RefundAttemptService {
 
         const order = await tx.order.findUniqueOrThrow({
           where: { id: attempt.orderId },
-          select: { currency: true },
+          select: { currency: true, paymentCurrency: true },
         });
-        if (
-          order.currency.toLowerCase() !== attempt.currency.toLowerCase()
-        ) {
+        const paymentCurrency = (
+          order.paymentCurrency ||
+          order.currency ||
+          'USD'
+        ).toLowerCase();
+        if (paymentCurrency !== attempt.currency.toLowerCase()) {
           throw new ApplyInvariantError(
             'apply_currency_mismatch',
             'Frozen attempt currency does not match order payment currency',

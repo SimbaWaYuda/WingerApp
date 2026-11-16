@@ -332,6 +332,18 @@ describe('payment and commission reliability', () => {
     );
     prisma.order.findUniqueOrThrow.mockImplementation(
       async ({ where }: { where: { id: string }; select?: unknown }) => {
+        const sticky = (prisma as { __stickyReturn?: { order?: Record<string, unknown>; orderId?: string } })
+          .__stickyReturn;
+        if (sticky?.order && (sticky.orderId === where.id || sticky.order.id === where.id)) {
+          const order = sticky.order;
+          return {
+            id: where.id,
+            paymentMode: order.paymentMode ?? 'test',
+            currency: order.currency ?? 'USD',
+            paymentCurrency: order.paymentCurrency ?? order.currency ?? 'USD',
+            stripePaymentIntentId: order.stripePaymentIntentId ?? 'pi_1',
+          };
+        }
         const row =
           (await prisma.order.findUnique({ where })) ??
           (await prisma.order.findFirst({ where }));
@@ -340,11 +352,13 @@ describe('payment and commission reliability', () => {
             id: where.id,
             paymentMode: 'test',
             currency: 'usd',
+            paymentCurrency: 'usd',
             stripePaymentIntentId: 'pi_1',
           };
         }
         return {
           currency: 'usd',
+          paymentCurrency: (row as { paymentCurrency?: string }).paymentCurrency ?? 'usd',
           ...row,
         };
       },
@@ -1866,6 +1880,145 @@ describe('payment and commission reliability', () => {
     );
   });
 
+  it('reserves LEGACY holds in TZS payment currency when settlement is USD', async () => {
+    const row = issuedReturnRow({
+      order: {
+        ...issuedReturnRow().order,
+        currency: 'USD',
+        paymentCurrency: 'TZS',
+        paymentAmount: 10000.5,
+        total: 10000.5,
+        subtotal: 10000,
+      },
+      orderItem: {
+        ...issuedReturnRow().orderItem,
+        unitPrice: 10000,
+        lineTotal: 10000,
+      },
+    });
+    stubReturnRequestLookups(prisma, row);
+    prisma.orderShipment.findMany.mockResolvedValue([
+      singleSupplierShipment(row),
+    ]);
+
+    await service.updateReturnRequest(
+      'ret-1',
+      { refundStatus: 'ISSUED' as never },
+      admin(),
+    );
+
+    const hold = [...(prisma as { __holdRows: Map<string, Record<string, unknown>> }).__holdRows.values()][0];
+    expect(hold.currency).toBe('tzs');
+    expect(hold.amount).toBe(10000.5);
+    expect(hold.amountCents).toBe(1_000_050);
+    expect(hold.amountCents).not.toBe(100_005_000);
+    expect(stripe.refundCardCharge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 10000.5,
+        currency: 'tzs',
+      }),
+    );
+    expect(commissions.clawbackForOrderItem).toHaveBeenCalled();
+  });
+
+  it('reserves LEGACY holds in USD payment currency when settlement is TZS', async () => {
+    const row = issuedReturnRow({
+      order: {
+        ...issuedReturnRow().order,
+        currency: 'TZS',
+        paymentCurrency: 'USD',
+        paymentAmount: 58.99,
+        total: 58.99,
+        subtotal: 50,
+      },
+    });
+    stubReturnRequestLookups(prisma, row);
+    prisma.orderShipment.findMany.mockResolvedValue([
+      singleSupplierShipment(row),
+    ]);
+
+    await service.updateReturnRequest(
+      'ret-1',
+      { refundStatus: 'ISSUED' as never },
+      admin(),
+    );
+
+    const hold = [...(prisma as { __holdRows: Map<string, Record<string, unknown>> }).__holdRows.values()][0];
+    expect(hold.currency).toBe('usd');
+    expect(hold.amount).toBe(58.99);
+    expect(hold.amountCents).toBe(5899);
+    expect(stripe.refundCardCharge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 58.99,
+        currency: 'usd',
+      }),
+    );
+  });
+
+  it('falls back to order.currency when paymentCurrency is missing on hold reserve', async () => {
+    const base = issuedReturnRow().order;
+    const { paymentCurrency: _ignored, ...orderWithoutPaymentCurrency } = base as {
+      paymentCurrency?: string;
+    } & Record<string, unknown>;
+    const row = issuedReturnRow({
+      order: {
+        ...orderWithoutPaymentCurrency,
+        currency: 'TZS',
+        paymentAmount: 10000,
+        total: 10000,
+        subtotal: 10000,
+      },
+      orderItem: {
+        ...issuedReturnRow().orderItem,
+        unitPrice: 10000,
+        lineTotal: 10000,
+      },
+    });
+    stubReturnRequestLookups(prisma, row);
+    prisma.orderShipment.findMany.mockResolvedValue([
+      singleSupplierShipment(row),
+    ]);
+
+    await service.updateReturnRequest(
+      'ret-1',
+      { refundStatus: 'ISSUED' as never },
+      admin(),
+    );
+
+    const hold = [...(prisma as { __holdRows: Map<string, Record<string, unknown>> }).__holdRows.values()][0];
+    expect(hold.currency).toBe('tzs');
+    expect(hold.amount).toBe(10000);
+    expect(hold.amountCents).toBe(1_000_000);
+  });
+
+  it('does not create card refund holds for COD, Lipa, or demo returns', async () => {
+    for (const paymentMode of ['cod', 'lipa', 'demo'] as const) {
+      const holds = (prisma as { __holdRows: Map<string, unknown> }).__holdRows;
+      holds.clear();
+      stripe.refundCardCharge.mockClear();
+      const row = issuedReturnRow({
+        order: {
+          ...issuedReturnRow().order,
+          paymentMode,
+          stripePaymentIntentId: null,
+        },
+      });
+      stubReturnRequestLookups(prisma, row);
+      prisma.orderShipment.findMany.mockResolvedValue([
+        singleSupplierShipment(row),
+      ]);
+
+      await service.updateReturnRequest(
+        'ret-1',
+        { refundStatus: 'ISSUED' as never },
+        admin(),
+      );
+
+      expect(holds.size).toBe(0);
+      expect(stripe.refundCardCharge).not.toHaveBeenCalled();
+    }
+  });
+
   it('leaves a card return unissued when Stripe rejects the refund', async () => {
     const row = issuedReturnRow();
     stubReturnRequestLookups(prisma, row, { markIssued: false });
@@ -3203,7 +3356,8 @@ function issuedReturnRow(overrides: Record<string, unknown> = {}) {
       id: 'ord-1',
       displayId: 'WG-10999',
       paymentMode: 'test',
-      currency: 'usd',
+      currency: 'USD',
+      paymentCurrency: 'USD',
       stripePaymentIntentId: 'pi_1',
       paymentAmount: 58.99,
       subtotal: 50,

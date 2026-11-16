@@ -56,7 +56,11 @@ type Shipment = {
   refundedAmount: number;
 };
 
-type OrderRow = { id: string; currency: string };
+type OrderRow = {
+  id: string;
+  currency: string;
+  paymentCurrency?: string | null;
+};
 type ClawbackRow = {
   id: string;
   returnRequestId: string;
@@ -322,7 +326,7 @@ function createMemoryPrisma() {
     order: {
       async findUniqueOrThrow(args: {
         where: { id: string };
-        select?: { currency?: true };
+        select?: { currency?: true; paymentCurrency?: true };
       }) {
         const row = orders.get(args.where.id);
         if (!row) throw new Error('order not found');
@@ -532,6 +536,39 @@ describe('RefundAttemptService (S2.1)', () => {
     expect(service.isV1Enabled()).toBe(false);
     process.env[REFUND_ATTEMPT_V1_ENV] = 'true';
     expect(service.isV1Enabled()).toBe(true);
+  });
+
+  it('submits Stripe refund with frozen payment currency (TZS) without double multiply', async () => {
+    const { service, stripe, prisma } = build();
+    (stripe.createRefundForAttempt as jest.Mock).mockResolvedValue({
+      ok: true,
+      refund: { id: 're_tzs', status: 'pending', failureReason: null },
+    });
+    const ensured = await service.ensureAttemptForOperation({
+      ...ensureParams,
+      amount: 10000.5,
+      amountCents: 1_000_050,
+      currency: 'TZS',
+    });
+    expect(ensured.attempt.amountCents).toBe(1_000_050);
+    expect(ensured.attempt.currency).toBe('tzs');
+    expect(Number(prisma._attempts.get(ensured.attempt.id)!.amount)).toBe(
+      10000.5,
+    );
+
+    await service.submitCurrentSubmission({
+      refundAttemptId: ensured.attempt.id,
+    });
+
+    expect(stripe.createRefundForAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 1_000_050,
+        currency: 'tzs',
+      }),
+    );
+    expect(
+      (stripe.createRefundForAttempt as jest.Mock).mock.calls[0][0].amountCents,
+    ).not.toBe(100_005_000);
   });
 
   it('ensureAttemptForOperation creates attempt + v1 and freezes amount on reload', async () => {
@@ -1330,6 +1367,7 @@ describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
     refundedAmount?: number;
     currency?: string;
     orderCurrency?: string;
+    paymentCurrency?: string | null;
     withClawback?: boolean;
     withSnapshot?: boolean;
     kind?: string;
@@ -1346,15 +1384,14 @@ describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
     const amountCents =
       opts?.amountCents ?? Math.round(amount * 100);
     const currency = opts?.currency ?? 'usd';
-    prisma.seedOrder({
-      id: 'ord-1',
-      currency: opts?.orderCurrency ?? currency.toUpperCase(),
-    });
-    // Order currency in schema is typically uppercase; attempt stores lowercase from Stripe.
-    // Match both via toLowerCase() in service — seed with same letters as attempt unless overridden.
+    // Attempt currency is payment-denominated; settlement may differ.
     prisma.seedOrder({
       id: 'ord-1',
       currency: opts?.orderCurrency ?? currency,
+      paymentCurrency:
+        opts?.paymentCurrency === undefined
+          ? opts?.orderCurrency ?? currency
+          : opts.paymentCurrency,
     });
     const paymentTotal = opts?.paymentTotal ?? amount;
     prisma.seedShipment({
@@ -2123,10 +2160,11 @@ describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
     expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLY_FAILED');
   });
 
-  it('rejects currency mismatch between attempt and order', async () => {
+  it('rejects currency mismatch between attempt and order payment currency', async () => {
     const ctx = await seedReadyApply({
       currency: 'usd',
-      orderCurrency: 'eur',
+      orderCurrency: 'usd',
+      paymentCurrency: 'eur',
     });
     await expect(
       ctx.service.applySuccessfulRefund({
@@ -2135,6 +2173,90 @@ describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
       }),
     ).rejects.toThrow(/currency/i);
     expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(0);
+  });
+
+  it('applies when attempt currency matches TZS payment with USD settlement', async () => {
+    const ctx = await seedReadyApply({
+      amount: 10000.5,
+      amountCents: 1_000_050,
+      currency: 'tzs',
+      orderCurrency: 'USD',
+      paymentCurrency: 'TZS',
+    });
+    await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLIED');
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(10000.5);
+    expect(ctx.holds.consumeHoldForApplyTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        expectedAmount: 10000.5,
+        expectedAmountCents: 1_000_050,
+        expectedCurrency: 'tzs',
+      }),
+    );
+    expect(ctx.ledger.applyReturnClawback).toHaveBeenCalled();
+  });
+
+  it('applies when attempt currency matches USD payment with TZS settlement', async () => {
+    const ctx = await seedReadyApply({
+      amount: 58.99,
+      amountCents: 5899,
+      currency: 'usd',
+      orderCurrency: 'TZS',
+      paymentCurrency: 'USD',
+    });
+    await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLIED');
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(58.99);
+    expect(ctx.holds.consumeHoldForApplyTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        expectedCurrency: 'usd',
+        expectedAmountCents: 5899,
+      }),
+    );
+  });
+
+  it('applies same-currency USD and TZS payment/settlement pairs', async () => {
+    for (const pair of [
+      { currency: 'usd', settlement: 'USD', amount: 10, cents: 1000 },
+      { currency: 'tzs', settlement: 'TZS', amount: 10000, cents: 1_000_000 },
+    ]) {
+      const ctx = await seedReadyApply({
+        amount: pair.amount,
+        amountCents: pair.cents,
+        currency: pair.currency,
+        orderCurrency: pair.settlement,
+        paymentCurrency: pair.settlement,
+      });
+      await ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      });
+      expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLIED');
+      expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(
+        pair.amount,
+      );
+    }
+  });
+
+  it('falls back to order.currency when paymentCurrency is null', async () => {
+    const ctx = await seedReadyApply({
+      currency: 'usd',
+      orderCurrency: 'USD',
+      paymentCurrency: null,
+    });
+    await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(ctx.prisma._attempts.get(ctx.attemptId)!.status).toBe('APPLIED');
   });
 
   it('never calls Stripe during apply', async () => {
