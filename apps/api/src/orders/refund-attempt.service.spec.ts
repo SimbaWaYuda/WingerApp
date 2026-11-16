@@ -101,6 +101,16 @@ function createMemoryPrisma() {
   const orders = new Map<string, OrderRow>();
   const clawbacks = new Map<string, ClawbackRow>();
   const commissions = new Map<string, CommissionSnap>();
+  const returns = new Map<
+    string,
+    {
+      id: string;
+      refundAbandonRequestedAt: Date | null;
+      refundStatus: string;
+      refundDrive: string;
+      refundedAt: Date | null;
+    }
+  >();
   let attemptSeq = 0;
   let subSeq = 0;
 
@@ -340,15 +350,48 @@ function createMemoryPrisma() {
         where: { id: string };
         select?: { refundAbandonRequestedAt?: true };
       }) {
-        return {
+        const row = returns.get(args.where.id) ?? {
           id: args.where.id,
-          refundAbandonRequestedAt: null,
+          refundAbandonRequestedAt: null as Date | null,
           refundStatus: 'PENDING',
           refundDrive: 'ATTEMPT',
+          refundedAt: null as Date | null,
         };
+        returns.set(args.where.id, row);
+        return { ...row };
       },
-      async updateMany() {
-        return { count: 0 };
+      async updateMany(args: {
+        where: {
+          id: string;
+          refundStatus?: { not: string };
+        };
+        data: {
+          refundStatus?: string;
+          refundedAt?: Date;
+        };
+      }) {
+        const row = returns.get(args.where.id) ?? {
+          id: args.where.id,
+          refundAbandonRequestedAt: null as Date | null,
+          refundStatus: 'PENDING',
+          refundDrive: 'ATTEMPT',
+          refundedAt: null as Date | null,
+        };
+        if (
+          args.where.refundStatus?.not != null &&
+          row.refundStatus === args.where.refundStatus.not
+        ) {
+          returns.set(args.where.id, row);
+          return { count: 0 };
+        }
+        if (args.data.refundStatus != null) {
+          row.refundStatus = args.data.refundStatus;
+        }
+        if (args.data.refundedAt != null) {
+          row.refundedAt = args.data.refundedAt;
+        }
+        returns.set(args.where.id, row);
+        return { count: 1 };
       },
     },
     shipmentRefundHold: {
@@ -404,6 +447,7 @@ function createMemoryPrisma() {
     _orders: orders,
     _clawbacks: clawbacks,
     _commissions: commissions,
+    _returns: returns,
     seedShipment(row: Shipment) {
       shipments.set(row.id, { ...row });
     },
@@ -1297,7 +1341,7 @@ describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
     clawbackAppliedAt?: Date | null;
     appliedAt?: Date | null;
   }) {
-    const { service, prisma, stripe, ledger } = build();
+    const { service, prisma, stripe, ledger, holds } = build();
     const amount = opts?.amount ?? 10;
     const amountCents =
       opts?.amountCents ?? Math.round(amount * 100);
@@ -1471,6 +1515,7 @@ describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
         prisma,
         stripe,
         ledger,
+        holds,
         attemptId: ensured.attempt.id,
       };
     })();
@@ -1580,6 +1625,78 @@ describe('RefundAttemptService.applySuccessfulRefund (S2.2)', () => {
     });
     expect(again.idempotent).toBe(true);
     expect(again.attempt.status).toBe('APPLIED');
+  });
+
+  it('repairs ReturnRequest ISSUED after APPLIED when the separate ISSUED write failed', async () => {
+    const ctx = await seedReadyApply();
+    const createCallsBefore = (ctx.stripe.createRefundForAttempt as jest.Mock)
+      .mock.calls.length;
+    const clawbackBefore = (ctx.ledger.applyReturnClawback as jest.Mock).mock
+      .calls.length;
+    const holdConsumeBefore = (ctx.holds.consumeHoldForApplyTx as jest.Mock).mock
+      .calls.length;
+
+    const origUpdateMany = ctx.prisma.returnRequest.updateMany.bind(
+      ctx.prisma.returnRequest,
+    );
+    let issuedAttempts = 0;
+    ctx.prisma.returnRequest.updateMany = (async (args: {
+      where: { id: string; refundStatus?: { not: string } };
+      data: { refundStatus?: string; refundedAt?: Date };
+    }) => {
+      issuedAttempts += 1;
+      if (issuedAttempts === 1) {
+        throw new Error('issued write failed');
+      }
+      return origUpdateMany(args);
+    }) as typeof ctx.prisma.returnRequest.updateMany;
+
+    await expect(
+      ctx.service.applySuccessfulRefund({
+        refundAttemptId: ctx.attemptId,
+        actor: actorUser,
+      }),
+    ).rejects.toThrow(/issued write failed/);
+
+    const afterFail = ctx.prisma._attempts.get(ctx.attemptId)!;
+    expect(afterFail.status).toBe('APPLIED');
+    expect(afterFail.appliedAt).toBeTruthy();
+    expect(ctx.prisma._shipments.get('ship-1')!.refundedAmount).toBe(10);
+    expect(ctx.prisma._returns.get('ret-1')?.refundStatus ?? 'PENDING').toBe(
+      'PENDING',
+    );
+    expect((ctx.ledger.applyReturnClawback as jest.Mock).mock.calls.length).toBe(
+      clawbackBefore + 1,
+    );
+    expect((ctx.holds.consumeHoldForApplyTx as jest.Mock).mock.calls.length).toBe(
+      holdConsumeBefore + 1,
+    );
+
+    const retry = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(retry.idempotent).toBe(true);
+    expect(retry.attempt.status).toBe('APPLIED');
+    expect(retry.returnIssued).toBe(true);
+    expect(ctx.prisma._returns.get('ret-1')!.refundStatus).toBe('ISSUED');
+    expect((ctx.stripe.createRefundForAttempt as jest.Mock).mock.calls.length).toBe(
+      createCallsBefore,
+    );
+    expect((ctx.ledger.applyReturnClawback as jest.Mock).mock.calls.length).toBe(
+      clawbackBefore + 1,
+    );
+    expect((ctx.holds.consumeHoldForApplyTx as jest.Mock).mock.calls.length).toBe(
+      holdConsumeBefore + 1,
+    );
+
+    const again = await ctx.service.applySuccessfulRefund({
+      refundAttemptId: ctx.attemptId,
+      actor: actorUser,
+    });
+    expect(again.idempotent).toBe(true);
+    expect(again.returnIssued).toBe(false);
+    expect(ctx.prisma._returns.get('ret-1')!.refundStatus).toBe('ISSUED');
   });
 
   it('returns idempotent success when flags are fully consistent APPLIED', async () => {

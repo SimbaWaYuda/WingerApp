@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   CommissionRecognitionStatus,
@@ -2164,13 +2165,21 @@ export class OrdersService {
       return;
     }
 
-    if (phase.submit.blockedReason || attempt.status !== 'APPLIED') {
-      throw new BadRequestException(
-        phase.submit.blockedReason
-          ? `RETURN ATTEMPT refund blocked: ${phase.submit.blockedReason}`
-          : `RETURN ATTEMPT refund not ready (status ${attempt.status})`,
-      );
+    // APPLIED with missing ReturnRequest ISSUED: repair finalisation only
+    // (no Stripe create, hold consume, or clawback — apply is idempotent).
+    if (attempt.status === 'APPLIED') {
+      await this.refundAttempts.applySuccessfulRefund({
+        refundAttemptId: params.attemptId,
+        actor: params.user,
+      });
+      return;
     }
+
+    throw new BadRequestException(
+      phase.submit.blockedReason
+        ? `RETURN ATTEMPT refund blocked: ${phase.submit.blockedReason}`
+        : `RETURN ATTEMPT refund not ready (status ${attempt.status})`,
+    );
   }
 
   private async runLegacyCardReturnRefund(params: {
@@ -2634,7 +2643,8 @@ export class OrdersService {
 
   /**
    * Refunds a test/live card PaymentIntent. Demo and COD skip Stripe.
-   * A failed refund throws so the caller can leave the order unchanged.
+   * Only Stripe status `succeeded` (or already-refunded reconciled as succeeded)
+   * counts as complete. Pending/requires-action leave the caller unchanged.
    */
   private async refundPaidCard(params: {
     paymentMode: string;
@@ -2678,7 +2688,22 @@ export class OrdersService {
       }
       throw new BadRequestException(result.message);
     }
-    return { ok: true };
+    const status = (result.status ?? '').trim().toLowerCase();
+    // already_refunded is normalised to status succeeded in StripeService.
+    if (status === 'succeeded') {
+      return { ok: true };
+    }
+    const message =
+      status === 'pending' || status === 'requires_action'
+        ? `Stripe refund is ${status}; awaiting reconciliation`
+        : `Stripe refund status ${status || 'unknown'} is not succeeded; awaiting reconciliation`;
+    if (params.reason === 'unsellable') {
+      this.logger.warn(
+        `Unsellable refund not complete for ${params.orderId}: ${message}`,
+      );
+      return { ok: false, message };
+    }
+    throw new BadRequestException(message);
   }
 
   private async clawbackCancelledItems(
@@ -3654,11 +3679,65 @@ export class OrdersService {
     try {
       await this.prisma.$transaction(async (tx) => {
         for (const item of items) {
-          const eventId = `order-rereserve-${orderId}-${item.productId}`;
+          const variantId =
+            (item as { variantId?: string | null }).variantId ?? null;
+          // Product-only keys stay unchanged for existing ledger idempotency.
+          const eventId = variantId
+            ? `order-rereserve-${orderId}-${item.productId}-${variantId}`
+            : `order-rereserve-${orderId}-${item.productId}`;
           const already = await tx.inventoryLedger.findUnique({
             where: { eventId },
           });
           if (already) continue;
+
+          if (variantId) {
+            const reserved = await tx.productVariant.updateMany({
+              where: {
+                id: variantId,
+                enabled: true,
+                stock: { gte: item.quantity },
+              },
+              data: { stock: { decrement: item.quantity } },
+            });
+            if (reserved.count === 0) {
+              throw new Error(`Insufficient stock for ${item.productName}`);
+            }
+            const variant = await tx.productVariant.findUniqueOrThrow({
+              where: { id: variantId },
+            });
+            await tx.productVariant.update({
+              where: { id: variant.id },
+              data: { stockStatus: stockStatusFor(variant.stock) },
+            });
+            const product = await tx.product.findUniqueOrThrow({
+              where: { id: item.productId },
+            });
+            const siblings = await tx.productVariant.findMany({
+              where: { productId: product.id },
+            });
+            const total = aggregateVariantStock(siblings);
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                stock: total,
+                stockStatus: stockStatusFor(total),
+              },
+            });
+            await tx.inventoryLedger.create({
+              data: {
+                productId: product.id,
+                variantId: variant.id,
+                supplierId: product.supplierId,
+                delta: -item.quantity,
+                reason: 'ORDER_PAYMENT_RERESERVE',
+                eventId,
+                userId,
+                quantityAfter: variant.stock,
+              },
+            });
+            continue;
+          }
+
           const reserved = await tx.product.updateMany({
             where: { id: item.productId, stock: { gte: item.quantity } },
             data: { stock: { decrement: item.quantity } },
@@ -3801,7 +3880,7 @@ export class OrdersService {
       where: { eventId: unsellableId },
     });
     if (alreadyUnsellable) {
-      await this.refundUnsellableCharge(order, paymentIntentId, mode);
+      await this.refundUnsellableChargeOrNack(order, paymentIntentId, mode);
       return false;
     }
 
@@ -3809,7 +3888,7 @@ export class OrdersService {
     if (reserved.ok) return true;
 
     await this.markOrderUnsellable(order, unsellableId);
-    await this.refundUnsellableCharge(order, paymentIntentId, mode);
+    await this.refundUnsellableChargeOrNack(order, paymentIntentId, mode);
     return false;
   }
 
@@ -3848,7 +3927,13 @@ export class OrdersService {
     });
   }
 
-  private async refundUnsellableCharge(
+  /**
+   * Unsellable refund must succeed before the payment webhook is acknowledged.
+   * Non-succeeded outcomes throw ServiceUnavailableException so the Stripe
+   * webhook controller returns HTTP 503 and Stripe can retry with the same
+   * idempotency key (winger-webhook-unsellable-{orderId}).
+   */
+  private async refundUnsellableChargeOrNack(
     order: {
       id: string;
       paymentMode: string;
@@ -3869,7 +3954,12 @@ export class OrdersService {
       idempotencyKey: `winger-webhook-unsellable-${order.id}`,
       reason: 'unsellable',
     });
-    if (!refunded.ok) return;
+    if (!refunded.ok) {
+      throw new ServiceUnavailableException(
+        refunded.message ||
+          'Unsellable charge refund is not complete; Stripe should retry',
+      );
+    }
     await this.prisma.order.updateMany({
       where: {
         id: order.id,

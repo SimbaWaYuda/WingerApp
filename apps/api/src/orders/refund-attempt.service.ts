@@ -1114,11 +1114,15 @@ export class RefundAttemptService {
         };
 
       const early = await readIdempotentApplied();
-      if (early) return early;
+      if (early) {
+        return this.completeAppliedWithIssued(early);
+      }
 
       if (isTransientDbError(error)) {
         const afterTransient = await readIdempotentApplied();
-        if (afterTransient) return afterTransient;
+        if (afterTransient) {
+          return this.completeAppliedWithIssued(afterTransient);
+        }
         throw error;
       }
 
@@ -1129,7 +1133,9 @@ export class RefundAttemptService {
         });
       } catch (recordError) {
         const afterRecordError = await readIdempotentApplied();
-        if (afterRecordError) return afterRecordError;
+        if (afterRecordError) {
+          return this.completeAppliedWithIssued(afterRecordError);
+        }
         const original =
           error instanceof Error ? error.message : String(error);
         const recording =
@@ -1142,7 +1148,9 @@ export class RefundAttemptService {
       }
 
       const afterFailureRecord = await readIdempotentApplied();
-      if (afterFailureRecord) return afterFailureRecord;
+      if (afterFailureRecord) {
+        return this.completeAppliedWithIssued(afterFailureRecord);
+      }
 
       throw error;
     }
@@ -1156,10 +1164,21 @@ export class RefundAttemptService {
     }
 
     // Finalise ReturnRequest ISSUED only after apply commits (S2.3).
+    // Also repairs APPLIED→ISSUED when a prior call committed apply but ISSUED failed.
+    return this.completeAppliedWithIssued(outcome.result);
+  }
+
+  /**
+   * After APPLIED is durable, set ReturnRequest ISSUED (idempotent).
+   * Safe to call on retry when money/clawback/hold already finished.
+   */
+  private async completeAppliedWithIssued(
+    result: ApplySuccessfulRefundResult,
+  ): Promise<ApplySuccessfulRefundResult> {
     const returnIssued = await this.finalizeReturnIssuedAfterApply(
-      outcome.result.attempt,
+      result.attempt,
     );
-    return { ...outcome.result, returnIssued };
+    return { ...result, returnIssued };
   }
 
   /**

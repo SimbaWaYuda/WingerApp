@@ -151,6 +151,13 @@ describe('payment and commission reliability', () => {
         update: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      productVariant: {
+        findUnique: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       inventoryLedger: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn(),
@@ -951,8 +958,401 @@ describe('payment and commission reliability', () => {
         data: { stock: { decrement: 1 } },
       }),
     );
+    expect(prisma.productVariant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.inventoryLedger.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          eventId: 'order-rereserve-ord-1-p1',
+          productId: 'p1',
+        }),
+      }),
+    );
     expect(stripe.refundCardCharge).not.toHaveBeenCalled();
     expect(commissions.createSnapshotsForOrder).toHaveBeenCalled();
+  });
+
+  it('re-reserves variant stock for a late success when the line has a variant', async () => {
+    const line = lineItem({
+      status: OrderStatus.CANCELLED,
+      variantId: 'var-1',
+      quantity: 2,
+    });
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late_var',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { count: 1 };
+    });
+    prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.productVariant.updateMany.mockResolvedValue({ count: 1 });
+    prisma.productVariant.findUniqueOrThrow.mockResolvedValue({
+      id: 'var-1',
+      stock: 3,
+      productId: 'p1',
+      enabled: true,
+    });
+    prisma.productVariant.findMany.mockResolvedValue([
+      { id: 'var-1', stock: 3, enabled: true },
+    ]);
+    prisma.product.findUniqueOrThrow.mockResolvedValue({
+      id: 'p1',
+      stock: 3,
+      supplierId: 'sup-1',
+    });
+
+    await service.handleStripeEvent({
+      type: 'payment_intent.succeeded',
+      livemode: false,
+      data: {
+        object: { id: 'pi_late_var', metadata: { orderId: 'ord-1' } },
+      },
+    });
+
+    expect(state.paymentStatus).toBe(PaymentStatus.PAID);
+    expect(prisma.productVariant.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'var-1', enabled: true, stock: { gte: 2 } },
+        data: { stock: { decrement: 2 } },
+      }),
+    );
+    expect(prisma.product.updateMany).not.toHaveBeenCalled();
+    expect(prisma.inventoryLedger.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          eventId: 'order-rereserve-ord-1-p1-var-1',
+          variantId: 'var-1',
+          delta: -2,
+        }),
+      }),
+    );
+    expect(stripe.refundCardCharge).not.toHaveBeenCalled();
+  });
+
+  it('does not re-reserve twice when the late-success ledger event already exists', async () => {
+    const line = lineItem({
+      status: OrderStatus.CANCELLED,
+      variantId: 'var-1',
+    });
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late_idem',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { count: 1 };
+    });
+    prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.inventoryLedger.findUnique.mockImplementation(
+      async ({ where }: { where: { eventId: string } }) => {
+        if (where.eventId === 'order-rereserve-ord-1-p1-var-1') {
+          return { eventId: where.eventId };
+        }
+        return null;
+      },
+    );
+
+    await service.handleStripeEvent({
+      type: 'payment_intent.succeeded',
+      livemode: false,
+      data: {
+        object: { id: 'pi_late_idem', metadata: { orderId: 'ord-1' } },
+      },
+    });
+
+    expect(state.paymentStatus).toBe(PaymentStatus.PAID);
+    expect(prisma.productVariant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.product.updateMany).not.toHaveBeenCalled();
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+  });
+
+  it('treats a missing variant as unsellable on late success', async () => {
+    const line = lineItem({
+      status: OrderStatus.CANCELLED,
+      variantId: 'var-missing',
+    });
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late_missing',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { ...state };
+    });
+    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { count: 1 };
+    });
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.productVariant.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.handleStripeEvent({
+      type: 'payment_intent.succeeded',
+      livemode: false,
+      data: {
+        object: { id: 'pi_late_missing', metadata: { orderId: 'ord-1' } },
+      },
+    });
+
+    expect(result).toMatchObject({ unsellable: true });
+    expect(stripe.refundCardCharge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: 'winger-webhook-unsellable-ord-1',
+        reason: 'unsellable',
+      }),
+    );
+    expect(state.paymentStatus).toBe(PaymentStatus.REFUNDED);
+  });
+
+  it('leaves a paid card order unchanged when cancel refund is still pending', async () => {
+    const order = orderShell({
+      paymentStatus: PaymentStatus.PAID,
+      stripePaymentIntentId: 'pi_1',
+      items: [lineItem({ status: OrderStatus.PROCESSING })],
+    });
+    prisma.order.findFirst.mockResolvedValue(order);
+    stripe.refundCardCharge.mockResolvedValueOnce({
+      ok: true,
+      refundId: 're_pending',
+      status: 'pending',
+    });
+
+    await expect(service.cancel('ord-1', customer())).rejects.toThrow(/pending/);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(commissions.clawbackForOrderItem).not.toHaveBeenCalled();
+  });
+
+  it('leaves a paid card order unchanged when cancel refund requires action', async () => {
+    const order = orderShell({
+      paymentStatus: PaymentStatus.PAID,
+      stripePaymentIntentId: 'pi_1',
+      items: [lineItem({ status: OrderStatus.PROCESSING })],
+    });
+    prisma.order.findFirst.mockResolvedValue(order);
+    stripe.refundCardCharge.mockResolvedValueOnce({
+      ok: true,
+      refundId: 're_action',
+      status: 'requires_action',
+    });
+
+    await expect(service.cancel('ord-1', customer())).rejects.toThrow(
+      /requires_action/,
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('completes cancel when Stripe reports already refunded as succeeded', async () => {
+    const line = lineItem({ status: OrderStatus.PROCESSING });
+    const order = orderShell({
+      paymentStatus: PaymentStatus.PAID,
+      stripePaymentIntentId: 'pi_1',
+      items: [line],
+    });
+    prisma.order.findFirst.mockResolvedValue(order);
+    prisma.order.findUnique.mockResolvedValue({
+      ...order,
+      status: OrderStatus.CANCELLED,
+      paymentStatus: PaymentStatus.REFUNDED,
+    });
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.product.findUnique.mockResolvedValue({
+      id: 'p1',
+      stock: 4,
+      supplierId: 'sup-1',
+    });
+    stripe.refundCardCharge.mockResolvedValueOnce({
+      ok: true,
+      refundId: 'already_refunded',
+      status: 'succeeded',
+    });
+
+    const result = await service.cancel('ord-1', customer());
+    expect(result.paymentStatus).toBe(PaymentStatus.REFUNDED);
+    expect(result.status).toBe(OrderStatus.CANCELLED);
+  });
+
+  it('does not mark unsellable REFUNDED when Stripe refund is still pending', async () => {
+    const line = lineItem({ status: OrderStatus.CANCELLED });
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.product.updateMany.mockResolvedValue({ count: 0 });
+    stripe.refundCardCharge.mockResolvedValueOnce({
+      ok: true,
+      refundId: 're_pending',
+      status: 'pending',
+    });
+
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_late', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).rejects.toThrow(/pending|not complete|reconciliation/i);
+    expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+    expect(stripe.refundCardCharge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: 'winger-webhook-unsellable-ord-1',
+      }),
+    );
+  });
+
+  it('NACKs unsellable webhook for requires_action refund without marking REFUNDED', async () => {
+    const line = lineItem({ status: OrderStatus.CANCELLED });
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.product.updateMany.mockResolvedValue({ count: 0 });
+    stripe.refundCardCharge.mockResolvedValueOnce({
+      ok: true,
+      refundId: 're_action',
+      status: 'requires_action',
+    });
+
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_late', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).rejects.toThrow(/requires_action|not complete|reconciliation/i);
+    expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+  });
+
+  it('NACKs unsellable webhook for failed refund without marking REFUNDED', async () => {
+    const line = lineItem({ status: OrderStatus.CANCELLED });
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.product.updateMany.mockResolvedValue({ count: 0 });
+    stripe.refundCardCharge.mockResolvedValueOnce({
+      ok: false,
+      message: 'Stripe refund failed',
+      refundId: 're_fail',
+      status: 'failed',
+    });
+
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_late', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).rejects.toThrow(/failed|not complete/i);
+    expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+  });
+
+  it('NACKs unsellable webhook for unknown refund status without marking REFUNDED', async () => {
+    const line = lineItem({ status: OrderStatus.CANCELLED });
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.product.updateMany.mockResolvedValue({ count: 0 });
+    stripe.refundCardCharge.mockResolvedValueOnce({
+      ok: true,
+      refundId: 're_unknown',
+      status: null,
+    });
+
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_late', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).rejects.toThrow(/unknown|not succeeded|not complete|reconciliation/i);
+    expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+  });
+
+  it('retries unsellable webhook with the same refund idempotency key until succeeded', async () => {
+    const line = lineItem({ status: OrderStatus.CANCELLED });
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { count: 1 };
+    });
+    prisma.orderItem.findMany.mockResolvedValue([line]);
+    prisma.product.updateMany.mockResolvedValue({ count: 0 });
+    stripe.refundCardCharge
+      .mockResolvedValueOnce({
+        ok: true,
+        refundId: 're_pending',
+        status: 'pending',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        refundId: 're_pending',
+        status: 'succeeded',
+      });
+
+    await expect(
+      service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_late', metadata: { orderId: 'ord-1' } } },
+      }),
+    ).rejects.toThrow(/pending|not complete|reconciliation/i);
+    expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+
+    const retry = await service.handleStripeEvent({
+      type: 'payment_intent.succeeded',
+      livemode: false,
+      data: { object: { id: 'pi_late', metadata: { orderId: 'ord-1' } } },
+    });
+    expect(retry).toMatchObject({ unsellable: true });
+    expect(state.paymentStatus).toBe(PaymentStatus.REFUNDED);
+    expect(stripe.refundCardCharge).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        idempotencyKey: 'winger-webhook-unsellable-ord-1',
+      }),
+    );
+    expect(stripe.refundCardCharge).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        idempotencyKey: 'winger-webhook-unsellable-ord-1',
+      }),
+    );
+    expect(stripe.refundCardCharge).toHaveBeenCalledTimes(2);
   });
 
   it('refunds only supplier A’s locked bucket when A’s line is returned', async () => {
