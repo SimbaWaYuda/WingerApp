@@ -77,6 +77,7 @@ describe('StripeService payment safety', () => {
     const result = await service.refundCardCharge({
       paymentIntentId: 'pi_1',
       amount: 29.5,
+      currency: 'USD',
       idempotencyKey: 'winger-refund-ret-1',
       orderId: 'ord-1',
       returnRequestId: 'ret-1',
@@ -95,6 +96,7 @@ describe('StripeService payment safety', () => {
       }),
       { idempotencyKey: 'winger-refund-ret-1' },
     );
+    expect(Number.isInteger(create.mock.calls[0][0].amount)).toBe(true);
   });
 
   it('refunds a cancelled order with a stable cancel key', async () => {
@@ -105,6 +107,7 @@ describe('StripeService payment safety', () => {
     const result = await service.refundCardCharge({
       paymentIntentId: 'pi_1',
       amount: 58.99,
+      currency: 'USD',
       idempotencyKey: 'winger-cancel-ord-1',
       orderId: 'ord-1',
       reason: 'cancel',
@@ -125,6 +128,74 @@ describe('StripeService payment safety', () => {
     );
   });
 
+  it('converts TZS major units to Stripe minor units for card refunds', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 're_tzs', status: 'succeeded' });
+    const service = new StripeService();
+    service.bindForTests({ refunds: { create } } as never, 'test');
+
+    const result = await service.refundCardCharge({
+      paymentIntentId: 'pi_1',
+      amount: 10000.5,
+      currency: 'TZS',
+      idempotencyKey: 'winger-refund-ret-tzs',
+      orderId: 'ord-1',
+      returnRequestId: 'ret-1',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      refundId: 're_tzs',
+      status: 'succeeded',
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_intent: 'pi_1',
+        amount: 1_000_050,
+      }),
+      { idempotencyKey: 'winger-refund-ret-tzs' },
+    );
+  });
+
+  it('rejects unsupported refund currencies before calling Stripe', async () => {
+    const create = jest.fn();
+    const service = new StripeService();
+    service.bindForTests({ refunds: { create } } as never, 'test');
+
+    const result = await service.refundCardCharge({
+      paymentIntentId: 'pi_1',
+      amount: 10,
+      currency: 'KES',
+      idempotencyKey: 'winger-refund-ret-1',
+      orderId: 'ord-1',
+      returnRequestId: 'ret-1',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toMatch(/supported/i);
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('rejects zero, negative, and sub-cent refund amounts before calling Stripe', async () => {
+    const create = jest.fn();
+    const service = new StripeService();
+    service.bindForTests({ refunds: { create } } as never, 'test');
+
+    for (const amount of [0, -1, 10.001, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const result = await service.refundCardCharge({
+        paymentIntentId: 'pi_1',
+        amount,
+        currency: 'USD',
+        idempotencyKey: 'winger-refund-ret-1',
+        orderId: 'ord-1',
+        returnRequestId: 'ret-1',
+      });
+      expect(result.ok).toBe(false);
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('treats an already-refunded charge as success so a retry can finish the ledger', async () => {
     const service = new StripeService();
     service.bindForTests(
@@ -135,6 +206,7 @@ describe('StripeService payment safety', () => {
     const result = await service.refundCardCharge({
       paymentIntentId: 'pi_1',
       amount: 10,
+      currency: 'USD',
       idempotencyKey: 'winger-cancel-ord-1',
       orderId: 'ord-1',
       reason: 'cancel',
@@ -155,6 +227,7 @@ describe('StripeService payment safety', () => {
     const result = await service.refundCardCharge({
       paymentIntentId: 'pi_1',
       amount: 10,
+      currency: 'USD',
       idempotencyKey: 'winger-refund-ret-1',
       orderId: 'ord-1',
       returnRequestId: 'ret-1',
@@ -177,6 +250,7 @@ describe('StripeService payment safety', () => {
     const result = await service.refundCardCharge({
       paymentIntentId: 'pi_1',
       amount: 10,
+      currency: 'USD',
       idempotencyKey: 'winger-refund-ret-1',
       orderId: 'ord-1',
       returnRequestId: 'ret-1',
@@ -274,6 +348,9 @@ describe('StripeService payment safety', () => {
       }),
       { idempotencyKey: 'winger-ra:return:ret-1:v1' },
     );
+    // Already-minor path: amountCents must not be multiplied again.
+    expect(create.mock.calls[0][0].amount).toBe(1000);
+    expect(create.mock.calls[0][0].amount).not.toBe(100_000);
   });
 
   it('classifies charge network timeouts as uncertain and preserves PaymentIntent id', async () => {

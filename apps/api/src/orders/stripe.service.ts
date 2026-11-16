@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 import { cardCheckoutMode } from './checkout-mode';
+import { StripeAmountError, toStripeAmountMinor } from './stripe-amount';
 
 export type ChargeResult = {
   mode: 'demo' | 'test' | 'live';
@@ -309,6 +310,8 @@ export class StripeService {
   async refundCardCharge(params: {
     paymentIntentId: string;
     amount: number;
+    /** Major-unit currency for amount (USD/TZS). Used only for conversion. */
+    currency: string;
     idempotencyKey: string;
     orderId: string;
     returnRequestId?: string;
@@ -317,9 +320,17 @@ export class StripeService {
     if (!this.stripe) {
       return { ok: false, message: 'Stripe is not configured' };
     }
-    const amountCents = Math.round(params.amount * 100);
-    if (amountCents <= 0) {
-      return { ok: false, message: 'Refund amount must be greater than zero' };
+    let amountCents: number;
+    try {
+      amountCents = toStripeAmountMinor(params.amount, params.currency);
+    } catch (error) {
+      const message =
+        error instanceof StripeAmountError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Refund amount must be greater than zero';
+      return { ok: false, message };
     }
     const reason =
       params.reason ?? (params.returnRequestId ? 'return' : 'cancel');

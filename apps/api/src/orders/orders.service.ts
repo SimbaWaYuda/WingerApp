@@ -64,6 +64,10 @@ import {
   StripeService,
 } from './stripe.service';
 import {
+  StripeAmountError,
+  toStripeAmountMinor,
+} from './stripe-amount';
+import {
   aggregateVariantStock,
   resolveLineStock,
 } from '../products/product-variants';
@@ -2255,6 +2259,7 @@ export class OrdersService {
       result = await this.stripe.refundCardCharge({
         paymentIntentId,
         amount: hold.amount,
+        currency: hold.currency,
         idempotencyKey: `winger-refund-${params.returnRequestId}`,
         orderId: params.row.orderId,
         returnRequestId: params.returnRequestId,
@@ -2544,6 +2549,7 @@ export class OrdersService {
     paymentMode: string;
     stripePaymentIntentId: string | null;
     paymentAmount: number;
+    paymentCurrency: string;
     subtotal: number;
     supplierId: string;
     returnedMerchandise: number;
@@ -2587,6 +2593,7 @@ export class OrdersService {
         paymentMode: params.paymentMode,
         stripePaymentIntentId: params.stripePaymentIntentId,
         amount,
+        currency: params.paymentCurrency,
         orderId: params.orderId,
         idempotencyKey: params.idempotencyKey,
         reason: params.reason,
@@ -2612,9 +2619,12 @@ export class OrdersService {
     paymentMode: string;
     stripePaymentIntentId: string | null;
     paymentAmount: Prisma.Decimal | null;
+    paymentCurrency?: string | null;
+    currency: string;
     total: Prisma.Decimal;
   }) {
     const paymentAmount = Number(order.paymentAmount ?? order.total);
+    const paymentCurrency = order.paymentCurrency || order.currency || 'USD';
     const shipments = await this.prisma.orderShipment.findMany({
       where: { orderId: order.id },
     });
@@ -2630,6 +2640,7 @@ export class OrdersService {
         paymentMode: order.paymentMode,
         stripePaymentIntentId: order.stripePaymentIntentId,
         amount: remaining,
+        currency: paymentCurrency,
         orderId: order.id,
         idempotencyKey: `winger-cancel-${order.id}`,
         reason: 'cancel',
@@ -2658,6 +2669,7 @@ export class OrdersService {
     paymentMode: string;
     stripePaymentIntentId: string | null;
     amount: number;
+    currency: string;
     orderId: string;
     idempotencyKey: string;
     reason: 'return' | 'cancel' | 'unsellable' | 'line_cancel';
@@ -2682,6 +2694,7 @@ export class OrdersService {
     const result = await this.stripe.refundCardCharge({
       paymentIntentId,
       amount: params.amount,
+      currency: params.currency,
       idempotencyKey: params.idempotencyKey,
       orderId: params.orderId,
       returnRequestId: params.returnRequestId,
@@ -3053,6 +3066,8 @@ export class OrdersService {
               paymentMode: order.paymentMode,
               stripePaymentIntentId: order.stripePaymentIntentId,
               paymentAmount: Number(order.paymentAmount ?? order.total),
+              paymentCurrency:
+                order.paymentCurrency || order.currency || 'USD',
               subtotal: Number(order.subtotal),
               supplierId: item.supplierId,
               returnedMerchandise: Number(item.lineTotal),
@@ -3244,6 +3259,8 @@ export class OrdersService {
         paymentStatus: PaymentStatus;
         stripePaymentIntentId: string | null;
         paymentAmount: Prisma.Decimal | null;
+        paymentCurrency?: string | null;
+        currency: string;
         subtotal: Prisma.Decimal;
         total: Prisma.Decimal;
         customerId: string;
@@ -3281,6 +3298,8 @@ export class OrdersService {
         paymentMode: item.order.paymentMode,
         stripePaymentIntentId: item.order.stripePaymentIntentId,
         paymentAmount: Number(item.order.paymentAmount ?? item.order.total),
+        paymentCurrency:
+          item.order.paymentCurrency || item.order.currency || 'USD',
         subtotal: Number(item.order.subtotal),
         supplierId: item.supplierId,
         returnedMerchandise: Number(item.lineTotal),
@@ -3930,10 +3949,22 @@ export class OrdersService {
 
     const paymentAmount = Number(current.paymentAmount ?? current.total);
     const paymentCurrency = current.paymentCurrency || current.currency || 'USD';
+    let amountCents: number;
+    try {
+      amountCents = toStripeAmountMinor(paymentAmount, paymentCurrency);
+    } catch (error) {
+      const message =
+        error instanceof StripeAmountError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Invalid payment amount';
+      throw new BadRequestException(message);
+    }
     // Persist first-attempt clock before any Stripe create I/O; never overwrite.
     await this.markStripeChargeAttempt(current.id);
     const charge = await this.stripe.chargeOrder({
-      amountCents: Math.round(paymentAmount * 100),
+      amountCents,
       currency: paymentCurrency.toLowerCase(),
       orderId: current.id,
       orderDisplayId: current.displayId,
@@ -4342,6 +4373,8 @@ export class OrdersService {
       paymentMode: string;
       stripePaymentIntentId: string | null;
       paymentAmount: Prisma.Decimal | null;
+      paymentCurrency?: string | null;
+      currency?: string | null;
       total: Prisma.Decimal;
     },
     paymentIntentId: string,
@@ -4353,6 +4386,7 @@ export class OrdersService {
         : mode,
       stripePaymentIntentId: order.stripePaymentIntentId || paymentIntentId,
       amount: Number(order.paymentAmount ?? order.total),
+      currency: order.paymentCurrency || order.currency || 'USD',
       orderId: order.id,
       idempotencyKey: `winger-webhook-unsellable-${order.id}`,
       reason: 'unsellable',

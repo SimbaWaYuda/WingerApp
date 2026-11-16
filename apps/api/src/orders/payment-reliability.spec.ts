@@ -880,10 +880,130 @@ describe('payment and commission reliability', () => {
       expect.objectContaining({
         orderId: 'ord-1',
         idempotencyKey: 'winger-charge-ord-1',
+        amountCents: 5899,
+        currency: 'usd',
       }),
+    );
+    expect(Number.isInteger(stripe.chargeOrder.mock.calls[0][0].amountCents)).toBe(
+      true,
     );
     expect(stripe.confirmPaymentIntent).not.toHaveBeenCalled();
     expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('converts USD and TZS checkout majors to integer Stripe minor units', async () => {
+    const usdPending = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      stripePaymentIntentId: null,
+      stripeChargeAttemptAt: null,
+      paymentAmount: 10,
+      paymentCurrency: 'USD',
+      currency: 'USD',
+    });
+    prisma.order.findUnique.mockResolvedValue(usdPending);
+    stripe.chargeOrder.mockResolvedValue({
+      mode: 'test',
+      status: 'uncertain',
+      paymentIntentId: 'pi_usd',
+      message: 'pending',
+    });
+    prisma.order.update.mockResolvedValue(usdPending);
+    prisma.order.findUniqueOrThrow.mockResolvedValue(usdPending);
+
+    await (service as any).chargeAndRecord(
+      usdPending,
+      'pm_card_visa',
+      customer(),
+      { isRetry: false },
+    );
+
+    expect(stripe.chargeOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 1000,
+        currency: 'usd',
+        idempotencyKey: 'winger-charge-ord-1',
+      }),
+    );
+
+    const tzsPending = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      stripePaymentIntentId: null,
+      stripeChargeAttemptAt: null,
+      paymentAmount: 10000.5,
+      paymentCurrency: 'TZS',
+      currency: 'TZS',
+      total: 10000.5,
+    });
+    prisma.order.findUnique.mockResolvedValue(tzsPending);
+    stripe.chargeOrder.mockClear();
+    stripe.chargeOrder.mockResolvedValue({
+      mode: 'test',
+      status: 'uncertain',
+      paymentIntentId: 'pi_tzs',
+      message: 'pending',
+    });
+    prisma.order.update.mockResolvedValue(tzsPending);
+    prisma.order.findUniqueOrThrow.mockResolvedValue(tzsPending);
+
+    await (service as any).chargeAndRecord(
+      tzsPending,
+      'pm_card_visa',
+      customer(),
+      { isRetry: false },
+    );
+
+    expect(stripe.chargeOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 1_000_050,
+        currency: 'tzs',
+        idempotencyKey: 'winger-charge-ord-1',
+      }),
+    );
+  });
+
+  it('rejects unsupported checkout currency before creating a PaymentIntent', async () => {
+    const pending = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      stripePaymentIntentId: null,
+      stripeChargeAttemptAt: null,
+      paymentAmount: 10,
+      paymentCurrency: 'KES',
+      currency: 'KES',
+    });
+    prisma.order.findUnique.mockResolvedValue(pending);
+
+    await expect(
+      (service as any).chargeAndRecord(pending, 'pm_card_visa', customer(), {
+        isRetry: false,
+      }),
+    ).rejects.toThrow(/supported/i);
+
+    expect(stripe.chargeOrder).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid checkout amounts before creating a PaymentIntent', async () => {
+    for (const paymentAmount of [0, -5, 10.001]) {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        stripePaymentIntentId: null,
+        stripeChargeAttemptAt: null,
+        paymentAmount,
+        paymentCurrency: 'USD',
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+      stripe.chargeOrder.mockClear();
+      prisma.$executeRaw.mockClear();
+
+      await expect(
+        (service as any).chargeAndRecord(pending, 'pm_card_visa', customer(), {
+          isRetry: false,
+        }),
+      ).rejects.toThrow();
+
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    }
   });
 
   it('sets stripeChargeAttemptAt before the first Stripe create and never resets it', async () => {
@@ -1727,6 +1847,7 @@ describe('payment and commission reliability', () => {
       expect.objectContaining({
         paymentIntentId: 'pi_1',
         amount: 58.99,
+        currency: 'usd',
         idempotencyKey: 'winger-refund-ret-1',
         returnRequestId: 'ret-1',
       }),
@@ -1813,6 +1934,7 @@ describe('payment and commission reliability', () => {
       expect.objectContaining({
         paymentIntentId: 'pi_1',
         amount: 58.99,
+        currency: 'USD',
         idempotencyKey: 'winger-cancel-ord-1',
         reason: 'cancel',
       }),
@@ -1961,6 +2083,7 @@ describe('payment and commission reliability', () => {
       expect.objectContaining({
         paymentIntentId: 'pi_late',
         amount: 58.99,
+        currency: 'USD',
         idempotencyKey: 'winger-webhook-unsellable-ord-1',
         reason: 'unsellable',
       }),
