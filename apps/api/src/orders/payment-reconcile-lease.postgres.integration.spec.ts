@@ -14,6 +14,7 @@
  */
 import {
   OrderStatus,
+  PaymentReconcileManualReviewReason,
   PaymentStatus,
   PrismaClient,
   UserRole,
@@ -434,6 +435,7 @@ concurrencyDescribe('PostgreSQL payment reconcile lease races (S2.6.20.1)', () =
       await leaseA.markManualReview({
         orderId: id,
         leaseOwner: held.leaseOwner,
+        reason: PaymentReconcileManualReviewReason.RETRY_EXHAUSTED,
         nowMs: fixedNow,
       }),
     ).toBe(false);
@@ -848,6 +850,7 @@ concurrencyDescribe('PostgreSQL UTC timestamp semantics (S2.6.20.4)', () => {
         await lease.markManualReview({
           orderId: manBefore,
           leaseOwner: manToken,
+          reason: PaymentReconcileManualReviewReason.RETRY_EXHAUSTED,
           nowMs: fixedNow,
         }),
       ).toBe(true);
@@ -855,6 +858,7 @@ concurrencyDescribe('PostgreSQL UTC timestamp semantics (S2.6.20.4)', () => {
         await lease.markManualReview({
           orderId: manAt,
           leaseOwner: manToken,
+          reason: PaymentReconcileManualReviewReason.RETRY_EXHAUSTED,
           nowMs: fixedNow,
         }),
       ).toBe(false);
@@ -1044,6 +1048,7 @@ concurrencyDescribe('PostgreSQL UTC timestamp semantics (S2.6.20.4)', () => {
         await lease.markManualReview({
           orderId: idAt,
           leaseOwner: oldAt,
+          reason: PaymentReconcileManualReviewReason.RETRY_EXHAUSTED,
           nowMs: fixedNow,
         }),
       ).toBe(false);

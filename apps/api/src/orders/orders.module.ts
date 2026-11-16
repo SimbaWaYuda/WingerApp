@@ -10,6 +10,7 @@ import { ConnectController, SupplierConnectController } from './connect.controll
 import { OrdersController } from './orders.controller';
 import { PayoutsService } from './payouts.service';
 import { OrdersService } from './orders.service';
+import { PaymentReconcileEscalateService } from './payment-reconcile-escalate.service';
 import { PaymentReconcileLeaseService } from './payment-reconcile-lease.service';
 import { RefundAttemptService } from './refund-attempt.service';
 import { ShipmentRefundHoldService } from './shipment-refund-hold.service';
@@ -39,6 +40,7 @@ import { StripeWebhookController } from './stripe-webhook.controller';
     RefundAttemptService,
     ShipmentRefundHoldService,
     PaymentReconcileLeaseService,
+    PaymentReconcileEscalateService,
   ],
   exports: [
     OrdersService,
@@ -46,6 +48,7 @@ import { StripeWebhookController } from './stripe-webhook.controller';
     RefundAttemptService,
     ShipmentRefundHoldService,
     PaymentReconcileLeaseService,
+    PaymentReconcileEscalateService,
   ],
 })
 export class OrdersModule {}

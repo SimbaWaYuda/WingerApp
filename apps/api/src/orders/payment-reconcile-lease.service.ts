@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { PaymentStatus, Prisma } from '@prisma/client';
+import {
+  PaymentReconcileManualReviewReason,
+  PaymentStatus,
+  Prisma,
+} from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { utcWallClockIso } from './payment-reconcile-utc';
@@ -231,10 +235,12 @@ export class PaymentReconcileLeaseService {
 
   /**
    * Escalate to manual review while still PENDING and lease-owned.
+   * Sets timestamp and reason atomically; never overwrites an existing review.
    */
   async markManualReview(params: {
     orderId: string;
     leaseOwner: string;
+    reason: PaymentReconcileManualReviewReason;
     nowMs?: number;
   }): Promise<boolean> {
     const nowMs = params.nowMs ?? Date.now();
@@ -243,6 +249,7 @@ export class PaymentReconcileLeaseService {
       UPDATE "Order"
       SET
         "paymentReconcileManualReviewAt" = ${nowIso}::timestamp,
+        "paymentReconcileManualReviewReason" = ${params.reason}::"PaymentReconcileManualReviewReason",
         "paymentReconcileLeaseOwner" = NULL,
         "paymentReconcileLeaseExpiresAt" = NULL
       WHERE id = ${params.orderId}

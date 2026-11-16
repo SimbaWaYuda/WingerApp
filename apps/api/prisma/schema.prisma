@@ -42,6 +42,17 @@ enum PaymentStatus {
   REFUNDED
 }
 
+/// Why automatic payment reconciliation escalated an order to manual review.
+/// MISSING_ATTEMPT_AT / INCONSISTENT_ATTEMPT_AT are written by the unleaseable scanner.
+/// RETRY_EXHAUSTED / SEARCH_* are reserved for the future reconciliation worker.
+enum PaymentReconcileManualReviewReason {
+  MISSING_ATTEMPT_AT
+  INCONSISTENT_ATTEMPT_AT
+  RETRY_EXHAUSTED
+  SEARCH_AMBIGUOUS
+  SEARCH_UNRESOLVED
+}
+
 enum ReturnRequestStatus {
   REQUESTED
   IN_REVIEW
@@ -628,6 +639,8 @@ model Order {
   paymentReconcileNextAt         DateTime?
   /// Set when automatic reconciliation escalates to manual review.
   paymentReconcileManualReviewAt DateTime?
+  /// Why manual review was set; null until first escalation. Never overwrite without resolution.
+  paymentReconcileManualReviewReason PaymentReconcileManualReviewReason?
   /// Same customer retry of one checkout. Null on orders placed before this existed.
   checkoutIdempotencyKey String?                   @unique
   /// Legacy mirror of settlementCurrency (kept for existing clients).

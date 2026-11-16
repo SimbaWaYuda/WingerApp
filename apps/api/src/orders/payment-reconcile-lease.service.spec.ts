@@ -1,4 +1,4 @@
-import { PaymentStatus } from '@prisma/client';
+import { PaymentReconcileManualReviewReason, PaymentStatus } from '@prisma/client';
 import {
   PAYMENT_RECONCILE_DEFAULT_GRACE_MS,
   PaymentReconcileLeaseService,
@@ -145,11 +145,11 @@ function createMemoryPrisma(rows: Map<string, OrderRow>) {
       row.paymentReconcileNextAt = new Date(nextIso);
       return [{ id }];
     }
-    // manual review
+    // manual review: nowIso, reason, id, owner, nowIso
     if (sql.includes('paymentReconcileManualReviewAt" =')) {
       const nowIso = values[0] as string;
-      const id = values[1] as string;
-      const owner = values[2] as string;
+      const id = values[2] as string;
+      const owner = values[3] as string;
       const row = rows.get(id);
       const nowMs = Date.parse(nowIso);
       if (!row || row.paymentStatus !== PaymentStatus.PENDING) return [];
@@ -444,6 +444,7 @@ describe('PaymentReconcileLeaseService', () => {
       await service.markManualReview({
         orderId: 'ord-1',
         leaseOwner: held.leaseOwner,
+        reason: PaymentReconcileManualReviewReason.RETRY_EXHAUSTED,
         nowMs: fixedNow + 1_000,
       }),
     ).toBe(true);
