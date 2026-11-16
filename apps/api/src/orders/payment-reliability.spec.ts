@@ -425,6 +425,143 @@ describe('payment and commission reliability', () => {
     expect(stripe.chargeOrder).not.toHaveBeenCalled();
   });
 
+  it('keeps PENDING and stock when charge outcome is uncertain', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.PROCESSING,
+      stripePaymentIntentId: null,
+    });
+    prisma.order.findUnique.mockResolvedValue(state);
+    prisma.order.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { ...state };
+    });
+    prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+
+    const result = await service.recordCardCharge(
+      'ord-1',
+      {
+        mode: 'test',
+        status: 'uncertain',
+        paymentIntentId: 'pi_uncertain',
+        message: 'socket hang up',
+      },
+      customer(),
+    );
+
+    expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(state.status).toBe(OrderStatus.PROCESSING);
+    expect(state.stripePaymentIntentId).toBe('pi_uncertain');
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('keeps PENDING and stock for an unrecognised PaymentIntent status mapped to uncertain', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.PROCESSING,
+      stripePaymentIntentId: null,
+    });
+    prisma.order.findUnique.mockResolvedValue(state);
+    prisma.order.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { ...state };
+    });
+    prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+
+    const result = await service.recordCardCharge(
+      'ord-1',
+      {
+        mode: 'test',
+        status: 'uncertain',
+        paymentIntentId: 'pi_future_status',
+        message: 'Stripe payment status: awaiting_risk_review',
+      },
+      customer(),
+    );
+
+    expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(state.status).toBe(OrderStatus.PROCESSING);
+    expect(state.stripePaymentIntentId).toBe('pi_future_status');
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('marks FAILED and restores stock on a definitive card decline', async () => {
+    const state = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.PROCESSING,
+    });
+    prisma.order.findUnique.mockResolvedValue(state);
+    prisma.order.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(state, data);
+      return { ...state };
+    });
+    prisma.orderItem.findMany.mockResolvedValue([
+      lineItem({ status: OrderStatus.PROCESSING }),
+    ]);
+    prisma.product.findUnique.mockResolvedValue({
+      id: 'p1',
+      stock: 4,
+      supplierId: 'sup-1',
+    });
+
+    await expect(
+      service.recordCardCharge(
+        'ord-1',
+        {
+          mode: 'test',
+          status: 'failed',
+          paymentIntentId: 'pi_declined',
+          message: 'Your card was declined.',
+        },
+        customer(),
+      ),
+    ).rejects.toThrow(/declined/i);
+
+    expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+    expect(state.status).toBe(OrderStatus.CANCELLED);
+    expect(prisma.inventoryLedger.create).toHaveBeenCalled();
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  it('retries the same PENDING checkout with the same Stripe charge idempotency key', async () => {
+    const pending = orderShell({
+      paymentStatus: PaymentStatus.PENDING,
+      checkoutIdempotencyKey: 'checkout-key-1',
+      stripePaymentIntentId: 'pi_uncertain',
+    });
+    prisma.order.findUnique.mockResolvedValue(pending);
+    stripe.chargeOrder.mockResolvedValue({
+      mode: 'test',
+      status: 'uncertain',
+      paymentIntentId: 'pi_uncertain',
+      message: 'still pending',
+    });
+    prisma.order.update.mockResolvedValue(pending);
+    prisma.order.findUniqueOrThrow.mockResolvedValue(pending);
+
+    await service.create(
+      {
+        items: [{ productId: 'p1', quantity: 1 }],
+        paymentMethod: 'card',
+        stripePaymentMethodId: 'pm_card_visa',
+        checkoutIdempotencyKey: 'checkout-key-1',
+      },
+      customer(),
+    );
+
+    expect(stripe.chargeOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderId: 'ord-1',
+        idempotencyKey: 'winger-charge-ord-1',
+      }),
+    );
+    expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
   it('retries saving a PaymentIntent after Stripe succeeded and the first write failed', async () => {
     prisma.order.findUnique.mockResolvedValue(orderShell());
     prisma.order.updateMany

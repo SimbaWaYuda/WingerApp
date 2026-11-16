@@ -271,6 +271,134 @@ describe('StripeService payment safety', () => {
     );
   });
 
+  it('classifies charge network timeouts as uncertain and preserves PaymentIntent id', async () => {
+    const err = Object.assign(new Error('socket hang up'), {
+      type: 'StripeConnectionError',
+      payment_intent: { id: 'pi_timeout' },
+    });
+    const create = jest.fn().mockRejectedValue(err);
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { create } } as never, 'test');
+
+    const result = await service.chargeOrder({
+      amountCents: 1000,
+      currency: 'usd',
+      orderId: 'ord-1',
+      orderDisplayId: 'WG-1',
+      customerEmail: 'a@example.com',
+      idempotencyKey: 'winger-charge-ord-1',
+      paymentMethodId: 'pm_card_visa',
+    });
+
+    expect(result).toMatchObject({
+      status: 'uncertain',
+      paymentIntentId: 'pi_timeout',
+      mode: 'test',
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.any(Object),
+      { idempotencyKey: 'winger-charge-ord-1' },
+    );
+  });
+
+  it('classifies definitive card declines as failed and preserves PaymentIntent id', async () => {
+    const err = Object.assign(new Error('Your card was declined.'), {
+      type: 'StripeCardError',
+      code: 'card_declined',
+      payment_intent: { id: 'pi_declined' },
+    });
+    const create = jest.fn().mockRejectedValue(err);
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { create } } as never, 'test');
+
+    const result = await service.chargeOrder({
+      amountCents: 1000,
+      currency: 'usd',
+      orderId: 'ord-1',
+      orderDisplayId: 'WG-1',
+      customerEmail: 'a@example.com',
+      idempotencyKey: 'winger-charge-ord-1',
+      paymentMethodId: 'pm_card_visa',
+    });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      paymentIntentId: 'pi_declined',
+      mode: 'test',
+    });
+  });
+
+  it('classifies definitive terminal PaymentIntent statuses as failed', async () => {
+    const service = new StripeService();
+    for (const status of ['canceled', 'requires_payment_method'] as const) {
+      const create = jest.fn().mockResolvedValue({ id: `pi_${status}`, status });
+      service.bindForTests({ paymentIntents: { create } } as never, 'test');
+      const result = await service.chargeOrder({
+        amountCents: 1000,
+        currency: 'usd',
+        orderId: 'ord-1',
+        orderDisplayId: 'WG-1',
+        customerEmail: 'a@example.com',
+        idempotencyKey: 'winger-charge-ord-1',
+        paymentMethodId: 'pm_card_visa',
+      });
+      expect(result).toMatchObject({
+        status: 'failed',
+        paymentIntentId: `pi_${status}`,
+      });
+    }
+  });
+
+  it('classifies known non-terminal PaymentIntent statuses as uncertain', async () => {
+    const service = new StripeService();
+    for (const status of [
+      'processing',
+      'requires_action',
+      'requires_confirmation',
+      'requires_capture',
+    ] as const) {
+      const create = jest.fn().mockResolvedValue({ id: `pi_${status}`, status });
+      service.bindForTests({ paymentIntents: { create } } as never, 'test');
+      const result = await service.chargeOrder({
+        amountCents: 1000,
+        currency: 'usd',
+        orderId: 'ord-1',
+        orderDisplayId: 'WG-1',
+        customerEmail: 'a@example.com',
+        idempotencyKey: 'winger-charge-ord-1',
+        paymentMethodId: 'pm_card_visa',
+      });
+      expect(result).toMatchObject({
+        status: 'uncertain',
+        paymentIntentId: `pi_${status}`,
+      });
+    }
+  });
+
+  it('classifies unrecognised PaymentIntent statuses as uncertain and preserves PaymentIntent id', async () => {
+    const create = jest
+      .fn()
+      .mockResolvedValue({ id: 'pi_future_status', status: 'awaiting_risk_review' });
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { create } } as never, 'test');
+
+    const result = await service.chargeOrder({
+      amountCents: 1000,
+      currency: 'usd',
+      orderId: 'ord-1',
+      orderDisplayId: 'WG-1',
+      customerEmail: 'a@example.com',
+      idempotencyKey: 'winger-charge-ord-1',
+      paymentMethodId: 'pm_card_visa',
+    });
+
+    expect(result).toMatchObject({
+      status: 'uncertain',
+      paymentIntentId: 'pi_future_status',
+      mode: 'test',
+    });
+  });
+
   it('marks createRefundForAttempt transport failures as uncertain', async () => {
     const service = new StripeService();
     service.bindForTests(

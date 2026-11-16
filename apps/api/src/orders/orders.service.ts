@@ -3495,7 +3495,39 @@ export class OrdersService {
     });
     if (!current) throw new NotFoundException('Order not found');
 
-    if (charge.status !== 'paid') {
+    // Uncertain transport / non-terminal PI: keep PENDING, hold stock, allow same-checkout retry.
+    if (charge.status === 'uncertain') {
+      if (current.paymentStatus === PaymentStatus.PAID) {
+        return this.toResponse(current, charge.message);
+      }
+      if (current.paymentStatus === PaymentStatus.FAILED) {
+        throw new BadRequestException(
+          'This checkout already failed. Start a new payment.',
+        );
+      }
+      const data: {
+        paymentMode: string;
+        stripePaymentIntentId?: string;
+      } = { paymentMode: charge.mode };
+      if (charge.paymentIntentId && !current.stripePaymentIntentId) {
+        data.stripePaymentIntentId = charge.paymentIntentId;
+      }
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data,
+      });
+      const saved = await this.prisma.order.findUniqueOrThrow({
+        where: { id: orderId },
+        include: orderWithItems,
+      });
+      return this.toResponse(
+        saved,
+        charge.message ||
+          'Payment confirmation is pending; retry the same checkout',
+      );
+    }
+
+    if (charge.status === 'failed') {
       if (current.paymentStatus === PaymentStatus.PAID) {
         return this.toResponse(current, charge.message);
       }

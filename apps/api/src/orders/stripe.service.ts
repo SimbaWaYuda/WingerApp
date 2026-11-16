@@ -4,7 +4,12 @@ import { cardCheckoutMode } from './checkout-mode';
 
 export type ChargeResult = {
   mode: 'demo' | 'test' | 'live';
-  status: 'paid' | 'failed';
+  /**
+   * paid — Stripe confirmed success.
+   * failed — definitive decline/cancel (safe to restore stock).
+   * uncertain — transport loss or non-terminal PI status; do not restore stock.
+   */
+  status: 'paid' | 'failed' | 'uncertain';
   paymentIntentId?: string;
   message: string;
 };
@@ -179,19 +184,40 @@ export class StripeService {
         };
       }
 
+      // Only known terminal failure statuses restore stock; unknown/future stay uncertain.
+      if (isDefinitiveFailedPaymentIntentStatus(intent.status)) {
+        return {
+          mode: this.checkoutMode,
+          status: 'failed',
+          paymentIntentId: intent.id,
+          message: `Stripe payment status: ${intent.status}`,
+        };
+      }
+
       return {
         mode: this.checkoutMode,
-        status: 'failed',
+        status: 'uncertain',
         paymentIntentId: intent.id,
         message: `Stripe payment status: ${intent.status}`,
       };
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Stripe charge failed';
+      const paymentIntentId = paymentIntentIdFromStripeError(error);
+      if (isUncertainStripeNetworkError(error)) {
+        this.logger.warn(`Stripe charge outcome uncertain: ${message}`);
+        return {
+          mode: this.checkoutMode,
+          status: 'uncertain',
+          paymentIntentId,
+          message,
+        };
+      }
       this.logger.warn(`Stripe charge failed: ${message}`);
       return {
         mode: this.checkoutMode,
         status: 'failed',
+        paymentIntentId,
         message,
       };
     }
@@ -526,6 +552,46 @@ function isAlreadyRefunded(error: unknown): boolean {
   if (code === 'charge_already_refunded') return true;
   const message = error instanceof Error ? error.message.toLowerCase() : '';
   return message.includes('already refunded');
+}
+
+/**
+ * Definitive terminal PaymentIntent failure statuses from Stripe.PaymentIntent.Status
+ * (apiVersion 2025-02-24.acacia). Known non-terminal and any unrecognised/future
+ * status must NOT use this path — they stay uncertain so stock is not restored.
+ */
+function isDefinitiveFailedPaymentIntentStatus(
+  status: string | null | undefined,
+): boolean {
+  const value = (status ?? '').trim().toLowerCase();
+  return value === 'canceled' || value === 'requires_payment_method';}
+
+/** Best-effort PaymentIntent id from a Stripe SDK error payload (never logs card data). */
+function paymentIntentIdFromStripeError(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const direct = (error as { payment_intent?: unknown }).payment_intent;
+  if (typeof direct === 'string' && direct.startsWith('pi_')) return direct;
+  if (
+    direct &&
+    typeof direct === 'object' &&
+    'id' in direct &&
+    typeof (direct as { id: unknown }).id === 'string'
+  ) {
+    const id = (direct as { id: string }).id;
+    if (id.startsWith('pi_')) return id;
+  }
+  const raw = (error as { raw?: { payment_intent?: unknown } }).raw;
+  const nested = raw?.payment_intent;
+  if (typeof nested === 'string' && nested.startsWith('pi_')) return nested;
+  if (
+    nested &&
+    typeof nested === 'object' &&
+    'id' in nested &&
+    typeof (nested as { id: unknown }).id === 'string'
+  ) {
+    const id = (nested as { id: string }).id;
+    if (id.startsWith('pi_')) return id;
+  }
+  return undefined;
 }
 
 /** Network/timeout/connection errors — may have reached Stripe; never treat as terminal. */
