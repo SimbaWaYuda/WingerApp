@@ -1,4 +1,9 @@
-import { cardRefundAmount, StripeService } from './stripe.service';
+import {
+  cardRefundAmount,
+  isWithinStripeChargeIdempotencyWindow,
+  STRIPE_CHARGE_IDEMPOTENCY_WINDOW_MS,
+  StripeService,
+} from './stripe.service';
 
 describe('StripeService payment safety', () => {
   const previousSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -442,6 +447,50 @@ describe('StripeService payment safety', () => {
     });
   });
 
+  it('confirms an existing PaymentIntent without creating a new one', async () => {
+    const confirm = jest.fn().mockResolvedValue({
+      id: 'pi_1',
+      status: 'succeeded',
+    });
+    const create = jest.fn();
+    const service = new StripeService();
+    service.bindForTests(
+      { paymentIntents: { confirm, create } } as never,
+      'test',
+    );
+
+    const result = await service.confirmPaymentIntent({
+      paymentIntentId: 'pi_1',
+      paymentMethodId: 'pm_card_visa',
+    });
+
+    expect(confirm).toHaveBeenCalledWith('pi_1', {
+      payment_method: 'pm_card_visa',
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: 'paid',
+      paymentIntentId: 'pi_1',
+      mode: 'test',
+    });
+  });
+
+  it('marks confirmPaymentIntent transport failures as uncertain', async () => {
+    const confirm = jest.fn().mockRejectedValue(new Error('socket hang up'));
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { confirm } } as never, 'test');
+
+    await expect(
+      service.confirmPaymentIntent({
+        paymentIntentId: 'pi_1',
+        paymentMethodId: 'pm_card_visa',
+      }),
+    ).resolves.toMatchObject({
+      status: 'uncertain',
+      message: 'socket hang up',
+    });
+  });
+
   it('classifies unrecognised PaymentIntent statuses as uncertain and preserves PaymentIntent id', async () => {
     const create = jest
       .fn()
@@ -491,6 +540,76 @@ describe('StripeService payment safety', () => {
       message: 'socket hang up',
       uncertain: true,
     });
+  });
+});
+
+describe('isWithinStripeChargeIdempotencyWindow', () => {
+  const nowMs = Date.parse('2026-11-15T20:00:00.000Z');
+
+  it('allows an attempt exactly 20 hours old', () => {
+    expect(
+      isWithinStripeChargeIdempotencyWindow(
+        new Date(nowMs - STRIPE_CHARGE_IDEMPOTENCY_WINDOW_MS),
+        nowMs,
+      ),
+    ).toBe(true);
+  });
+
+  it('allows an attempt one millisecond inside the 20-hour window', () => {
+    expect(
+      isWithinStripeChargeIdempotencyWindow(
+        new Date(nowMs - STRIPE_CHARGE_IDEMPOTENCY_WINDOW_MS + 1),
+        nowMs,
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects an attempt one millisecond outside the 20-hour window', () => {
+    expect(
+      isWithinStripeChargeIdempotencyWindow(
+        new Date(nowMs - STRIPE_CHARGE_IDEMPOTENCY_WINDOW_MS - 1),
+        nowMs,
+      ),
+    ).toBe(false);
+  });
+
+  it('allows an attempt timestamp exactly equal to now', () => {
+    expect(isWithinStripeChargeIdempotencyWindow(new Date(nowMs), nowMs)).toBe(
+      true,
+    );
+  });
+
+  it('rejects an attempt one millisecond in the future', () => {
+    expect(
+      isWithinStripeChargeIdempotencyWindow(new Date(nowMs + 1), nowMs),
+    ).toBe(false);
+  });
+
+  it('rejects an attempt substantially in the future', () => {
+    expect(
+      isWithinStripeChargeIdempotencyWindow(
+        new Date(nowMs + 24 * 60 * 60 * 1000),
+        nowMs,
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects an invalid Date', () => {
+    expect(isWithinStripeChargeIdempotencyWindow(new Date(NaN), nowMs)).toBe(
+      false,
+    );
+  });
+
+  it('rejects a non-finite nowMs', () => {
+    expect(
+      isWithinStripeChargeIdempotencyWindow(new Date(nowMs), Number.NaN),
+    ).toBe(false);
+    expect(
+      isWithinStripeChargeIdempotencyWindow(
+        new Date(nowMs),
+        Number.POSITIVE_INFINITY,
+      ),
+    ).toBe(false);
   });
 });
 

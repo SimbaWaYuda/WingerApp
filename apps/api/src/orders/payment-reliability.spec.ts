@@ -82,6 +82,7 @@ describe('payment and commission reliability', () => {
   };
   let stripe: {
     chargeOrder: jest.Mock;
+    confirmPaymentIntent: jest.Mock;
     checkoutMode: string;
     retrievePaymentIntentStatus: jest.Mock;
     refundCardCharge: jest.Mock;
@@ -359,6 +360,7 @@ describe('payment and commission reliability', () => {
     };
     stripe = {
       chargeOrder: jest.fn(),
+      confirmPaymentIntent: jest.fn(),
       checkoutMode: 'test',
       retrievePaymentIntentStatus: jest.fn().mockResolvedValue({
         ok: true,
@@ -847,10 +849,12 @@ describe('payment and commission reliability', () => {
   });
 
   it('retries the same PENDING checkout with the same Stripe charge idempotency key', async () => {
+    const attemptAt = new Date(Date.now() - 60_000);
     const pending = orderShell({
       paymentStatus: PaymentStatus.PENDING,
       checkoutIdempotencyKey: 'checkout-key-1',
-      stripePaymentIntentId: 'pi_uncertain',
+      stripePaymentIntentId: null,
+      stripeChargeAttemptAt: attemptAt,
     });
     prisma.order.findUnique.mockResolvedValue(pending);
     stripe.chargeOrder.mockResolvedValue({
@@ -878,6 +882,7 @@ describe('payment and commission reliability', () => {
         idempotencyKey: 'winger-charge-ord-1',
       }),
     );
+    expect(stripe.confirmPaymentIntent).not.toHaveBeenCalled();
     expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
   });
 
@@ -911,15 +916,14 @@ describe('payment and commission reliability', () => {
     prisma.order.update.mockResolvedValue(pending);
     prisma.order.findUniqueOrThrow.mockResolvedValue(pending);
 
-    await service.create(
-      {
-        items: [{ productId: 'p1', quantity: 1 }],
-        paymentMethod: 'card',
-        stripePaymentMethodId: 'pm_card_visa',
-        checkoutIdempotencyKey: 'checkout-key-1',
-      },
+    // First attempt (not a resume retry) may create after persisting the clock.
+    await (service as any).chargeAndRecord(
+      pending,
+      'pm_card_visa',
       customer(),
+      { isRetry: false },
     );
+    // Resume retry within the window preserves the original timestamp.
     await service.create(
       {
         items: [{ productId: 'p1', quantity: 1 }],
@@ -936,12 +940,13 @@ describe('payment and commission reliability', () => {
   });
 
   it('keeps the first stripeChargeAttemptAt when concurrent mark attempts race', async () => {
+    const first = new Date(Date.now() - 30_000);
     const pending = orderShell({
       paymentStatus: PaymentStatus.PENDING,
       checkoutIdempotencyKey: 'checkout-key-1',
-      stripeChargeAttemptAt: null,
+      stripePaymentIntentId: null,
+      stripeChargeAttemptAt: first,
     });
-    const first = new Date('2026-11-15T20:00:00.000Z');
     prisma.order.findUnique.mockResolvedValue(pending);
     prisma.$executeRaw.mockImplementation(async () => {
       // Mimic UPDATE … WHERE stripeChargeAttemptAt IS NULL
@@ -983,17 +988,15 @@ describe('payment and commission reliability', () => {
   });
 
   it('preserves stripeChargeAttemptAt when Stripe create fails with a network error', async () => {
+    const attemptAt = new Date(Date.now() - 60_000);
     const pending = orderShell({
       paymentStatus: PaymentStatus.PENDING,
       checkoutIdempotencyKey: 'checkout-key-1',
-      stripeChargeAttemptAt: null,
+      stripePaymentIntentId: null,
+      stripeChargeAttemptAt: attemptAt,
     });
-    const attemptAt = new Date('2026-11-15T20:05:00.000Z');
     prisma.order.findUnique.mockResolvedValue(pending);
-    prisma.$executeRaw.mockImplementation(async () => {
-      pending.stripeChargeAttemptAt = attemptAt;
-      return 1;
-    });
+    prisma.$executeRaw.mockImplementation(async () => 1);
     stripe.chargeOrder.mockResolvedValue({
       mode: 'test',
       status: 'uncertain',
@@ -1021,7 +1024,7 @@ describe('payment and commission reliability', () => {
     const pending = orderShell({
       paymentStatus: PaymentStatus.PENDING,
       checkoutIdempotencyKey: 'checkout-key-1',
-      stripeChargeAttemptAt: null,
+      stripeChargeAttemptAt: new Date(Date.now() - 60_000),
       stripePaymentIntentId: null,
     });
     prisma.order.findUnique.mockResolvedValue(pending);
@@ -1041,7 +1044,6 @@ describe('payment and commission reliability', () => {
 
     expect(prisma.$executeRaw).toHaveBeenCalled();
     expect(stripe.chargeOrder).not.toHaveBeenCalled();
-    expect(pending.stripeChargeAttemptAt).toBeNull();
   });
 
   it('does not set stripeChargeAttemptAt for COD checkout', async () => {
@@ -1120,6 +1122,349 @@ describe('payment and commission reliability', () => {
     expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
     expect(state.stripeChargeAttemptAt).toBeNull();
     expect(state.stripePaymentIntentId).toBe('pi_legacy');
+  });
+
+  describe('S2.6.17A safe Stripe retry', () => {
+    async function resumeCardCheckout(overrides: Record<string, unknown> = {}) {
+      return service.create(
+        {
+          items: [{ productId: 'p1', quantity: 1 }],
+          paymentMethod: 'card',
+          stripePaymentMethodId: 'pm_card_visa',
+          checkoutIdempotencyKey: 'checkout-key-1',
+          ...overrides,
+        },
+        customer(),
+      );
+    }
+
+    it('retrieves a known PaymentIntent and does not create a new one', async () => {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+      stripe.retrievePaymentIntentStatus.mockResolvedValue({
+        ok: true,
+        id: 'pi_bound',
+        status: 'processing',
+      });
+
+      const result = await resumeCardCheckout();
+
+      expect(stripe.retrievePaymentIntentStatus).toHaveBeenCalledWith('pi_bound');
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.confirmPaymentIntent).not.toHaveBeenCalled();
+      expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+    });
+
+    it('marks paid once when a known PaymentIntent has succeeded', async () => {
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+      });
+      prisma.order.findUnique.mockResolvedValue(state);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockImplementation(async () => ({
+        ...state,
+        paymentStatus: PaymentStatus.PAID,
+      }));
+      stripe.retrievePaymentIntentStatus.mockResolvedValue({
+        ok: true,
+        id: 'pi_bound',
+        status: 'succeeded',
+      });
+
+      const result = await resumeCardCheckout();
+
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'ord-1', paymentStatus: PaymentStatus.PENDING },
+        }),
+      );
+      expect(commissions.createSnapshotsForOrder).toHaveBeenCalledTimes(1);
+      expect(result.paymentStatus).toBe(PaymentStatus.PAID);
+    });
+
+    it('fails once through the guarded path when a known PaymentIntent is canceled', async () => {
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+        items: [{ id: 'line-1', productId: 'p1', quantity: 1 }],
+      });
+      prisma.order.findUnique.mockResolvedValue(state);
+      prisma.orderItem.findMany.mockResolvedValue(state.items);
+      stripe.retrievePaymentIntentStatus.mockResolvedValue({
+        ok: true,
+        id: 'pi_bound',
+        status: 'canceled',
+      });
+
+      await expect(resumeCardCheckout()).rejects.toThrow(/canceled/i);
+
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).toHaveBeenCalled();
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'ord-1' },
+          data: expect.objectContaining({
+            paymentStatus: PaymentStatus.FAILED,
+          }),
+        }),
+      );
+    });
+
+    it('confirms the same PaymentIntent when status is requires_payment_method', async () => {
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+      });
+      prisma.order.findUnique.mockResolvedValue(state);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockImplementation(async () => ({
+        ...state,
+        paymentStatus: PaymentStatus.PAID,
+      }));
+      stripe.retrievePaymentIntentStatus.mockResolvedValue({
+        ok: true,
+        id: 'pi_bound',
+        status: 'requires_payment_method',
+      });
+      stripe.confirmPaymentIntent.mockResolvedValue({
+        mode: 'test',
+        status: 'paid',
+        paymentIntentId: 'pi_bound',
+        message: 'Stripe payment succeeded',
+      });
+
+      const result = await resumeCardCheckout({
+        stripePaymentMethodId: 'pm_card_new',
+      });
+
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.confirmPaymentIntent).toHaveBeenCalledWith({
+        paymentIntentId: 'pi_bound',
+        paymentMethodId: 'pm_card_new',
+      });
+      expect(result.paymentStatus).toBe(PaymentStatus.PAID);
+    });
+
+    it('keeps PENDING and stock when a known PaymentIntent is processing', async () => {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+        items: [{ id: 'line-1', productId: 'p1', quantity: 2 }],
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+      stripe.retrievePaymentIntentStatus.mockResolvedValue({
+        ok: true,
+        id: 'pi_bound',
+        status: 'processing',
+      });
+
+      const result = await resumeCardCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.product.updateMany).not.toHaveBeenCalled();
+      expect(prisma.productVariant.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('keeps PENDING when known PaymentIntent retrieval times out', async () => {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+      stripe.retrievePaymentIntentStatus.mockResolvedValue({
+        ok: false,
+        message: 'socket hang up',
+      });
+
+      const result = await resumeCardCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.confirmPaymentIntent).not.toHaveBeenCalled();
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+    });
+
+    it('ignores a mismatched retrieved PaymentIntent id without side effects', async () => {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+      stripe.retrievePaymentIntentStatus.mockResolvedValue({
+        ok: true,
+        id: 'pi_other',
+        status: 'succeeded',
+      });
+
+      const result = await resumeCardCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+    });
+
+    it('reuses the original idempotency key when the attempt is within 20 hours', async () => {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: null,
+        stripeChargeAttemptAt: new Date(Date.now() - 19 * 60 * 60 * 1000),
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+      stripe.chargeOrder.mockResolvedValue({
+        mode: 'test',
+        status: 'uncertain',
+        paymentIntentId: 'pi_retry',
+        message: 'pending',
+      });
+      prisma.order.update.mockResolvedValue(pending);
+      prisma.order.findUniqueOrThrow.mockResolvedValue(pending);
+
+      await resumeCardCheckout();
+
+      expect(stripe.chargeOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idempotencyKey: 'winger-charge-ord-1',
+        }),
+      );
+    });
+
+    it('does not create a PaymentIntent when the attempt is older than 20 hours', async () => {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: null,
+        stripeChargeAttemptAt: new Date(Date.now() - 21 * 60 * 60 * 1000),
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+
+      const result = await resumeCardCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+      expect(result.paymentMessage).toMatch(/manual reconciliation/i);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.retrievePaymentIntentStatus).not.toHaveBeenCalled();
+    });
+
+    it('does not create a PaymentIntent when stripeChargeAttemptAt is null on retry', async () => {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: null,
+        stripeChargeAttemptAt: null,
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+
+      const result = await resumeCardCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+      expect(result.paymentMessage).toMatch(/manual reconciliation/i);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('does not create a PaymentIntent when stripeChargeAttemptAt is in the future', async () => {
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: null,
+        stripeChargeAttemptAt: new Date(Date.now() + 60_000),
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+
+      const result = await resumeCardCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.PENDING);
+      expect(result.paymentMessage).toMatch(/manual reconciliation/i);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.confirmPaymentIntent).not.toHaveBeenCalled();
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('preserves stripeChargeAttemptAt after an uncertain retry create', async () => {
+      const attemptAt = new Date(Date.now() - 120_000);
+      const pending = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: null,
+        stripeChargeAttemptAt: attemptAt,
+      });
+      prisma.order.findUnique.mockResolvedValue(pending);
+      prisma.$executeRaw.mockResolvedValue(0);
+      stripe.chargeOrder.mockResolvedValue({
+        mode: 'test',
+        status: 'uncertain',
+        paymentIntentId: 'pi_u',
+        message: 'pending',
+      });
+      prisma.order.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+        Object.assign(pending, data);
+        return { ...pending };
+      });
+      prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...pending }));
+
+      await resumeCardCheckout();
+
+      expect(pending.stripeChargeAttemptAt).toEqual(attemptAt);
+      expect(stripe.chargeOrder).toHaveBeenCalled();
+    });
+
+    it('does not duplicate paid side effects when retry and success webhook race', async () => {
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+      });
+      prisma.order.findUnique.mockResolvedValue(state);
+      stripe.retrievePaymentIntentStatus.mockResolvedValue({
+        ok: true,
+        id: 'pi_bound',
+        status: 'succeeded',
+      });
+      let paidClaims = 0;
+      prisma.order.updateMany.mockImplementation(async () => {
+        if (state.paymentStatus !== PaymentStatus.PENDING) return { count: 0 };
+        state.paymentStatus = PaymentStatus.PAID;
+        paidClaims += 1;
+        return { count: 1 };
+      });
+      prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+
+      await Promise.all([
+        resumeCardCheckout(),
+        service.handleStripeEvent({
+          id: 'evt_1',
+          type: 'payment_intent.succeeded',
+          livemode: false,
+          data: { object: { id: 'pi_bound', metadata: { orderId: 'ord-1' } } },
+        }),
+      ]);
+
+      expect(paidClaims).toBe(1);
+      expect(commissions.createSnapshotsForOrder).toHaveBeenCalled();
+    });
   });
 
   it('retries saving a PaymentIntent after Stripe succeeded and the first write failed', async () => {

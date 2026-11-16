@@ -175,53 +175,55 @@ export class StripeService {
         { idempotencyKey: params.idempotencyKey },
       );
 
-      if (intent.status === 'succeeded') {
-        return {
-          mode: this.checkoutMode,
-          status: 'paid',
-          paymentIntentId: intent.id,
-          message: 'Stripe payment succeeded',
-        };
-      }
+      return classifyPaymentIntent(intent, this.checkoutMode);
+    } catch (error) {
+      return this.uncertainChargeFromError(error, 'Stripe charge failed');
+    }
+  }
 
-      // Only verified canceled closes the PI for charging; all other statuses stay uncertain.
-      if (isCanceledPaymentIntentStatus(intent.status)) {
-        return {
-          mode: this.checkoutMode,
-          status: 'failed',
-          paymentIntentId: intent.id,
-          message: `Stripe payment status: ${intent.status}`,
-        };
-      }
+  /**
+   * Confirm an existing PaymentIntent with a payment method.
+   * Stripe I/O only — callers must not hold a DB transaction open.
+   */
+  async confirmPaymentIntent(params: {
+    paymentIntentId: string;
+    paymentMethodId: string;
+  }): Promise<ChargeResult> {
+    if (!this.stripe) {
+      return {
+        mode: 'demo',
+        status: 'uncertain',
+        paymentIntentId: params.paymentIntentId,
+        message: 'Stripe is not configured',
+      };
+    }
 
+    const paymentIntentId = params.paymentIntentId.trim();
+    if (!paymentIntentId.startsWith('pi_')) {
       return {
         mode: this.checkoutMode,
         status: 'uncertain',
-        paymentIntentId: intent.id,
-        message: `Stripe payment status: ${intent.status}`,
+        message: 'Invalid PaymentIntent id',
       };
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Stripe charge failed';
-      const paymentIntentId = paymentIntentIdFromStripeError(error);
-      if (isUncertainStripeNetworkError(error)) {
-        this.logger.warn(`Stripe charge outcome uncertain: ${message}`);
-        return {
-          mode: this.checkoutMode,
-          status: 'uncertain',
-          paymentIntentId,
-          message,
-        };
-      }
-      // Card declines, open PIs, and any ambiguous Stripe error: do not restore stock.
-      // Only a verified canceled PaymentIntent status (above) is a definitive charge failure.
-      this.logger.warn(`Stripe charge outcome uncertain: ${message}`);
+    }
+
+    const paymentMethodId = params.paymentMethodId?.trim() ?? '';
+    if (!/^pm_[A-Za-z0-9_]+$/.test(paymentMethodId)) {
       return {
         mode: this.checkoutMode,
         status: 'uncertain',
         paymentIntentId,
-        message,
+        message: 'Enter a card to pay',
       };
+    }
+
+    try {
+      const intent = await this.stripe.paymentIntents.confirm(paymentIntentId, {
+        payment_method: paymentMethodId,
+      });
+      return classifyPaymentIntent(intent, this.checkoutMode);
+    } catch (error) {
+      return this.uncertainChargeFromError(error, 'Stripe confirm failed');
     }
   }
 
@@ -251,6 +253,33 @@ export class StripeService {
       this.logger.warn(`Stripe PaymentIntent retrieve failed: ${message}`);
       return { ok: false, message };
     }
+  }
+
+  private uncertainChargeFromError(
+    error: unknown,
+    fallbackMessage: string,
+  ): ChargeResult {
+    const message =
+      error instanceof Error ? error.message : fallbackMessage;
+    const paymentIntentId = paymentIntentIdFromStripeError(error);
+    if (isUncertainStripeNetworkError(error)) {
+      this.logger.warn(`Stripe charge outcome uncertain: ${message}`);
+      return {
+        mode: this.checkoutMode,
+        status: 'uncertain',
+        paymentIntentId,
+        message,
+      };
+    }
+    // Card declines, open PIs, and any ambiguous Stripe error: do not restore stock.
+    // Only a verified canceled PaymentIntent status is a definitive charge failure.
+    this.logger.warn(`Stripe charge outcome uncertain: ${message}`);
+    return {
+      mode: this.checkoutMode,
+      status: 'uncertain',
+      paymentIntentId,
+      message,
+    };
   }
 
   /**
@@ -589,6 +618,50 @@ function isCanceledPaymentIntentStatus(
   status: string | null | undefined,
 ): boolean {
   return (status ?? '').trim().toLowerCase() === 'canceled';
+}
+
+/** Map a retrieved/confirmed PaymentIntent into the shared ChargeResult contract. */
+function classifyPaymentIntent(
+  intent: { id: string; status?: string | null },
+  mode: 'demo' | 'test' | 'live',
+): ChargeResult {
+  if (intent.status === 'succeeded') {
+    return {
+      mode,
+      status: 'paid',
+      paymentIntentId: intent.id,
+      message: 'Stripe payment succeeded',
+    };
+  }
+  if (isCanceledPaymentIntentStatus(intent.status)) {
+    return {
+      mode,
+      status: 'failed',
+      paymentIntentId: intent.id,
+      message: `Stripe payment status: ${intent.status}`,
+    };
+  }
+  return {
+    mode,
+    status: 'uncertain',
+    paymentIntentId: intent.id,
+    message: `Stripe payment status: ${intent.status}`,
+  };
+}
+
+/** Conservative window for reusing `winger-charge-{orderId}` (Stripe idempotency retention). */
+export const STRIPE_CHARGE_IDEMPOTENCY_WINDOW_MS = 20 * 60 * 60 * 1000;
+
+export function isWithinStripeChargeIdempotencyWindow(
+  attemptAt: Date,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!(attemptAt instanceof Date)) return false;
+  const attemptMs = attemptAt.getTime();
+  if (!Number.isFinite(attemptMs) || !Number.isFinite(nowMs)) return false;
+  const elapsedMs = nowMs - attemptMs;
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return false;
+  return elapsedMs <= STRIPE_CHARGE_IDEMPOTENCY_WINDOW_MS;
 }
 
 /** Best-effort PaymentIntent id from a Stripe SDK error payload (never logs card data). */

@@ -56,7 +56,13 @@ import {
   refundPaymentForSupplierAction,
   shipmentPaymentTotal,
 } from './settlement-allocation';
-import { cardRefundAmount, ChargeResult, PaymentIntentEvent, StripeService } from './stripe.service';
+import {
+  cardRefundAmount,
+  ChargeResult,
+  isWithinStripeChargeIdempotencyWindow,
+  PaymentIntentEvent,
+  StripeService,
+} from './stripe.service';
 import {
   aggregateVariantStock,
   resolveLineStock,
@@ -810,7 +816,9 @@ export class OrdersService {
       };
     }
 
-    return this.chargeAndRecord(order, stripePaymentMethodId, user);
+    return this.chargeAndRecord(order, stripePaymentMethodId, user, {
+      isRetry: false,
+    });
   }
 
   /** Platform KPIs from live orders. Money fields are settlement USD. */
@@ -3864,13 +3872,18 @@ export class OrdersService {
     }
     if (existing.paymentStatus === PaymentStatus.PENDING) {
       const method = this.requireCardPaymentMethod(dto, false);
-      return this.chargeAndRecord(existing, method, user);
+      return this.chargeAndRecord(existing, method, user, { isRetry: true });
     }
     throw new BadRequestException(
       'This checkout already failed. Start a new payment.',
     );
   }
 
+  /**
+   * Card charge / safe retry. Stripe I/O never runs inside a DB transaction.
+   * Retries with a known PI retrieve/confirm that PI; missing-PI retries may
+   * reuse `winger-charge-{orderId}` only inside the 20-hour attempt window.
+   */
   private async chargeAndRecord(
     order: {
       id: string;
@@ -3883,21 +3896,152 @@ export class OrdersService {
     },
     paymentMethodId: string | undefined,
     user: AuthUser,
+    options: { isRetry: boolean },
   ) {
-    const paymentAmount = Number(order.paymentAmount ?? order.total);
-    const paymentCurrency = order.paymentCurrency || order.currency || 'USD';
+    const current = await this.prisma.order.findUnique({
+      where: { id: order.id },
+      include: orderWithItems,
+    });
+    if (!current) throw new NotFoundException('Order not found');
+    if (current.paymentStatus !== PaymentStatus.PENDING) {
+      return this.toResponse(current);
+    }
+
+    const boundPi = (current.stripePaymentIntentId ?? '').trim();
+    if (boundPi) {
+      return this.reconcileKnownPaymentIntent(current, boundPi, paymentMethodId, user);
+    }
+
+    if (options.isRetry) {
+      const attemptAt = current.stripeChargeAttemptAt;
+      if (!attemptAt) {
+        return this.toResponse(
+          current,
+          'Payment confirmation is pending; manual reconciliation required',
+        );
+      }
+      if (!isWithinStripeChargeIdempotencyWindow(attemptAt)) {
+        return this.toResponse(
+          current,
+          'Payment confirmation is pending; manual reconciliation required',
+        );
+      }
+    }
+
+    const paymentAmount = Number(current.paymentAmount ?? current.total);
+    const paymentCurrency = current.paymentCurrency || current.currency || 'USD';
     // Persist first-attempt clock before any Stripe create I/O; never overwrite.
-    await this.markStripeChargeAttempt(order.id);
+    await this.markStripeChargeAttempt(current.id);
     const charge = await this.stripe.chargeOrder({
       amountCents: Math.round(paymentAmount * 100),
       currency: paymentCurrency.toLowerCase(),
-      orderId: order.id,
-      orderDisplayId: order.displayId,
-      customerEmail: order.customerEmail || user.email,
+      orderId: current.id,
+      orderDisplayId: current.displayId,
+      customerEmail: current.customerEmail || user.email,
       paymentMethodId,
-      idempotencyKey: `winger-charge-${order.id}`,
+      // Never mint a replacement key for this order.
+      idempotencyKey: `winger-charge-${current.id}`,
     });
-    return this.recordCardCharge(order.id, charge, user);
+    return this.recordCardCharge(current.id, charge, user);
+  }
+
+  /**
+   * PENDING order already bound to a PaymentIntent: retrieve/confirm that PI only.
+   * Never creates a replacement PaymentIntent.
+   */
+  private async reconcileKnownPaymentIntent(
+    order: Parameters<OrdersService['toResponse']>[0],
+    boundPaymentIntentId: string,
+    paymentMethodId: string | undefined,
+    user: AuthUser,
+  ) {
+    // Stripe retrieve — no DB transaction held.
+    const retrieved =
+      await this.stripe.retrievePaymentIntentStatus(boundPaymentIntentId);
+    if (!retrieved.ok) {
+      return this.toResponse(
+        order,
+        'Payment confirmation is pending; retry the same checkout',
+      );
+    }
+    if (retrieved.id !== boundPaymentIntentId) {
+      this.logger.warn(
+        `Retry retrieve PI mismatch for order ${(order as { id: string }).id}: bound ${boundPaymentIntentId}, got ${retrieved.id}`,
+      );
+      return this.toResponse(
+        order,
+        'Payment confirmation is pending; retry the same checkout',
+      );
+    }
+
+    const status = retrieved.status.trim().toLowerCase();
+    const mode =
+      this.stripe.checkoutMode === 'demo' ? 'test' : this.stripe.checkoutMode;
+    const orderId = (order as { id: string }).id;
+
+    if (status === 'succeeded') {
+      return this.recordCardCharge(
+        orderId,
+        {
+          mode,
+          status: 'paid',
+          paymentIntentId: retrieved.id,
+          message: 'Stripe payment succeeded',
+        },
+        user,
+      );
+    }
+
+    if (status === 'canceled') {
+      return this.recordCardCharge(
+        orderId,
+        {
+          mode,
+          status: 'failed',
+          paymentIntentId: retrieved.id,
+          message: `Stripe payment status: ${retrieved.status}`,
+        },
+        user,
+      );
+    }
+
+    if (status === 'requires_payment_method') {
+      const pm = paymentMethodId?.trim() ?? '';
+      if (!/^pm_[A-Za-z0-9_]+$/.test(pm)) {
+        return this.toResponse(order, 'Enter a card to pay');
+      }
+      // Confirm same PI outside any DB transaction / row lock.
+      const confirmed = await this.stripe.confirmPaymentIntent({
+        paymentIntentId: boundPaymentIntentId,
+        paymentMethodId: pm,
+      });
+      if (
+        confirmed.paymentIntentId &&
+        confirmed.paymentIntentId !== boundPaymentIntentId
+      ) {
+        this.logger.warn(
+          `Retry confirm PI mismatch for order ${orderId}: bound ${boundPaymentIntentId}, got ${confirmed.paymentIntentId}`,
+        );
+        return this.toResponse(
+          order,
+          'Payment confirmation is pending; retry the same checkout',
+        );
+      }
+      return this.recordCardCharge(
+        orderId,
+        {
+          ...confirmed,
+          paymentIntentId: confirmed.paymentIntentId ?? boundPaymentIntentId,
+        },
+        user,
+      );
+    }
+
+    // processing, requires_action, requires_confirmation, requires_capture, unknown
+    return this.toResponse(
+      order,
+      'Payment confirmation is pending; retry the same checkout',
+    );
   }
 
   /**
