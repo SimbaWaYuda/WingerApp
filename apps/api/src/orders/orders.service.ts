@@ -3890,8 +3890,244 @@ export class OrdersService {
       const method = this.requireCardPaymentMethod(dto, false);
       return this.chargeAndRecord(existing, method, user, { isRetry: true });
     }
+    // FAILED card with a bound PI: reconcile that PI (may late-recover). Never create a PI.
+    if (existing.paymentStatus === PaymentStatus.FAILED) {
+      const boundPi = (existing.stripePaymentIntentId ?? '').trim();
+      if (!boundPi) {
+        throw new BadRequestException(
+          'This checkout already failed. Start a new payment.',
+        );
+      }
+      const method = this.requireCardPaymentMethod(dto, false);
+      return this.reconcileFailedCheckoutWithKnownPaymentIntent(
+        existing,
+        boundPi,
+        method,
+        user,
+      );
+    }
     throw new BadRequestException(
       'This checkout already failed. Start a new payment.',
+    );
+  }
+
+  /**
+   * FAILED order already bound to a PaymentIntent: retrieve/confirm that PI only.
+   * Validated succeeded outcomes reuse webhook late-success recovery
+   * (recoverStockForLatePayment + claimPaidAfterRecovery). Never creates a PI.
+   * Stripe I/O never runs inside a DB transaction.
+   */
+  private async reconcileFailedCheckoutWithKnownPaymentIntent(
+    order: Parameters<OrdersService['toResponse']>[0] & {
+      id: string;
+      customerId: string;
+      paymentMode: string;
+      paymentStatus: PaymentStatus;
+      status: OrderStatus;
+      stripePaymentIntentId: string | null;
+      paymentAmount: Prisma.Decimal | null;
+      paymentCurrency?: string | null;
+      currency: string;
+      total: Prisma.Decimal;
+    },
+    boundPaymentIntentId: string,
+    paymentMethodId: string | undefined,
+    user: AuthUser,
+  ) {
+    const retrieved =
+      await this.stripe.retrievePaymentIntentForWebhook(boundPaymentIntentId);
+    if (!retrieved.ok) {
+      return this.toResponse(
+        order,
+        'Payment confirmation is pending; retry the same checkout',
+      );
+    }
+    if (retrieved.intent.id !== boundPaymentIntentId) {
+      this.logger.warn(
+        `FAILED checkout retrieve PI mismatch for order ${order.id}: bound ${boundPaymentIntentId}, got ${retrieved.intent.id}`,
+      );
+      throw new BadRequestException(
+        'This checkout already failed. Start a new payment.',
+      );
+    }
+
+    const status = retrieved.intent.status.trim().toLowerCase();
+
+    if (status === 'succeeded') {
+      return this.recoverFailedCheckoutFromValidatedIntent(
+        order,
+        retrieved.intent,
+        user,
+      );
+    }
+
+    if (status === 'canceled') {
+      throw new BadRequestException(
+        `Stripe payment status: ${retrieved.intent.status}`,
+      );
+    }
+
+    if (status === 'requires_payment_method') {
+      const pm = paymentMethodId?.trim() ?? '';
+      if (!/^pm_[A-Za-z0-9_]+$/.test(pm)) {
+        return this.toResponse(order, 'Enter a card to pay');
+      }
+      const confirmed = await this.stripe.confirmPaymentIntent({
+        paymentIntentId: boundPaymentIntentId,
+        paymentMethodId: pm,
+      });
+      if (
+        confirmed.paymentIntentId &&
+        confirmed.paymentIntentId !== boundPaymentIntentId
+      ) {
+        this.logger.warn(
+          `FAILED checkout confirm PI mismatch for order ${order.id}: bound ${boundPaymentIntentId}, got ${confirmed.paymentIntentId}`,
+        );
+        return this.toResponse(
+          order,
+          'Payment confirmation is pending; retry the same checkout',
+        );
+      }
+      // Never recover from confirm alone — re-retrieve full snapshot and validate.
+      const afterConfirm =
+        await this.stripe.retrievePaymentIntentForWebhook(boundPaymentIntentId);
+      if (!afterConfirm.ok) {
+        return this.toResponse(
+          order,
+          'Payment confirmation is pending; retry the same checkout',
+        );
+      }
+      if (afterConfirm.intent.id !== boundPaymentIntentId) {
+        throw new BadRequestException(
+          'This checkout already failed. Start a new payment.',
+        );
+      }
+      const afterStatus = afterConfirm.intent.status.trim().toLowerCase();
+      if (afterStatus === 'succeeded') {
+        return this.recoverFailedCheckoutFromValidatedIntent(
+          order,
+          afterConfirm.intent,
+          user,
+        );
+      }
+      if (afterStatus === 'canceled' || confirmed.status === 'failed') {
+        throw new BadRequestException(
+          confirmed.message ||
+            `Stripe payment status: ${afterConfirm.intent.status}`,
+        );
+      }
+      return this.toResponse(
+        order,
+        confirmed.message ||
+          'Payment confirmation is pending; retry the same checkout',
+      );
+    }
+
+    // processing, requires_action, requires_confirmation, requires_capture, unknown
+    return this.toResponse(
+      order,
+      'Payment confirmation is pending; retry the same checkout',
+    );
+  }
+
+  /**
+   * Full identity validation then shared late-success recovery for FAILED checkout.
+   * Maps webhook-shaped recovery outcomes to the checkout order response.
+   */
+  private async recoverFailedCheckoutFromValidatedIntent(
+    order: {
+      id: string;
+      customerId: string;
+      paymentMode: string;
+      paymentStatus: PaymentStatus;
+      status: OrderStatus;
+      stripePaymentIntentId: string | null;
+      paymentAmount: Prisma.Decimal | null;
+      paymentCurrency?: string | null;
+      currency: string;
+      total: Prisma.Decimal;
+    },
+    intent: {
+      id: string;
+      status: string;
+      amount: number;
+      amountReceived: number | null;
+      currency: string;
+      livemode: boolean;
+      metadataOrderId: string | null;
+    },
+    _user: AuthUser,
+  ) {
+    const validated = assertStripePaymentIntentMatchesOrder({
+      order,
+      intent,
+      requireSucceeded: true,
+    });
+    if (!validated.ok) {
+      this.logger.warn(
+        `FAILED checkout PaymentIntent rejected for order ${order.id}: ${validated.code} (${validated.message})`,
+      );
+      throw new BadRequestException(
+        'This checkout already failed. Start a new payment.',
+      );
+    }
+
+    const mode = validated.paymentMode;
+    const charge: ChargeResult = {
+      mode,
+      status: 'paid',
+      paymentIntentId: intent.id,
+      message: 'Stripe payment succeeded',
+    };
+
+    // Shared with succeeded-webhook late recovery — do not fork stock/claim logic.
+    const outcome = await this.completeLateSuccessAfterFailedClaim(
+      order,
+      charge,
+      mode,
+    );
+
+    const saved = await this.prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: orderWithItems,
+    });
+    const boundOk =
+      (saved.stripePaymentIntentId ?? '').trim() === intent.id;
+
+    if ('unsellable' in outcome && outcome.unsellable) {
+      return this.toResponse(
+        saved,
+        'Payment succeeded but this order could not be fulfilled; a refund was started',
+      );
+    }
+    if ('ignored' in outcome && outcome.ignored) {
+      if (saved.paymentStatus === PaymentStatus.REFUNDED) {
+        return this.toResponse(
+          saved,
+          'This order has been refunded and is no longer payable',
+        );
+      }
+      throw new ServiceUnavailableException(
+        'Late payment recovery incomplete; please retry',
+      );
+    }
+    // recovered / duplicate — only claim success when DB shows PAID for this PI.
+    if (
+      saved.paymentStatus === PaymentStatus.PAID &&
+      boundOk &&
+      (('recovered' in outcome && outcome.recovered) ||
+        ('duplicate' in outcome && outcome.duplicate))
+    ) {
+      return this.toResponse(saved, charge.message);
+    }
+    if (saved.paymentStatus === PaymentStatus.REFUNDED) {
+      return this.toResponse(
+        saved,
+        'This order has been refunded and is no longer payable',
+      );
+    }
+    throw new ServiceUnavailableException(
+      'Late payment recovery incomplete; please retry',
     );
   }
 
@@ -4457,8 +4693,9 @@ export class OrdersService {
       return { received: true, ignored: true };
     }
 
+    // Neutral wording: shared by webhook ACK-retry and checkout recovery.
     throw new ServiceUnavailableException(
-      'Late payment recovery incomplete; retry webhook',
+      'Late payment recovery incomplete; please retry',
     );
   }
 

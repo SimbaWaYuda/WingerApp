@@ -1981,6 +1981,298 @@ describe('payment and commission reliability', () => {
     });
   });
 
+  describe('S2.6.19.1 FAILED checkout late-success recovery', () => {
+    async function resumeFailedCheckout(overrides: Record<string, unknown> = {}) {
+      return service.create(
+        {
+          items: [{ productId: 'p1', quantity: 1 }],
+          paymentMethod: 'card',
+          stripePaymentMethodId: 'pm_card_visa',
+          checkoutIdempotencyKey: 'checkout-key-1',
+          ...overrides,
+        },
+        customer(),
+      );
+    }
+
+    function failedBoundOrder(overrides: Record<string, unknown> = {}) {
+      const line = lineItem({ status: OrderStatus.CANCELLED });
+      return orderShell({
+        paymentStatus: PaymentStatus.FAILED,
+        status: OrderStatus.CANCELLED,
+        checkoutIdempotencyKey: 'checkout-key-1',
+        stripePaymentIntentId: 'pi_bound',
+        stripeChargeAttemptAt: new Date(Date.now() - 60_000),
+        items: [line],
+        ...overrides,
+      });
+    }
+
+    it('recovers FAILED + bound PI when full identity validates as succeeded', async () => {
+      const state = failedBoundOrder();
+      prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+      prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
+      prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+      prisma.orderItem.findMany.mockResolvedValue(state.items);
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: 'p1',
+        stock: 4,
+        supplierId: 'sup-1',
+      });
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({ id: 'pi_bound' }),
+      );
+
+      const result = await resumeFailedCheckout();
+
+      expect(stripe.retrievePaymentIntentForWebhook).toHaveBeenCalledWith('pi_bound');
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.retrievePaymentIntentStatus).not.toHaveBeenCalled();
+      expect(state.paymentStatus).toBe(PaymentStatus.PAID);
+      expect(prisma.order.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'ord-1', paymentStatus: PaymentStatus.FAILED },
+        }),
+      );
+      expect(commissions.createSnapshotsForOrder).toHaveBeenCalledTimes(1);
+      expect(onboarding.onOrderPlaced).toHaveBeenCalledTimes(1);
+      expect(result.paymentStatus).toBe(PaymentStatus.PAID);
+    });
+
+    it('rejects identity mismatch without recovery or a new PaymentIntent', async () => {
+      const state = failedBoundOrder();
+      prisma.order.findUnique.mockResolvedValue(state);
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({
+          id: 'pi_bound',
+          amount: 9999,
+          amountReceived: 9999,
+        }),
+      );
+
+      await expect(resumeFailedCheckout()).rejects.toThrow(/already failed/i);
+
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+      expect(onboarding.onOrderPlaced).not.toHaveBeenCalled();
+      expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+    });
+
+    it('keeps FAILED when the bound PaymentIntent is canceled and does not create a PI', async () => {
+      const state = failedBoundOrder();
+      prisma.order.findUnique.mockResolvedValue(state);
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({
+          id: 'pi_bound',
+          status: 'canceled',
+          amountReceived: null,
+        }),
+      );
+
+      await expect(resumeFailedCheckout()).rejects.toThrow(/canceled/i);
+
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.confirmPaymentIntent).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+      expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+    });
+
+    it('fails closed for FAILED without a bound PaymentIntent', async () => {
+      const state = failedBoundOrder({ stripePaymentIntentId: null });
+      prisma.order.findUnique.mockResolvedValue(state);
+
+      await expect(resumeFailedCheckout()).rejects.toThrow(/already failed/i);
+
+      expect(stripe.retrievePaymentIntentForWebhook).not.toHaveBeenCalled();
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+    });
+
+    it('does not recover from confirm alone without a validated full snapshot', async () => {
+      const state = failedBoundOrder();
+      prisma.order.findUnique.mockResolvedValue(state);
+      stripe.retrievePaymentIntentForWebhook
+        .mockResolvedValueOnce(
+          webhookPaymentIntent({
+            id: 'pi_bound',
+            status: 'requires_payment_method',
+            amountReceived: null,
+          }),
+        )
+        .mockResolvedValueOnce(
+          webhookPaymentIntent({
+            id: 'pi_bound',
+            amount: 9999,
+            amountReceived: 9999,
+          }),
+        );
+      stripe.confirmPaymentIntent.mockResolvedValue({
+        mode: 'test',
+        status: 'paid',
+        paymentIntentId: 'pi_bound',
+        message: 'confirmed',
+      });
+
+      await expect(resumeFailedCheckout()).rejects.toThrow(/already failed/i);
+
+      expect(stripe.confirmPaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentIntentId: 'pi_bound' }),
+      );
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+    });
+
+    it('leaves FAILED unresolved when retrieve fails (no new PaymentIntent)', async () => {
+      const state = failedBoundOrder();
+      prisma.order.findUnique.mockResolvedValue(state);
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue({
+        ok: false,
+        message: 'timeout',
+      });
+
+      const result = await resumeFailedCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.FAILED);
+      expect(result.paymentMessage).toMatch(/retry the same checkout/i);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('A: requires_payment_method → confirm same PI → full re-retrieve → recover to PAID', async () => {
+      const state = failedBoundOrder();
+      prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+      prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
+      prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
+      prisma.orderItem.findMany.mockResolvedValue(state.items);
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: 'p1',
+        stock: 4,
+        supplierId: 'sup-1',
+      });
+      stripe.retrievePaymentIntentForWebhook
+        .mockResolvedValueOnce(
+          webhookPaymentIntent({
+            id: 'pi_bound',
+            status: 'requires_payment_method',
+            amountReceived: null,
+          }),
+        )
+        .mockResolvedValueOnce(webhookPaymentIntent({ id: 'pi_bound' }));
+      stripe.confirmPaymentIntent.mockResolvedValue({
+        mode: 'test',
+        status: 'paid',
+        paymentIntentId: 'pi_bound',
+        message: 'confirmed',
+      });
+
+      const result = await resumeFailedCheckout();
+
+      expect(stripe.confirmPaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentIntentId: 'pi_bound' }),
+      );
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.retrievePaymentIntentForWebhook).toHaveBeenCalledTimes(2);
+      expect(state.paymentStatus).toBe(PaymentStatus.PAID);
+      expect(commissions.createSnapshotsForOrder).toHaveBeenCalledTimes(1);
+      expect(onboarding.onOrderPlaced).toHaveBeenCalledTimes(1);
+      expect(result.paymentStatus).toBe(PaymentStatus.PAID);
+      expect(result.paymentMessage).toMatch(/succeeded/i);
+    });
+
+    it('B: processing status remains FAILED with no stock recovery or new PI', async () => {
+      const state = failedBoundOrder();
+      prisma.order.findUnique.mockResolvedValue(state);
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({
+          id: 'pi_bound',
+          status: 'processing',
+          amountReceived: null,
+        }),
+      );
+
+      const result = await resumeFailedCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.FAILED);
+      expect(result.paymentMessage).toMatch(/retry the same checkout/i);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(stripe.confirmPaymentIntent).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(prisma.product.updateMany).not.toHaveBeenCalled();
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+    });
+
+    it('C: unknown nonterminal status remains FAILED with no stock recovery or new PI', async () => {
+      const state = failedBoundOrder();
+      prisma.order.findUnique.mockResolvedValue(state);
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({
+          id: 'pi_bound',
+          status: 'requires_action',
+          amountReceived: null,
+        }),
+      );
+
+      const result = await resumeFailedCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.FAILED);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+    });
+
+    it('D: ignored/REFUNDED recovery never claims successful payment in the checkout response', async () => {
+      const state = failedBoundOrder();
+      let claimAttempted = false;
+      prisma.order.findUnique.mockImplementation(async () => {
+        if (claimAttempted) {
+          return { ...state, paymentStatus: PaymentStatus.REFUNDED };
+        }
+        return { ...state };
+      });
+      prisma.order.findUniqueOrThrow.mockImplementation(async () => ({
+        ...state,
+        paymentStatus: PaymentStatus.REFUNDED,
+      }));
+      prisma.orderItem.findMany.mockResolvedValue(state.items);
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: 'p1',
+        stock: 4,
+        supplierId: 'sup-1',
+      });
+      // Re-reserve succeeds; FAILED→PAID claim loses; fresh state is REFUNDED.
+      prisma.order.updateMany.mockImplementation(
+        async ({
+          where,
+        }: {
+          where?: { paymentStatus?: PaymentStatus };
+        }) => {
+          if (where?.paymentStatus === PaymentStatus.FAILED) {
+            claimAttempted = true;
+            return { count: 0 };
+          }
+          return { count: 0 };
+        },
+      );
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({ id: 'pi_bound' }),
+      );
+
+      const result = await resumeFailedCheckout();
+
+      expect(result.paymentStatus).toBe(PaymentStatus.REFUNDED);
+      expect(result.paymentMessage).toMatch(/refunded/i);
+      expect(result.paymentMessage).not.toMatch(/succeeded/i);
+      expect(stripe.chargeOrder).not.toHaveBeenCalled();
+      expect(onboarding.onOrderPlaced).not.toHaveBeenCalled();
+    });
+  });
+
   it('retries saving a PaymentIntent after Stripe succeeded and the first write failed', async () => {
     prisma.order.findUnique.mockResolvedValue(orderShell());
     prisma.order.updateMany

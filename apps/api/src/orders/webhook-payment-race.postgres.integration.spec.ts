@@ -1,5 +1,6 @@
 /**
- * S2.6.18.12 / S2.6.18.13 — PostgreSQL two-session races for succeeded-webhook claim-first.
+ * S2.6.18.12 / S2.6.18.13 / S2.6.19.3 — PostgreSQL two-session races for
+ * succeeded-webhook claim-first and FAILED checkout late-success recovery.
  *
  * Opt-in (fails closed when set but DB unreachable):
  *   $env:S261812_PG_TESTS = "1"
@@ -185,6 +186,54 @@ function installFirstClaimBarrier(orders: OrdersService) {
       claimPaidOrder: (...args: unknown[]) => Promise<{ count: number }>;
     }
   ).claimPaidOrder = async function claimBarrier(
+    this: OrdersService,
+    ...args: unknown[]
+  ) {
+    invocations += 1;
+    if (invocations === 1) {
+      signalEntered();
+      await gate;
+    }
+    return original.apply(this, args as never);
+  };
+
+  return {
+    entered,
+    release: () => releaseGate(),
+    invocations: () => invocations,
+  };
+}
+
+/**
+ * Pause the first claimPaidAfterRecovery invocation until release().
+ * Used for FAILED late-success races (checkout and/or webhook recovery).
+ */
+function installFirstClaimPaidAfterRecoveryBarrier(orders: OrdersService) {
+  const original = (
+    OrdersService.prototype as unknown as {
+      claimPaidAfterRecovery: (
+        this: OrdersService,
+        ...args: unknown[]
+      ) => Promise<{ count: number }>;
+    }
+  ).claimPaidAfterRecovery;
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  let signalEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    signalEntered = resolve;
+  });
+  let invocations = 0;
+
+  (
+    orders as unknown as {
+      claimPaidAfterRecovery: (
+        ...args: unknown[]
+      ) => Promise<{ count: number }>;
+    }
+  ).claimPaidAfterRecovery = async function claimAfterRecoveryBarrier(
     this: OrdersService,
     ...args: unknown[]
   ) {
@@ -754,5 +803,332 @@ concurrencyDescribe('PostgreSQL webhook payment races (S2.6.18.13)', () => {
     });
     expect(commissions).toHaveLength(1);
     expect(final.stripePaymentIntentId).toBe(winnerPi);
+  });
+
+  /**
+   * FAILED card order after stock was already restored (no held reservation).
+   * Late success must re-reserve via order-rereserve-* ledger idempotency.
+   */
+  async function seedFailedOrder(input: {
+    piId: string;
+    checkoutKey: string;
+    startingStock?: number;
+  }) {
+    const orderId = `${run}-fail-${Math.random().toString(36).slice(2, 8)}`;
+    const itemId = `${run}-foi-${Math.random().toString(36).slice(2, 8)}`;
+    orderIds.push(orderId);
+
+    const stock = input.startingStock ?? 10;
+    await sessionGate.product.update({
+      where: { id: productId },
+      data: { stock, stockStatus: StockStatus.IN_STOCK },
+    });
+
+    await sessionGate.order.create({
+      data: {
+        id: orderId,
+        displayId: `WG-${orderId.slice(-6)}`,
+        customerId,
+        customerEmail: customer.email,
+        customerName: customer.name,
+        status: OrderStatus.CANCELLED,
+        paymentStatus: PaymentStatus.FAILED,
+        paymentMethod: 'card',
+        paymentMode: 'test',
+        currency: 'USD',
+        paymentCurrency: 'USD',
+        subtotal: 58.99,
+        total: 58.99,
+        paymentAmount: 58.99,
+        stripePaymentIntentId: input.piId,
+        checkoutIdempotencyKey: input.checkoutKey,
+        stripeChargeAttemptAt: new Date(),
+      } as never,
+    });
+    await sessionGate.orderItem.create({
+      data: {
+        id: itemId,
+        orderId,
+        productId,
+        productName: 'Race Product',
+        supplierId,
+        supplierName: 'S261813 Supplier',
+        quantity: 1,
+        unitPrice: 58.99,
+        lineTotal: 58.99,
+        status: OrderStatus.CANCELLED,
+      },
+    });
+
+    return sessionGate.order.findUniqueOrThrow({
+      where: { id: orderId },
+      include: { items: true },
+    });
+  }
+
+  async function assertSingleRereserveLedger(orderId: string) {
+    const rows = await sessionGate.inventoryLedger.findMany({
+      where: {
+        productId,
+        eventId: `order-rereserve-${orderId}-${productId}`,
+      },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].delta).toBe(-1);
+    return rows[0];
+  }
+
+  function checkoutDto(checkoutKey: string) {
+    return {
+      items: [{ productId, quantity: 1 }],
+      paymentMethod: 'card' as const,
+      checkoutIdempotencyKey: checkoutKey,
+      stripePaymentMethodId: 'pm_card_race_fail',
+    };
+  }
+
+  it('FAILED Race A: checkout recovery vs succeeded webhook (claimPaidAfterRecovery barrier)', async () => {
+    const piId = `pi_${run}_fa`;
+    const checkoutKey = `chk_${run}_fa_key12`;
+    const order = await seedFailedOrder({ piId, checkoutKey });
+    expect(
+      (await sessionGate.product.findUniqueOrThrow({ where: { id: productId } }))
+        .stock,
+    ).toBe(10);
+
+    const stripeWebhook: StripeWebhookMock = {
+      retrievePaymentIntentForWebhook: jest
+        .fn()
+        .mockResolvedValue(succeededIntent(order.id, piId)),
+      retrievePaymentIntentStatus: jest.fn(),
+      refundCardCharge: jest.fn(),
+      chargeOrder: jest.fn(),
+      confirmPaymentIntent: jest.fn(),
+      checkoutMode: 'test',
+    };
+    const stripeCheckout: StripeWebhookMock = {
+      retrievePaymentIntentForWebhook: jest
+        .fn()
+        .mockResolvedValue(succeededIntent(order.id, piId)),
+      retrievePaymentIntentStatus: jest.fn(),
+      refundCardCharge: jest.fn(),
+      chargeOrder: jest.fn(),
+      confirmPaymentIntent: jest.fn(),
+      checkoutMode: 'test',
+    };
+    const onboardWebhook = jest.fn().mockResolvedValue(undefined);
+    const onboardCheckout = jest.fn().mockResolvedValue(undefined);
+    const { orders: ordersWebhook } = bindOrdersService({
+      prisma: sessionA,
+      stripe: stripeWebhook,
+      onOrderPlaced: onboardWebhook,
+    });
+    const { orders: ordersCheckout } = bindOrdersService({
+      prisma: sessionB,
+      stripe: stripeCheckout,
+      onOrderPlaced: onboardCheckout,
+    });
+
+    const barrier = installFirstClaimPaidAfterRecoveryBarrier(ordersWebhook);
+    const webhookPromise = ordersWebhook.handleStripeEvent({
+      type: 'payment_intent.succeeded',
+      livemode: false,
+      data: { object: { id: piId, metadata: { orderId: order.id } } },
+    } as never);
+    await barrier.entered;
+
+    const checkoutPromise = ordersCheckout.create(
+      checkoutDto(checkoutKey),
+      customer,
+    );
+    await new Promise((r) => setImmediate(r));
+    barrier.release();
+
+    const [webhookResult, checkoutResult] = await Promise.all([
+      webhookPromise,
+      checkoutPromise,
+    ]);
+
+    expect(webhookResult).toMatchObject({ received: true });
+    expect(checkoutResult.paymentStatus).toBe(PaymentStatus.PAID);
+    // If checkout loses the claim, resumeCheckout may short-circuit on PAID with no message.
+    if (checkoutResult.paymentMessage != null) {
+      expect(checkoutResult.paymentMessage).toMatch(/succeeded/i);
+    }
+    expect(stripeCheckout.chargeOrder).not.toHaveBeenCalled();
+    expect(stripeWebhook.chargeOrder).not.toHaveBeenCalled();
+
+    const final = await sessionGate.order.findUniqueOrThrow({
+      where: { id: order.id },
+    });
+    expect(final.paymentStatus).toBe(PaymentStatus.PAID);
+    expect(final.status).toBe(OrderStatus.PROCESSING);
+    expect(final.stripePaymentIntentId).toBe(piId);
+    const stock = (
+      await sessionGate.product.findUniqueOrThrow({ where: { id: productId } })
+    ).stock;
+    expect(stock).toBe(9);
+    await assertSingleRereserveLedger(order.id);
+    await assertSingleCommission(order.id);
+    expect(
+      onboardWebhook.mock.calls.length + onboardCheckout.mock.calls.length,
+    ).toBe(1);
+  });
+
+  it('FAILED Race B: two concurrent FAILED checkout recoveries', async () => {
+    const piId = `pi_${run}_fb`;
+    const checkoutKey = `chk_${run}_fb_key12`;
+    const order = await seedFailedOrder({ piId, checkoutKey });
+
+    const makeStripe = (): StripeWebhookMock => ({
+      retrievePaymentIntentForWebhook: jest
+        .fn()
+        .mockResolvedValue(succeededIntent(order.id, piId)),
+      retrievePaymentIntentStatus: jest.fn(),
+      refundCardCharge: jest.fn(),
+      chargeOrder: jest.fn(),
+      confirmPaymentIntent: jest.fn(),
+      checkoutMode: 'test',
+    });
+    const stripeA = makeStripe();
+    const stripeB = makeStripe();
+    const onboardA = jest.fn().mockResolvedValue(undefined);
+    const onboardB = jest.fn().mockResolvedValue(undefined);
+    const { orders: ordersA } = bindOrdersService({
+      prisma: sessionA,
+      stripe: stripeA,
+      onOrderPlaced: onboardA,
+    });
+    const { orders: ordersB } = bindOrdersService({
+      prisma: sessionB,
+      stripe: stripeB,
+      onOrderPlaced: onboardB,
+    });
+
+    const barrier = installFirstClaimPaidAfterRecoveryBarrier(ordersA);
+    const pA = ordersA.create(checkoutDto(checkoutKey), customer);
+    await barrier.entered;
+    const pB = ordersB.create(checkoutDto(checkoutKey), customer);
+    await new Promise((r) => setImmediate(r));
+    barrier.release();
+
+    const [rA, rB] = await Promise.all([pA, pB]);
+    expect(rA.paymentStatus).toBe(PaymentStatus.PAID);
+    expect(rB.paymentStatus).toBe(PaymentStatus.PAID);
+    // Loser may observe PAID via resumeCheckout short-circuit (no paymentMessage).
+    for (const result of [rA, rB]) {
+      if (result.paymentMessage != null) {
+        expect(result.paymentMessage).toMatch(/succeeded/i);
+      }
+    }
+    expect(stripeA.chargeOrder).not.toHaveBeenCalled();
+    expect(stripeB.chargeOrder).not.toHaveBeenCalled();
+
+    const final = await sessionGate.order.findUniqueOrThrow({
+      where: { id: order.id },
+    });
+    expect(final.paymentStatus).toBe(PaymentStatus.PAID);
+    expect(final.stripePaymentIntentId).toBe(piId);
+    const stock = (
+      await sessionGate.product.findUniqueOrThrow({ where: { id: productId } })
+    ).stock;
+    expect(stock).toBe(9);
+    await assertSingleRereserveLedger(order.id);
+    await assertSingleCommission(order.id);
+    expect(onboardA.mock.calls.length + onboardB.mock.calls.length).toBe(1);
+  });
+
+  /**
+   * FAILED Race C — controlled stale snapshots (not simultaneous Stripe truth):
+   * checkout observes a validated succeeded PI; a concurrent payment_failed
+   * webhook is given a canceled snapshot. Order starts FAILED (stock restored).
+   * Authoritative recovery path is the succeeded checkout observation.
+   */
+  it('FAILED Race C: checkout recovery vs canceled-failure webhook (stale canceled snapshot)', async () => {
+    const piId = `pi_${run}_fc`;
+    const checkoutKey = `chk_${run}_fc_key12`;
+    const order = await seedFailedOrder({ piId, checkoutKey });
+
+    const stripeCheckout: StripeWebhookMock = {
+      retrievePaymentIntentForWebhook: jest
+        .fn()
+        .mockResolvedValue(succeededIntent(order.id, piId)),
+      retrievePaymentIntentStatus: jest.fn(),
+      refundCardCharge: jest.fn(),
+      chargeOrder: jest.fn(),
+      confirmPaymentIntent: jest.fn(),
+      checkoutMode: 'test',
+    };
+    const stripeFail: StripeWebhookMock = {
+      retrievePaymentIntentForWebhook: jest
+        .fn()
+        .mockResolvedValue(canceledIntent(order.id, piId)),
+      retrievePaymentIntentStatus: jest.fn(),
+      refundCardCharge: jest.fn(),
+      chargeOrder: jest.fn(),
+      confirmPaymentIntent: jest.fn(),
+      checkoutMode: 'test',
+    };
+    const onboardCheckout = jest.fn().mockResolvedValue(undefined);
+    const onboardFail = jest.fn().mockResolvedValue(undefined);
+    const { orders: ordersCheckout } = bindOrdersService({
+      prisma: sessionA,
+      stripe: stripeCheckout,
+      onOrderPlaced: onboardCheckout,
+    });
+    const { orders: ordersFail } = bindOrdersService({
+      prisma: sessionB,
+      stripe: stripeFail,
+      onOrderPlaced: onboardFail,
+    });
+
+    const barrier = installFirstClaimPaidAfterRecoveryBarrier(ordersCheckout);
+    const checkoutPromise = ordersCheckout.create(
+      checkoutDto(checkoutKey),
+      customer,
+    );
+    await barrier.entered;
+
+    // Checkout has already re-reserved (stock 9) and is gated before FAILED→PAID claim.
+    const stockWhileGated = (
+      await sessionGate.product.findUniqueOrThrow({ where: { id: productId } })
+    ).stock;
+    expect(stockWhileGated).toBe(9);
+
+    const failResult = await ordersFail.handleStripeEvent({
+      type: 'payment_intent.payment_failed',
+      livemode: false,
+      data: { object: { id: piId, metadata: { orderId: order.id } } },
+    } as never);
+    // Stale canceled snapshot on an already-FAILED order must not restore stock
+    // (would push 9→10) or prevent the gated succeeded recovery.
+    expect(failResult).toBeTruthy();
+    const midStock = (
+      await sessionGate.product.findUniqueOrThrow({ where: { id: productId } })
+    ).stock;
+    expect(midStock).toBe(9);
+    const midOrder = await sessionGate.order.findUniqueOrThrow({
+      where: { id: order.id },
+    });
+    expect(midOrder.paymentStatus).toBe(PaymentStatus.FAILED);
+
+    barrier.release();
+    const checkoutResult = await checkoutPromise;
+    expect(checkoutResult.paymentStatus).toBe(PaymentStatus.PAID);
+
+    const final = await sessionGate.order.findUniqueOrThrow({
+      where: { id: order.id },
+    });
+    expect(final.paymentStatus).toBe(PaymentStatus.PAID);
+    expect(final.stripePaymentIntentId).toBe(piId);
+    const stock = (
+      await sessionGate.product.findUniqueOrThrow({ where: { id: productId } })
+    ).stock;
+    expect(stock).toBe(9);
+    await assertSingleRereserveLedger(order.id);
+    await assertSingleCommission(order.id);
+    expect(onboardCheckout).toHaveBeenCalledTimes(1);
+    expect(onboardFail).not.toHaveBeenCalled();
+    expect(stripeCheckout.chargeOrder).not.toHaveBeenCalled();
   });
 });
