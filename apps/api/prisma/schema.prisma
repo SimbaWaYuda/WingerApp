@@ -618,6 +618,16 @@ model Order {
   stripePaymentIntentId  String?                   @unique
   /// First moment a Stripe PaymentIntent create may have been initiated. Never reset on retry.
   stripeChargeAttemptAt  DateTime?
+  /// Worker/run token holding an active payment-reconcile lease (unique per claim).
+  paymentReconcileLeaseOwner     String?
+  /// When the current reconcile lease expires and may be reclaimed.
+  paymentReconcileLeaseExpiresAt DateTime?
+  /// Successful lease claims only; never incremented on failed eligibility.
+  paymentReconcileAttemptCount   Int                       @default(0)
+  /// Next time automated reconciliation may claim this order.
+  paymentReconcileNextAt         DateTime?
+  /// Set when automatic reconciliation escalates to manual review.
+  paymentReconcileManualReviewAt DateTime?
   /// Same customer retry of one checkout. Null on orders placed before this existed.
   checkoutIdempotencyKey String?                   @unique
   /// Legacy mirror of settlementCurrency (kept for existing clients).
@@ -659,6 +669,8 @@ model Order {
   @@index([status])
   @@index([paymentStatus])
   @@index([createdAt])
+  /// Eligibility / next-attempt ordering for PENDING card reconciliation claims.
+  @@index([paymentStatus, paymentReconcileNextAt, stripeChargeAttemptAt])
 }
 
 /// Locked checkout buckets per supplier. Never recomputed from live fee settings.

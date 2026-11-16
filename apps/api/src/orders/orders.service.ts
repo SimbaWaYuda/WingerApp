@@ -68,6 +68,7 @@ import {
   toStripeAmountMinor,
 } from './stripe-amount';
 import { assertStripePaymentIntentMatchesOrder } from './stripe-payment-intent-identity';
+import { writeStripeChargeAttemptAtUtc } from './payment-reconcile-utc';
 import {
   aggregateVariantStock,
   resolveLineStock,
@@ -4309,16 +4310,12 @@ export class OrdersService {
   }
 
   /**
-   * Records the first Stripe PaymentIntent create attempt using the DB clock.
-   * Concurrent callers cannot replace an already-set value (WHERE IS NULL).
+   * Records the first Stripe PaymentIntent create attempt using an explicit UTC
+   * wall-clock timestamp (TIMESTAMP WITHOUT TIME ZONE). Never uses session-local
+   * CURRENT_TIMESTAMP. Concurrent callers cannot replace an already-set value.
    */
   private async markStripeChargeAttempt(orderId: string) {
-    await this.prisma.$executeRaw`
-      UPDATE "Order"
-      SET "stripeChargeAttemptAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${orderId}
-        AND "stripeChargeAttemptAt" IS NULL
-    `;
+    await writeStripeChargeAttemptAtUtc(this.prisma, orderId);
   }
 
   private async findOrderForIntent(intent: {
