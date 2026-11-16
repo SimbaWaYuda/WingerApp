@@ -616,6 +616,8 @@ model Order {
   paymentMethod          String                    @default("card")
   paymentMode            String                    @default("demo")
   stripePaymentIntentId  String?                   @unique
+  /// First moment a Stripe PaymentIntent create may have been initiated. Never reset on retry.
+  stripeChargeAttemptAt  DateTime?
   /// Same customer retry of one checkout. Null on orders placed before this existed.
   checkoutIdempotencyKey String?                   @unique
   /// Legacy mirror of settlementCurrency (kept for existing clients).

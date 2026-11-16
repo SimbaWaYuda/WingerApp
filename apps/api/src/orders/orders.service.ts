@@ -3886,6 +3886,8 @@ export class OrdersService {
   ) {
     const paymentAmount = Number(order.paymentAmount ?? order.total);
     const paymentCurrency = order.paymentCurrency || order.currency || 'USD';
+    // Persist first-attempt clock before any Stripe create I/O; never overwrite.
+    await this.markStripeChargeAttempt(order.id);
     const charge = await this.stripe.chargeOrder({
       amountCents: Math.round(paymentAmount * 100),
       currency: paymentCurrency.toLowerCase(),
@@ -3896,6 +3898,19 @@ export class OrdersService {
       idempotencyKey: `winger-charge-${order.id}`,
     });
     return this.recordCardCharge(order.id, charge, user);
+  }
+
+  /**
+   * Records the first Stripe PaymentIntent create attempt using the DB clock.
+   * Concurrent callers cannot replace an already-set value (WHERE IS NULL).
+   */
+  private async markStripeChargeAttempt(orderId: string) {
+    await this.prisma.$executeRaw`
+      UPDATE "Order"
+      SET "stripeChargeAttemptAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${orderId}
+        AND "stripeChargeAttemptAt" IS NULL
+    `;
   }
 
   private async findOrderForIntent(intent: {
