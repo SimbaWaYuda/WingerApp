@@ -58,6 +58,7 @@ describe('CommissionsService', () => {
       orderItem: { findUnique: jest.fn() },
       orderItemCommission: {
         create: jest.fn(),
+        createMany: jest.fn(),
         update: jest.fn(),
         findMany: jest.fn(),
         findUniqueOrThrow: jest.fn(),
@@ -185,6 +186,7 @@ describe('CommissionsService', () => {
     it('skips lines that already have a snapshot', async () => {
       prisma.order.findUnique.mockResolvedValue({
         id: 'ord-1',
+        currency: 'USD',
         items: [
           {
             id: 'item-1',
@@ -206,7 +208,27 @@ describe('CommissionsService', () => {
       prisma.platformSettings.upsert.mockResolvedValue({
         defaultCommissionPercent: 10,
       });
-      prisma.orderItemCommission.create.mockResolvedValue({});
+      prisma.orderItemCommission.createMany.mockResolvedValue({ count: 1 });
+      prisma.orderItemCommission.findMany.mockResolvedValue([
+        {
+          orderItemId: 'item-1',
+          ratePercent: 10,
+          commissionBase: 100,
+          commissionAmount: 10,
+          currency: 'USD',
+          paymentMode: 'cod',
+          isDemo: false,
+        },
+        {
+          orderItemId: 'item-2',
+          ratePercent: 10,
+          commissionBase: 100,
+          commissionAmount: 10,
+          currency: 'USD',
+          paymentMode: 'cod',
+          isDemo: false,
+        },
+      ]);
 
       const result = await service.createSnapshotsForOrder({
         orderId: 'ord-1',
@@ -215,7 +237,192 @@ describe('CommissionsService', () => {
         initialStatus: CommissionRecognitionStatus.PENDING,
       });
       expect(result).toEqual({ created: 1, skipped: 1 });
-      expect(prisma.orderItemCommission.create).toHaveBeenCalledTimes(1);
+      expect(prisma.orderItemCommission.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skipDuplicates: true,
+          data: [
+            expect.objectContaining({
+              orderItemId: 'item-2',
+              paymentMode: 'cod',
+              isDemo: false,
+            }),
+          ],
+        }),
+      );
+      expect(prisma.orderItemCommission.create).not.toHaveBeenCalled();
+    });
+
+    it('treats createMany skipDuplicates as idempotent success and does not overwrite', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'ord-1',
+        currency: 'USD',
+        items: [
+          {
+            id: 'item-1',
+            supplierId: 'sup-1',
+            unitPrice: 58.99,
+            quantity: 1,
+            commission: null,
+          },
+        ],
+      });
+      prisma.supplierCommissionAgreement.findFirst.mockResolvedValue(null);
+      prisma.platformSettings.upsert.mockResolvedValue({
+        defaultCommissionPercent: 10,
+      });
+      // Concurrent winner already inserted — skipDuplicates inserts 0.
+      prisma.orderItemCommission.createMany.mockResolvedValue({ count: 0 });
+      prisma.orderItemCommission.findMany.mockResolvedValue([
+        {
+          orderItemId: 'item-1',
+          ratePercent: 10,
+          commissionBase: 58.99,
+          commissionAmount: 5.9,
+          currency: 'USD',
+          paymentMode: 'test',
+          isDemo: true,
+        },
+      ]);
+
+      const result = await service.createSnapshotsForOrder({
+        orderId: 'ord-1',
+        paymentMode: 'test',
+        isDemo: true,
+        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+      });
+      expect(result).toEqual({ created: 0, skipped: 1 });
+    });
+
+    it('creates snapshots for every missing line in one createMany', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'ord-1',
+        currency: 'USD',
+        items: [
+          {
+            id: 'item-a',
+            supplierId: 'sup-1',
+            unitPrice: 10,
+            quantity: 1,
+            commission: null,
+          },
+          {
+            id: 'item-b',
+            supplierId: 'sup-1',
+            unitPrice: 20,
+            quantity: 2,
+            commission: null,
+          },
+        ],
+      });
+      prisma.supplierCommissionAgreement.findFirst.mockResolvedValue(null);
+      prisma.platformSettings.upsert.mockResolvedValue({
+        defaultCommissionPercent: 10,
+      });
+      prisma.orderItemCommission.createMany.mockResolvedValue({ count: 2 });
+      prisma.orderItemCommission.findMany.mockResolvedValue([
+        {
+          orderItemId: 'item-a',
+          ratePercent: 10,
+          commissionBase: 10,
+          commissionAmount: 1,
+          currency: 'USD',
+          paymentMode: 'live',
+          isDemo: false,
+        },
+        {
+          orderItemId: 'item-b',
+          ratePercent: 10,
+          commissionBase: 40,
+          commissionAmount: 4,
+          currency: 'USD',
+          paymentMode: 'live',
+          isDemo: false,
+        },
+      ]);
+
+      const result = await service.createSnapshotsForOrder({
+        orderId: 'ord-1',
+        paymentMode: 'live',
+        isDemo: false,
+        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+      });
+      expect(result).toEqual({ created: 2, skipped: 0 });
+      expect(prisma.orderItemCommission.createMany.mock.calls[0][0].data).toHaveLength(
+        2,
+      );
+    });
+
+    it('propagates genuine createMany database errors', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'ord-1',
+        currency: 'USD',
+        items: [
+          {
+            id: 'item-1',
+            supplierId: 'sup-1',
+            unitPrice: 10,
+            quantity: 1,
+            commission: null,
+          },
+        ],
+      });
+      prisma.supplierCommissionAgreement.findFirst.mockResolvedValue(null);
+      prisma.platformSettings.upsert.mockResolvedValue({
+        defaultCommissionPercent: 10,
+      });
+      prisma.orderItemCommission.createMany.mockRejectedValue(
+        new Error('connection reset'),
+      );
+
+      await expect(
+        service.createSnapshotsForOrder({
+          orderId: 'ord-1',
+          paymentMode: 'test',
+          isDemo: true,
+          initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+        }),
+      ).rejects.toThrow(/connection reset/i);
+    });
+
+    it('fails closed when persisted snapshot immutable fields do not match', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'ord-1',
+        currency: 'USD',
+        items: [
+          {
+            id: 'item-1',
+            supplierId: 'sup-1',
+            unitPrice: 10,
+            quantity: 1,
+            commission: null,
+          },
+        ],
+      });
+      prisma.supplierCommissionAgreement.findFirst.mockResolvedValue(null);
+      prisma.platformSettings.upsert.mockResolvedValue({
+        defaultCommissionPercent: 10,
+      });
+      prisma.orderItemCommission.createMany.mockResolvedValue({ count: 0 });
+      prisma.orderItemCommission.findMany.mockResolvedValue([
+        {
+          orderItemId: 'item-1',
+          ratePercent: 10,
+          commissionBase: 10,
+          commissionAmount: 99,
+          currency: 'USD',
+          paymentMode: 'test',
+          isDemo: true,
+        },
+      ]);
+
+      await expect(
+        service.createSnapshotsForOrder({
+          orderId: 'ord-1',
+          paymentMode: 'test',
+          isDemo: true,
+          initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+        }),
+      ).rejects.toThrow(/does not match expected immutable fields/i);
     });
   });
 

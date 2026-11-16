@@ -390,7 +390,9 @@ export class CommissionsService {
 
   /**
    * Create immutable commission snapshots for order lines.
-   * Idempotent: existing orderItemId snapshots are left unchanged (duplicate-safe).
+   * Idempotent under concurrency: uses createMany(skipDuplicates) against the
+   * unique orderItemId constraint, then verifies every line has a snapshot.
+   * Existing rows are never overwritten.
    */
   async createSnapshotsForOrder(params: {
     orderId: string;
@@ -406,13 +408,34 @@ export class CommissionsService {
     });
     if (!order) return { created: 0, skipped: 0 };
 
-    let created = 0;
-    let skipped = 0;
     const now = new Date();
+    const currency = (order.settlementCurrency || order.currency || 'USD')
+      .toString()
+      .toUpperCase();
+    const status = params.initialStatus;
+    const recognizedAt =
+      status === CommissionRecognitionStatus.RECOGNIZED ||
+      status === CommissionRecognitionStatus.SETTLEABLE
+        ? now
+        : null;
+    const settleableAt =
+      status === CommissionRecognitionStatus.SETTLEABLE ? now : null;
 
+    type ExpectedSnap = {
+      ratePercent: string;
+      commissionBase: string;
+      commissionAmount: string;
+      currency: string;
+      paymentMode: string;
+      isDemo: boolean;
+    };
+    const expectedByItemId = new Map<string, ExpectedSnap>();
+    const rows: Prisma.OrderItemCommissionCreateManyInput[] = [];
+
+    let preexisting = 0;
     for (const item of order.items) {
       if (item.commission) {
-        skipped += 1;
+        preexisting += 1;
         continue;
       }
       const resolved = await this.resolveRateForSupplier(item.supplierId, now);
@@ -421,33 +444,75 @@ export class CommissionsService {
         quantity: item.quantity,
         ratePercent: resolved.ratePercent,
       });
-      const status = params.initialStatus;
-      await this.prisma.orderItemCommission.create({
-        data: {
-          orderItemId: item.id,
-          agreementId: resolved.agreementId,
-          ratePercent: new Prisma.Decimal(values.ratePercent.toFixed(2)),
-          commissionBase: new Prisma.Decimal(values.commissionBase.toFixed(2)),
-          commissionAmount: new Prisma.Decimal(
-            values.commissionAmount.toFixed(2),
-          ),
-          currency: (order.settlementCurrency || order.currency || 'USD')
-            .toString()
-            .toUpperCase(),
-          status,
-          paymentMode: params.paymentMode,
-          isDemo: params.isDemo,
-          recognizedAt:
-            status === CommissionRecognitionStatus.RECOGNIZED ||
-            status === CommissionRecognitionStatus.SETTLEABLE
-              ? now
-              : null,
-          settleableAt:
-            status === CommissionRecognitionStatus.SETTLEABLE ? now : null,
-        },
+      const expected: ExpectedSnap = {
+        ratePercent: values.ratePercent.toFixed(2),
+        commissionBase: values.commissionBase.toFixed(2),
+        commissionAmount: values.commissionAmount.toFixed(2),
+        currency,
+        paymentMode: params.paymentMode,
+        isDemo: params.isDemo,
+      };
+      expectedByItemId.set(item.id, expected);
+      rows.push({
+        orderItemId: item.id,
+        agreementId: resolved.agreementId,
+        ratePercent: expected.ratePercent,
+        commissionBase: expected.commissionBase,
+        commissionAmount: expected.commissionAmount,
+        currency: expected.currency,
+        status,
+        paymentMode: expected.paymentMode,
+        isDemo: expected.isDemo,
+        recognizedAt,
+        settleableAt,
       });
-      created += 1;
     }
+
+    let created = 0;
+    if (rows.length > 0) {
+      // Single statement, not an interactive transaction: skipDuplicates is
+      // conflict-safe under PostgreSQL unique(orderItemId) without aborting a tx.
+      const inserted = await this.prisma.orderItemCommission.createMany({
+        data: rows,
+        skipDuplicates: true,
+      });
+      created = inserted.count;
+    }
+
+    const persisted = await this.prisma.orderItemCommission.findMany({
+      where: { orderItemId: { in: order.items.map((item) => item.id) } },
+    });
+    if (persisted.length !== order.items.length) {
+      throw new Error(
+        `Commission snapshot incomplete for order ${params.orderId}: expected ${order.items.length}, found ${persisted.length}`,
+      );
+    }
+
+    const byItemId = new Map(persisted.map((row) => [row.orderItemId, row]));
+    for (const [itemId, expected] of expectedByItemId) {
+      const snap = byItemId.get(itemId);
+      if (!snap) {
+        throw new Error(
+          `Commission snapshot missing for order item ${itemId} after createMany`,
+        );
+      }
+      // Concurrent winner may have inserted first with the same payment params.
+      // Never overwrite; require immutable fields match what this call intended.
+      if (
+        Number(snap.ratePercent).toFixed(2) !== expected.ratePercent ||
+        Number(snap.commissionBase).toFixed(2) !== expected.commissionBase ||
+        Number(snap.commissionAmount).toFixed(2) !== expected.commissionAmount ||
+        snap.currency.toUpperCase() !== expected.currency ||
+        snap.paymentMode !== expected.paymentMode ||
+        snap.isDemo !== expected.isDemo
+      ) {
+        throw new Error(
+          `Commission snapshot for order item ${itemId} does not match expected immutable fields`,
+        );
+      }
+    }
+
+    const skipped = preexisting + (rows.length - created);
     return { created, skipped };
   }
 

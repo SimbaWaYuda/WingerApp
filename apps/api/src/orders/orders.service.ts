@@ -4289,13 +4289,161 @@ export class OrdersService {
       );
     }
 
-    if (order.paymentStatus === PaymentStatus.REFUNDED) {
+    // Succeeded path: claim-first on live DB state — never branch on the stale
+    // pre-retrieve candidate snapshot (S2.6.18.11 / S2.6.18.12).
+    return this.finalizeSucceededWebhookClaimFirst({
+      orderId: order.id,
+      customerId: order.customerId,
+      statusHint: order.status,
+      paymentIntentId: retrieved.intent.id,
+      mode,
+    });
+  }
+
+  /**
+   * After identity validation + null-only PI association: PENDING-only claim first,
+   * then branch on a fresh DB read. Never ACK a validated success while the order
+   * remains FAILED without completed recovery (or legitimate REFUNDED/unsellable).
+   */
+  private async finalizeSucceededWebhookClaimFirst(params: {
+    orderId: string;
+    customerId: string;
+    statusHint: OrderStatus;
+    paymentIntentId: string;
+    mode: 'test' | 'live';
+  }) {
+    const charge: ChargeResult = {
+      mode: params.mode,
+      status: 'paid',
+      paymentIntentId: params.paymentIntentId,
+      message: 'Stripe payment succeeded',
+    };
+
+    const claimed = await this.claimPaidOrder(
+      params.orderId,
+      charge,
+      params.statusHint,
+    );
+    if (claimed.count === 1) {
+      await this.commissions.createSnapshotsForOrder({
+        orderId: params.orderId,
+        paymentMode: params.mode,
+        isDemo: params.mode !== 'live',
+        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+      });
+      await this.onboarding.onOrderPlaced(params.customerId, UserRole.CUSTOMER);
+      return { received: true };
+    }
+
+    const fresh = await this.prisma.order.findUnique({
+      where: { id: params.orderId },
+    });
+    if (!fresh) {
+      throw new ServiceUnavailableException(
+        'Order missing after payment claim; retry webhook',
+      );
+    }
+
+    const boundPi = (fresh.stripePaymentIntentId ?? '').trim();
+    if (boundPi !== params.paymentIntentId) {
+      this.logger.warn(
+        `Succeeded webhook PI mismatch after claim for ${params.orderId}: bound ${boundPi || '(none)'}, expected ${params.paymentIntentId}`,
+      );
+      return { received: true, ignored: true, reason: 'pi_mismatch' };
+    }
+
+    if (fresh.paymentStatus === PaymentStatus.REFUNDED) {
       return { received: true, ignored: true };
     }
 
+    if (fresh.paymentStatus === PaymentStatus.PAID) {
+      await this.commissions.createSnapshotsForOrder({
+        orderId: params.orderId,
+        paymentMode: params.mode,
+        isDemo: params.mode !== 'live',
+        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+      });
+      return { received: true, duplicate: true };
+    }
+
     if (
-      order.paymentStatus === PaymentStatus.PAID &&
-      order.stripePaymentIntentId === retrieved.intent.id
+      fresh.paymentStatus === PaymentStatus.FAILED ||
+      fresh.status === OrderStatus.CANCELLED
+    ) {
+      return this.completeLateSuccessAfterFailedClaim(fresh, charge, params.mode);
+    }
+
+    if (fresh.paymentStatus === PaymentStatus.PENDING) {
+      const retry = await this.claimPaidOrder(
+        params.orderId,
+        charge,
+        fresh.status,
+      );
+      if (retry.count === 1) {
+        await this.commissions.createSnapshotsForOrder({
+          orderId: params.orderId,
+          paymentMode: params.mode,
+          isDemo: params.mode !== 'live',
+          initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+        });
+        await this.onboarding.onOrderPlaced(params.customerId, UserRole.CUSTOMER);
+        return { received: true };
+      }
+      throw new ServiceUnavailableException(
+        'Payment claim unresolved; retry webhook',
+      );
+    }
+
+    this.logger.warn(
+      `Succeeded webhook unexpected paymentStatus ${fresh.paymentStatus} for ${params.orderId}`,
+    );
+    throw new ServiceUnavailableException(
+      'Payment state unresolved; retry webhook',
+    );
+  }
+
+  private async completeLateSuccessAfterFailedClaim(
+    order: {
+      id: string;
+      customerId: string;
+      paymentMode: string;
+      paymentStatus: PaymentStatus;
+      status: OrderStatus;
+      stripePaymentIntentId: string | null;
+      paymentAmount: Prisma.Decimal | null;
+      paymentCurrency?: string | null;
+      currency: string;
+      total: Prisma.Decimal;
+    },
+    charge: ChargeResult,
+    mode: 'test' | 'live',
+  ) {
+    const recovered = await this.recoverStockForLatePayment(
+      order,
+      charge.paymentIntentId!,
+      mode,
+    );
+    if (!recovered) {
+      // Unsellable path already refunded (ACK) or threw ServiceUnavailableException.
+      return { received: true, unsellable: true };
+    }
+
+    const claimed = await this.claimPaidAfterRecovery(order.id, charge);
+    if (claimed.count > 0) {
+      await this.commissions.createSnapshotsForOrder({
+        orderId: order.id,
+        paymentMode: mode,
+        isDemo: mode !== 'live',
+        initialStatus: CommissionRecognitionStatus.RECOGNIZED,
+      });
+      await this.onboarding.onOrderPlaced(order.customerId, UserRole.CUSTOMER);
+      return { received: true, recovered: true };
+    }
+
+    const after = await this.prisma.order.findUnique({ where: { id: order.id } });
+    if (
+      after?.paymentStatus === PaymentStatus.PAID &&
+      (after.stripePaymentIntentId ?? '').trim() === charge.paymentIntentId
     ) {
       await this.commissions.createSnapshotsForOrder({
         orderId: order.id,
@@ -4305,41 +4453,13 @@ export class OrdersService {
       });
       return { received: true, duplicate: true };
     }
-
-    const charge: ChargeResult = {
-      mode,
-      status: 'paid',
-      paymentIntentId: retrieved.intent.id,
-      message: 'Stripe payment succeeded',
-    };
-
-    if (
-      order.paymentStatus === PaymentStatus.FAILED ||
-      order.status === OrderStatus.CANCELLED
-    ) {
-      const recovered = await this.recoverStockForLatePayment(
-        order,
-        retrieved.intent.id,
-        mode,
-      );
-      if (!recovered) {
-        return { received: true, unsellable: true };
-      }
-      const claimed = await this.claimPaidAfterRecovery(order.id, charge);
-      if (claimed.count > 0) {
-        await this.commissions.createSnapshotsForOrder({
-          orderId: order.id,
-          paymentMode: mode,
-          isDemo: mode !== 'live',
-          initialStatus: CommissionRecognitionStatus.RECOGNIZED,
-        });
-        await this.onboarding.onOrderPlaced(order.customerId, UserRole.CUSTOMER);
-      }
-      return { received: true, recovered: true };
+    if (after?.paymentStatus === PaymentStatus.REFUNDED) {
+      return { received: true, ignored: true };
     }
 
-    await this.recordCardCharge(order.id, charge, actor);
-    return { received: true };
+    throw new ServiceUnavailableException(
+      'Late payment recovery incomplete; retry webhook',
+    );
   }
 
   /**

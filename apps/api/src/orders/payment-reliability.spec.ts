@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { OrderStatus, PaymentStatus, Prisma, UserRole } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { AuditService } from '../commissions/audit.service';
@@ -99,6 +99,43 @@ function webhookPaymentIntent(
       metadataOrderId: 'ord-1',
       ...overrides,
     },
+  };
+}
+
+/** Honour paymentStatus / null-PI predicates used by claim and associate helpers. */
+function paymentStatusAwareUpdateMany(state: Record<string, unknown>) {
+  return async ({
+    where,
+    data,
+  }: {
+    where?: {
+      paymentStatus?: PaymentStatus | { notIn?: PaymentStatus[] };
+      stripePaymentIntentId?: null | string;
+    };
+    data: Record<string, unknown>;
+  }) => {
+    const statusFilter = where?.paymentStatus;
+    if (typeof statusFilter === 'string' && state.paymentStatus !== statusFilter) {
+      return { count: 0 };
+    }
+    if (
+      statusFilter &&
+      typeof statusFilter === 'object' &&
+      Array.isArray(statusFilter.notIn) &&
+      statusFilter.notIn.includes(state.paymentStatus as PaymentStatus)
+    ) {
+      return { count: 0 };
+    }
+    if (
+      where &&
+      Object.prototype.hasOwnProperty.call(where, 'stripePaymentIntentId') &&
+      where.stripePaymentIntentId === null &&
+      state.stripePaymentIntentId
+    ) {
+      return { count: 0 };
+    }
+    Object.assign(state, data);
+    return { count: 1 };
   };
 }
 
@@ -936,6 +973,210 @@ describe('payment and commission reliability', () => {
 
     expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
     expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  describe('succeeded webhook claim-first (stale PENDING vs concurrent FAILED)', () => {
+    it('recovers to PAID when PENDING claim loses to a concurrent canceled failure', async () => {
+      const line = lineItem({ status: OrderStatus.CANCELLED });
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        status: OrderStatus.PROCESSING,
+        stripePaymentIntentId: 'pi_race',
+        items: [line],
+      });
+      let pendingClaimAttempts = 0;
+      prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+      prisma.order.updateMany.mockImplementation(
+        async ({
+          where,
+          data,
+        }: {
+          where?: { paymentStatus?: PaymentStatus };
+          data: Record<string, unknown>;
+        }) => {
+          if (where?.paymentStatus === PaymentStatus.PENDING) {
+            pendingClaimAttempts += 1;
+            // Concurrent fail won before the first claim attempt.
+            if (pendingClaimAttempts === 1) {
+              state.paymentStatus = PaymentStatus.FAILED;
+              state.status = OrderStatus.CANCELLED;
+              return { count: 0 };
+            }
+          }
+          return paymentStatusAwareUpdateMany(state)({ where, data });
+        },
+      );
+      prisma.orderItem.findMany.mockResolvedValue([line]);
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: 'p1',
+        stock: 4,
+        supplierId: 'sup-1',
+      });
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({ id: 'pi_race' }),
+      );
+
+      const result = await service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_race', metadata: { orderId: 'ord-1' } } },
+      });
+
+      expect(result).toMatchObject({ recovered: true });
+      expect(state.paymentStatus).toBe(PaymentStatus.PAID);
+      expect(prisma.product.updateMany).toHaveBeenCalled();
+      expect(commissions.createSnapshotsForOrder).toHaveBeenCalledTimes(1);
+      expect(onboarding.onOrderPlaced).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a lost PENDING claim with fresh PAID as duplicate', async () => {
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        stripePaymentIntentId: 'pi_1',
+      });
+      let claimTried = false;
+      prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+      prisma.order.updateMany.mockImplementation(async () => {
+        if (!claimTried) {
+          claimTried = true;
+          state.paymentStatus = PaymentStatus.PAID;
+          return { count: 0 };
+        }
+        return { count: 0 };
+      });
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent(),
+      );
+
+      const result = await service.handleStripeEvent({
+        type: 'payment_intent.succeeded',
+        livemode: false,
+        data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+      });
+
+      expect(result).toMatchObject({ duplicate: true });
+      expect(commissions.createSnapshotsForOrder).toHaveBeenCalledTimes(1);
+      expect(onboarding.onOrderPlaced).not.toHaveBeenCalled();
+      expect(prisma.product.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('ignores a lost PENDING claim when fresh state is REFUNDED', async () => {
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        stripePaymentIntentId: 'pi_1',
+      });
+      prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+      prisma.order.updateMany.mockImplementation(async () => {
+        state.paymentStatus = PaymentStatus.REFUNDED;
+        return { count: 0 };
+      });
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent(),
+      );
+
+      await expect(
+        service.handleStripeEvent({
+          type: 'payment_intent.succeeded',
+          livemode: false,
+          data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+        }),
+      ).resolves.toMatchObject({ ignored: true });
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+    });
+
+    it('NACKs when PENDING claim loses and fresh state remains PENDING', async () => {
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        stripePaymentIntentId: 'pi_1',
+      });
+      prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent(),
+      );
+
+      await expect(
+        service.handleStripeEvent({
+          type: 'payment_intent.succeeded',
+          livemode: false,
+          data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+        }),
+      ).rejects.toThrow(ServiceUnavailableException);
+      expect(state.paymentStatus).toBe(PaymentStatus.PENDING);
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when fresh bound PaymentIntent differs', async () => {
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        stripePaymentIntentId: 'pi_1',
+      });
+      prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+      prisma.order.updateMany.mockImplementation(async () => {
+        state.stripePaymentIntentId = 'pi_other';
+        state.paymentStatus = PaymentStatus.FAILED;
+        state.status = OrderStatus.CANCELLED;
+        return { count: 0 };
+      });
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({ id: 'pi_1' }),
+      );
+
+      await expect(
+        service.handleStripeEvent({
+          type: 'payment_intent.succeeded',
+          livemode: false,
+          data: { object: { id: 'pi_1', metadata: { orderId: 'ord-1' } } },
+        }),
+      ).resolves.toMatchObject({ ignored: true, reason: 'pi_mismatch' });
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+    });
+
+    it('NACKs when late recovery claim loses and order remains FAILED', async () => {
+      const line = lineItem({ status: OrderStatus.CANCELLED });
+      const state = orderShell({
+        paymentStatus: PaymentStatus.FAILED,
+        status: OrderStatus.CANCELLED,
+        stripePaymentIntentId: 'pi_late',
+        items: [line],
+      });
+      prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+      prisma.order.updateMany.mockImplementation(
+        async ({
+          where,
+          data,
+        }: {
+          where?: { paymentStatus?: PaymentStatus };
+          data: Record<string, unknown>;
+        }) => {
+          if (where?.paymentStatus === PaymentStatus.FAILED) {
+            return { count: 0 };
+          }
+          return paymentStatusAwareUpdateMany(state)({ where, data });
+        },
+      );
+      prisma.orderItem.findMany.mockResolvedValue([line]);
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: 'p1',
+        stock: 4,
+        supplierId: 'sup-1',
+      });
+      stripe.retrievePaymentIntentForWebhook.mockResolvedValue(
+        webhookPaymentIntent({ id: 'pi_late' }),
+      );
+
+      await expect(
+        service.handleStripeEvent({
+          type: 'payment_intent.succeeded',
+          livemode: false,
+          data: { object: { id: 'pi_late', metadata: { orderId: 'ord-1' } } },
+        }),
+      ).rejects.toThrow(/recovery incomplete|retry webhook/i);
+      expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+    });
   });
 
   it('binds a PaymentIntent id atomically when the order has none', async () => {
@@ -2370,10 +2611,7 @@ describe('payment and commission reliability', () => {
       Object.assign(state, data);
       return { ...state };
     });
-    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(state, data);
-      return { count: 1 };
-    });
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.product.updateMany.mockResolvedValue({ count: 0 });
 
@@ -2401,14 +2639,14 @@ describe('payment and commission reliability', () => {
 
   it('does not mark a late payment paid when re-reserve has already been marked unsellable', async () => {
     const line = lineItem({ status: OrderStatus.CANCELLED });
-    prisma.order.findUnique.mockResolvedValue(
-      orderShell({
-        paymentStatus: PaymentStatus.FAILED,
-        status: OrderStatus.CANCELLED,
-        stripePaymentIntentId: 'pi_late',
-        items: [line],
-      }),
-    );
+    const state = orderShell({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+      stripePaymentIntentId: 'pi_late',
+      items: [line],
+    });
+    prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.inventoryLedger.findUnique.mockResolvedValue({
       eventId: 'order-unsellable-ord-1',
     });
@@ -2436,10 +2674,7 @@ describe('payment and commission reliability', () => {
       items: [line],
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
-    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(state, data);
-      return { count: 1 };
-    });
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.product.updateMany.mockResolvedValue({ count: 1 });
@@ -2490,10 +2725,7 @@ describe('payment and commission reliability', () => {
       items: [line],
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
-    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(state, data);
-      return { count: 1 };
-    });
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.productVariant.updateMany.mockResolvedValue({ count: 1 });
@@ -2552,10 +2784,7 @@ describe('payment and commission reliability', () => {
       items: [line],
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
-    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(state, data);
-      return { count: 1 };
-    });
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.order.findUniqueOrThrow.mockImplementation(async () => ({ ...state }));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.inventoryLedger.findUnique.mockImplementation(
@@ -2597,10 +2826,7 @@ describe('payment and commission reliability', () => {
       Object.assign(state, data);
       return { ...state };
     });
-    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(state, data);
-      return { count: 1 };
-    });
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.productVariant.updateMany.mockResolvedValue({ count: 0 });
 
@@ -2698,6 +2924,7 @@ describe('payment and commission reliability', () => {
       items: [line],
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.product.updateMany.mockResolvedValue({ count: 0 });
     stripe.refundCardCharge.mockResolvedValueOnce({
@@ -2730,6 +2957,7 @@ describe('payment and commission reliability', () => {
       items: [line],
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.product.updateMany.mockResolvedValue({ count: 0 });
     stripe.refundCardCharge.mockResolvedValueOnce({
@@ -2757,6 +2985,7 @@ describe('payment and commission reliability', () => {
       items: [line],
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.product.updateMany.mockResolvedValue({ count: 0 });
     stripe.refundCardCharge.mockResolvedValueOnce({
@@ -2785,6 +3014,7 @@ describe('payment and commission reliability', () => {
       items: [line],
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.product.updateMany.mockResolvedValue({ count: 0 });
     stripe.refundCardCharge.mockResolvedValueOnce({
@@ -2812,10 +3042,7 @@ describe('payment and commission reliability', () => {
       items: [line],
     });
     prisma.order.findUnique.mockImplementation(async () => ({ ...state }));
-    prisma.order.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(state, data);
-      return { count: 1 };
-    });
+    prisma.order.updateMany.mockImplementation(paymentStatusAwareUpdateMany(state));
     prisma.orderItem.findMany.mockResolvedValue([line]);
     prisma.product.updateMany.mockResolvedValue({ count: 0 });
     stripe.refundCardCharge
