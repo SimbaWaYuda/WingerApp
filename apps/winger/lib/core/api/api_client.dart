@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -28,6 +29,20 @@ class ApiClient {
         'Missing Bearer token — sign out and sign in again with API credentials (not local demo mode).',
       );
     }
+  }
+
+  /// Clears authenticated UI state when the API rejects a Bearer token.
+  void _clearSessionIfUnauthorized(int statusCode) {
+    if (statusCode != 401) return;
+    final token = session.accessToken;
+    if (token == null || token.isEmpty) return;
+    unawaited(session.invalidateAuthSession());
+  }
+
+  Never _throwHttp(String fallback, http.Response response) {
+    _clearSessionIfUnauthorized(response.statusCode);
+    final body = _tryJson(response.body);
+    throw Exception(body?['message']?.toString() ?? fallback);
   }
 
   Future<bool> healthCheck() async {
@@ -275,6 +290,10 @@ class ApiClient {
       final response = await http
           .get(_uri('/auth/me'), headers: session.authHeaders)
           .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 401) {
+        _clearSessionIfUnauthorized(401);
+        return;
+      }
       if (response.statusCode != 200) return;
       final user = jsonDecode(response.body) as Map<String, dynamic>;
       session.applyProfile(
@@ -819,10 +838,7 @@ class ApiClient {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200 && response.statusCode != 201) {
-      final body = _tryJson(response.body);
-      throw Exception(
-        body?['message']?.toString() ?? 'Order failed (${response.statusCode})',
-      );
+      _throwHttp('Order failed (${response.statusCode})', response);
     }
 
     session.setApiOnline(true);
@@ -836,7 +852,7 @@ class ApiClient {
         .get(_uri('/orders'), headers: session.authHeaders)
         .timeout(const Duration(seconds: 5));
     if (response.statusCode != 200) {
-      throw Exception('Orders HTTP ${response.statusCode}');
+      _throwHttp('Orders HTTP ${response.statusCode}', response);
     }
     session.setApiOnline(true);
     final data = jsonDecode(response.body) as List<dynamic>;
@@ -1040,11 +1056,7 @@ class ApiClient {
         )
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
-      final body = _tryJson(response.body);
-      throw Exception(
-        body?['message']?.toString() ??
-            'Notifications HTTP ${response.statusCode}',
-      );
+      _throwHttp('Notifications HTTP ${response.statusCode}', response);
     }
     session.setApiOnline(true);
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -2199,10 +2211,17 @@ class ApiClient {
 
   Map<String, dynamic>? _tryJson(String body) {
     try {
-      return jsonDecode(body) as Map<String, dynamic>;
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      return null;
     } catch (_) {
       return null;
     }
+  }
+
+  /// Test/helper: apply the same 401 session-clearing behaviour as live calls.
+  void applyUnauthorizedForTest() {
+    _clearSessionIfUnauthorized(401);
   }
 
   Future<void> submitSupplierReview({

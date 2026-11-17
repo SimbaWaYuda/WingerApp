@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -332,7 +334,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       const SizedBox(height: 12),
                       FilledButton(
                         onPressed: () {
-                          context.read<AppSession>().signOut();
+                          unawaited(context.read<AppSession>().signOut());
                           context.go('/login');
                         },
                         child: Text(s.t('signInAgain')),

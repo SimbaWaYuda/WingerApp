@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../api/api_client.dart';
+import '../auth/login_credentials_store.dart';
 import '../models/models.dart';
 import '../offline/offline_database.dart';
 import '../repositories/cart_repository.dart';
@@ -354,22 +355,44 @@ class AppSession extends ChangeNotifier {
     authSignal.ping();
   }
 
-  void signOut() {
+  void _clearAuthMemory({required bool asGuest}) {
     role = null;
     accessToken = null;
     mustChangePassword = false;
     supplierId = null;
-    browsingAsGuest = false;
+    browsingAsGuest = asGuest;
     supplierApproved = null;
     resumeCheckoutAfterAuth = false;
     authPrompt = null;
-    phone = '';
-    city = 'Nairobi';
-    addressLine = 'Westlands';
-    compareIds.clear();
-    lastOrder = null;
+    if (!asGuest) {
+      phone = '';
+      city = 'Nairobi';
+      addressLine = 'Westlands';
+      compareIds.clear();
+      lastOrder = null;
+      displayName = '';
+    } else {
+      displayName = '';
+    }
+  }
+
+  /// Sign out: clear in-memory auth and authentication secrets.
+  /// Keeps remembered email/role only when Remember Me is still enabled.
+  Future<void> signOut() async {
+    _clearAuthMemory(asGuest: false);
     notifyListeners();
     authSignal.ping();
+    try {
+      await LoginCredentialsStore().clearSecretsPreservingRememberedIdentity();
+    } catch (_) {
+      // Local prefs are best-effort; memory session is already cleared.
+    }
+  }
+
+  /// Expired/invalid API session: drop authenticated UI state and scrub secrets.
+  /// Preserves Remember Me email/role preferences when enabled.
+  Future<void> invalidateAuthSession() async {
+    await signOut();
   }
 
   Future<void> addToCart(

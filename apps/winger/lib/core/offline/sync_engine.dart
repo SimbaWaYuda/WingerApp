@@ -101,6 +101,9 @@ class SyncEngine {
               .timeout(const Duration(seconds: 5));
 
           if (response.statusCode == 401 || response.statusCode == 403) {
+            if (response.statusCode == 401) {
+              await session.invalidateAuthSession();
+            }
             await db.updateSyncEvent(
               eventId: event.eventId,
               status: 'FAILED',

@@ -282,7 +282,7 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                       const SizedBox(height: 12),
                       FilledButton(
                         onPressed: () {
-                          context.read<AppSession>().signOut();
+                          unawaited(context.read<AppSession>().signOut());
                           context.go('/login');
                         },
                         child: Text(s.t('signInAgain')),
@@ -2635,7 +2635,7 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
               const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: () {
-                  context.read<AppSession>().signOut();
+                  unawaited(context.read<AppSession>().signOut());
                   context.go('/login');
                 },
                 icon: const Icon(Icons.login),

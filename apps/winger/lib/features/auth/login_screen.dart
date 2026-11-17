@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -22,8 +23,10 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   UserRole _role = UserRole.customer;
-  final _email = TextEditingController(text: 'amina.mwangi@example.com');
-  final _password = TextEditingController(text: 'demo1234');
+  final _email = TextEditingController(
+    text: kDebugMode ? 'amina.mwangi@example.com' : '',
+  );
+  final _password = TextEditingController();
   final _credentialsStore = LoginCredentialsStore();
   bool _rememberMe = false;
   bool _busy = false;
@@ -32,9 +35,10 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    // Do not block Continue while this runs — SharedPreferences can hang on web.
+    // Scrub legacy passwords before any restore can show/submit them.
+    // Do not block Continue — SharedPreferences can hang on web.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_restoreSavedLogin());
+      unawaited(_prepareLoginPreferences());
     });
   }
 
@@ -45,36 +49,52 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _restoreSavedLogin() async {
+  Future<void> _prepareLoginPreferences() async {
     try {
+      await _credentialsStore.scrubLegacySecrets().timeout(
+        const Duration(seconds: 2),
+      );
       final saved = await _credentialsStore.load().timeout(
         const Duration(seconds: 2),
       );
-      if (!mounted || saved == null) return;
+      if (!mounted) return;
+      if (saved == null) {
+        _password.clear();
+        return;
+      }
       setState(() {
         _rememberMe = true;
         _role = saved.role;
         _email.text = saved.email;
-        _password.text = saved.password;
+        _password.clear();
       });
     } catch (_) {
-      // Keep demo defaults if local storage is unavailable.
+      // Keep empty password if local storage is unavailable.
+      if (mounted) _password.clear();
     }
+  }
+
+  Future<void> _onRememberMeChanged(bool value) async {
+    setState(() => _rememberMe = value);
+    if (value) return;
+    try {
+      await _credentialsStore.clear().timeout(const Duration(seconds: 2));
+    } catch (_) {}
   }
 
   void _onRole(UserRole role) {
     setState(() {
       _role = role;
       _error = null;
-      // Keep a remembered account email; only fill demo emails for a fresh form.
-      if (!_rememberMe) {
+      // Keep a remembered account email; only suggest debug emails for a fresh form.
+      if (!_rememberMe && kDebugMode) {
         _email.text = switch (role) {
           UserRole.customer => 'amina.mwangi@example.com',
           UserRole.supplier => 'supplier@kijani.example',
           UserRole.admin => 'admin@winger.example',
         };
-        _password.text = 'demo1234';
       }
+      _password.clear();
     });
   }
 
@@ -87,18 +107,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final resumeCheckout =
         context.read<AppSession>().resumeCheckoutAfterAuth;
+    final password = _password.text;
     try {
       await api.login(
         email: _email.text.trim(),
-        password: _password.text,
+        password: password,
         role: _role,
       );
+      // Password is only held for the API call; clear the field after use.
+      _password.clear();
       try {
         if (_rememberMe) {
           await _credentialsStore
               .save(
                 email: _email.text.trim(),
-                password: _password.text,
                 role: _role,
               )
               .timeout(const Duration(seconds: 2));
@@ -157,7 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
       busy: _busy,
       error: _error,
       rememberMe: _rememberMe,
-      onRememberMe: (value) => setState(() => _rememberMe = value),
+      onRememberMe: (value) => unawaited(_onRememberMeChanged(value)),
       onRole: _onRole,
       onLocale: (code) => session.setLocale(code),
       localeCode: session.localeCode,
@@ -432,11 +454,14 @@ class _LoginForm extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
-            '${s.t('languageHint')}\n\nDemo password: demo1234\n'
-            'Customer: amina.mwangi@example.com\n'
-            'Supplier: supplier@kijani.example\n'
-            'Supplier (Savanna): supplier@savanna.example\n'
-            'Admin: admin@winger.example',
+            kDebugMode
+                ? '${s.t('languageHint')}\n\n'
+                    'Debug accounts (password not stored):\n'
+                    'Customer: amina.mwangi@example.com\n'
+                    'Supplier: supplier@kijani.example\n'
+                    'Supplier (Savanna): supplier@savanna.example\n'
+                    'Admin: admin@winger.example'
+                : s.t('languageHint'),
           ),
         ),
       ],

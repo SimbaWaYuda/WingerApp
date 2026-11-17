@@ -67,7 +67,7 @@ class RoleShell extends StatelessWidget {
           pendingSyncCount: session.pendingSyncCount,
           onLocale: () => _showLocaleSheet(context),
           onSignOut: () {
-            session.signOut();
+            unawaited(session.signOut());
             context.go('/login');
           },
         ),

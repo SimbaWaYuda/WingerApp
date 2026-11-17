@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../core/analytics/analytics.dart';
 import '../core/api/api_client.dart';
+import '../core/auth/login_credentials_store.dart';
 import '../core/l10n/winger_strings.dart';
 import '../core/offline/offline_database.dart';
 import '../core/offline/sync_engine.dart';
@@ -119,6 +120,8 @@ class _WingerAppState extends State<WingerApp> {
 
   Future<void> _bootstrap() async {
     try {
+      // Scrub legacy plaintext passwords before any UI can restore them.
+      await LoginCredentialsStore().scrubLegacySecrets();
       await _db.open();
       await _catalog.seedIfEmpty();
       await _session.load();

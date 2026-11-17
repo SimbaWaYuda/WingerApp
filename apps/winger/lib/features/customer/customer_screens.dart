@@ -5684,7 +5684,7 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
           leading: const Icon(Icons.logout),
           title: Text(s.t('signOut')),
           onTap: () {
-            session.signOut();
+            unawaited(session.signOut());
             context.go('/login');
           },
         ),

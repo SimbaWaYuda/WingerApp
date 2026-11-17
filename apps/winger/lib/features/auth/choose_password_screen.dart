@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -129,7 +131,7 @@ class _ChoosePasswordScreenState extends State<ChoosePasswordScreen> {
                   onPressed: _busy
                       ? null
                       : () {
-                          session.signOut();
+                          unawaited(session.signOut());
                           context.go('/login');
                         },
                   child: Text(s.t('signOut')),
