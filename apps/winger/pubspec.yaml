@@ -36,3 +36,23 @@ flutter:
   uses-material-design: true
   assets:
     - assets/branding/winger-logo.svg
+    - assets/fonts/licenses/
+  fonts:
+    - family: Fraunces
+      fonts:
+        - asset: assets/fonts/fraunces/Fraunces72ptSoft-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/fraunces/Fraunces72ptSoft-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/fraunces/Fraunces72ptSoft-Bold.ttf
+          weight: 700
+    - family: Source Sans 3
+      fonts:
+        - asset: assets/fonts/source_sans_3/SourceSans3-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/source_sans_3/SourceSans3-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/source_sans_3/SourceSans3-Semibold.ttf
+          weight: 600
+        - asset: assets/fonts/source_sans_3/SourceSans3-Bold.ttf
+          weight: 700

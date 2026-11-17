@@ -15,6 +15,7 @@ import '../../core/offline/sync_engine.dart';
 import '../../core/repositories/inventory_repository.dart';
 import '../../core/state/app_session.dart';
 import '../../core/theme/winger_colors.dart';
+import '../../core/theme/winger_tokens.dart';
 import '../../core/util/product_csv.dart';
 import '../../core/widgets/chip_scroll_row.dart';
 import '../../core/widgets/kpi_card.dart';
@@ -26,39 +27,90 @@ import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
 import 'commission_account_panel.dart';
 
+/// Full supplier destinations for wide/side navigation (all routes preserved).
 List<ShellDestination> supplierDestinations({int openReturns = 0}) => [
-  const ShellDestination(
-    labelKey: 'overview',
-    icon: Icons.dashboard_outlined,
-    path: '/supplier',
-  ),
-  const ShellDestination(
-    labelKey: 'orders',
-    icon: Icons.receipt_long_outlined,
-    path: '/supplier/orders',
-  ),
-  ShellDestination(
-    labelKey: 'returns',
-    icon: Icons.assignment_return_outlined,
-    path: '/supplier/returns',
-    badgeCount: openReturns,
-  ),
-  const ShellDestination(
-    labelKey: 'products',
-    icon: Icons.inventory_2_outlined,
-    path: '/supplier/products',
-  ),
-  const ShellDestination(
-    labelKey: 'deliveryFees',
-    icon: Icons.local_shipping_outlined,
-    path: '/supplier/delivery',
-  ),
-  const ShellDestination(
-    labelKey: 'payments',
-    icon: Icons.payments_outlined,
-    path: '/supplier/payments',
-  ),
-];
+      const ShellDestination(
+        labelKey: 'overview',
+        icon: Icons.dashboard_outlined,
+        path: '/supplier',
+      ),
+      const ShellDestination(
+        labelKey: 'orders',
+        icon: Icons.receipt_long_outlined,
+        path: '/supplier/orders',
+      ),
+      const ShellDestination(
+        labelKey: 'catalogue',
+        icon: Icons.inventory_2_outlined,
+        path: '/supplier/products',
+      ),
+      ShellDestination(
+        labelKey: 'returns',
+        icon: Icons.assignment_return_outlined,
+        path: '/supplier/returns',
+        badgeCount: openReturns,
+      ),
+      const ShellDestination(
+        labelKey: 'deliveryFees',
+        icon: Icons.local_shipping_outlined,
+        path: '/supplier/delivery',
+      ),
+      const ShellDestination(
+        labelKey: 'payments',
+        icon: Icons.payments_outlined,
+        path: '/supplier/payments',
+      ),
+    ];
+
+/// Compact supplier destinations: Overview, Orders, Catalogue, More.
+List<ShellDestination> supplierMobileDestinations({int openReturns = 0}) => [
+      const ShellDestination(
+        labelKey: 'overview',
+        icon: Icons.dashboard_outlined,
+        path: '/supplier',
+      ),
+      const ShellDestination(
+        labelKey: 'orders',
+        icon: Icons.receipt_long_outlined,
+        path: '/supplier/orders',
+      ),
+      const ShellDestination(
+        labelKey: 'catalogue',
+        icon: Icons.inventory_2_outlined,
+        path: '/supplier/products',
+      ),
+      ShellDestination(
+        labelKey: 'more',
+        icon: Icons.more_horiz,
+        path: '/supplier/more',
+        badgeCount: openReturns,
+        alsoMatchingPrefixes: const [
+          '/supplier/returns',
+          '/supplier/delivery',
+          '/supplier/payments',
+        ],
+      ),
+    ];
+
+/// Links shown on the supplier More screen (existing routes only).
+List<ShellDestination> supplierMoreMenuDestinations({int openReturns = 0}) => [
+      const ShellDestination(
+        labelKey: 'payments',
+        icon: Icons.payments_outlined,
+        path: '/supplier/payments',
+      ),
+      const ShellDestination(
+        labelKey: 'deliveryFees',
+        icon: Icons.local_shipping_outlined,
+        path: '/supplier/delivery',
+      ),
+      ShellDestination(
+        labelKey: 'returns',
+        icon: Icons.assignment_return_outlined,
+        path: '/supplier/returns',
+        badgeCount: openReturns,
+      ),
+    ];
 
 class SupplierShell extends StatefulWidget {
   const SupplierShell({super.key, required this.child});
@@ -124,19 +176,113 @@ class _SupplierShellState extends State<SupplierShell> {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
     final pending = session.supplierApproved == false;
+    final pendingDestinations = const [
+      ShellDestination(
+        labelKey: 'supplierPendingNav',
+        icon: Icons.hourglass_top,
+        path: '/supplier/onboarding',
+      ),
+    ];
     return RoleShell(
       title: s.t('dashboard'),
-      roleLabel: 'Supplier',
+      roleLabel: s.t('supplier'),
+      layoutKind: ShellLayoutKind.operations,
       destinations: pending
-          ? const [
-              ShellDestination(
-                labelKey: 'supplierPendingNav',
-                icon: Icons.hourglass_top,
-                path: '/supplier/onboarding',
-              ),
-            ]
+          ? pendingDestinations
           : supplierDestinations(openReturns: _openReturns),
+      mobileDestinations: pending
+          ? pendingDestinations
+          : supplierMobileDestinations(openReturns: _openReturns),
       child: widget.child,
+    );
+  }
+}
+
+class SupplierMoreScreen extends StatelessWidget {
+  const SupplierMoreScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    final items = supplierMoreMenuDestinations();
+    return ListView(
+      padding: const EdgeInsets.all(WingerSpacing.s16),
+      children: [
+        Text(s.t('more'), style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: WingerSpacing.s8),
+        Text(
+          s.t('moreMenuHint'),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: WingerColors.inkMuted,
+              ),
+        ),
+        const SizedBox(height: WingerSpacing.s16),
+        for (final item in items)
+          ListTile(
+            leading: item.badgeCount > 0
+                ? Badge(
+                    label: Text('${item.badgeCount}'),
+                    child: Icon(item.icon),
+                  )
+                : Icon(item.icon),
+            title: Text(s.t(item.labelKey)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.go(item.path),
+          ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.person_outline),
+          title: Text(s.t('account')),
+          subtitle: Text(
+            session.displayName.isEmpty ? session.email : session.displayName,
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.language),
+          title: Text(s.languageLabel),
+          onTap: () async {
+            await showModalBottomSheet<void>(
+              context: context,
+              builder: (ctx) {
+                return SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final code in LocaleCode.values)
+                        ListTile(
+                          title: Text(switch (code) {
+                            LocaleCode.en => 'English',
+                            LocaleCode.es => 'Español',
+                            LocaleCode.sw => 'Kiswahili',
+                          }),
+                          trailing: session.localeCode == code
+                              ? const Icon(
+                                  Icons.check,
+                                  color: WingerColors.brandPrimary,
+                                )
+                              : null,
+                          onTap: () async {
+                            await session.setLocale(code);
+                            if (ctx.mounted) Navigator.pop(ctx);
+                          },
+                        ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        ),
+        ListTile(
+          leading: const Icon(Icons.logout),
+          title: Text(s.t('signOut')),
+          onTap: () {
+            unawaited(session.signOut());
+            context.go('/login');
+          },
+        ),
+      ],
     );
   }
 }

@@ -1,10 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/winger_strings.dart';
 import '../models/models.dart';
 import '../state/app_session.dart';
 import '../theme/winger_colors.dart';
+import '../theme/winger_tokens.dart';
 import 'product_photo.dart';
 
 /// How many catalogue cards fit across the space the grid actually has.
@@ -15,20 +18,20 @@ int productGridColumns(double maxWidth) {
   return 2;
 }
 
-/// Card height for a given column width: photo plus the text, swatches, and size row.
+/// Card height: 4:5 photo plus compact title/price/meta block.
 double productCardHeight(double cardWidth) {
-  final imageHeight = cardWidth / 1.35;
-  // Brand, name, supplier, colour dots, size chips, rating, and price.
-  return imageHeight + 220;
+  final imageHeight = cardWidth / WingerLayout.productImageAspectRatio;
+  return imageHeight + 148;
 }
 
 SliverGridDelegate productGridDelegate(double maxWidth) {
   final columns = productGridColumns(maxWidth);
-  final cardWidth = (maxWidth - 12 * (columns - 1)) / columns;
+  final gap = WingerSpacing.s12;
+  final cardWidth = (maxWidth - gap * (columns - 1)) / columns;
   return SliverGridDelegateWithFixedCrossAxisCount(
     crossAxisCount: columns,
-    mainAxisSpacing: 12,
-    crossAxisSpacing: 12,
+    mainAxisSpacing: gap,
+    crossAxisSpacing: gap,
     childAspectRatio: cardWidth / productCardHeight(cardWidth),
   );
 }
@@ -75,6 +78,17 @@ Color catalogSwatchColor(String name, {String? hex}) {
   };
 }
 
+bool productCardSupportsHover() {
+  if (kIsWeb) return true;
+  return switch (defaultTargetPlatform) {
+    TargetPlatform.windows ||
+    TargetPlatform.linux ||
+    TargetPlatform.macOS =>
+      true,
+    _ => false,
+  };
+}
+
 typedef ProductOptionAction = void Function({
   String? variantId,
   String? color,
@@ -108,6 +122,8 @@ class ProductCard extends StatefulWidget {
 class _ProductCardState extends State<ProductCard> {
   String? _color;
   String? _size;
+  bool _hovered = false;
+  bool _focused = false;
 
   @override
   void initState() {
@@ -146,34 +162,10 @@ class _ProductCardState extends State<ProductCard> {
     return sizes.first;
   }
 
-  String? _hexFor(String color) {
-    for (final row in widget.product.enabledVariants) {
-      if (row.color.trim().toLowerCase() != color.trim().toLowerCase()) {
-        continue;
-      }
-      final hex = (row.colorHex ?? '').trim();
-      if (hex.isNotEmpty) return hex;
-    }
-    return null;
-  }
-
   String _photoUrl() {
     final urls = widget.product.galleryUrlsForColor(_color);
     if (urls.isNotEmpty) return urls.first;
     return widget.product.imageUrl;
-  }
-
-  void _chooseColor(String color) {
-    setState(() {
-      _color = color;
-      final sizes = widget.product.selectableSizes;
-      final current = _size;
-      final stillFits =
-          current != null &&
-          (!widget.product.hasVariants ||
-              widget.product.variantFor(color: color, size: current) != null);
-      _size = stillFits ? current : _firstSizeFor(color, sizes);
-    });
   }
 
   void _emit(ProductOptionAction action) {
@@ -190,388 +182,291 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
+  String _stockLabel(WingerStrings s, Product product) {
+    switch (product.stockStatus) {
+      case StockStatus.outOfStock:
+        return s.t('outOfStock');
+      case StockStatus.lowStock:
+        return s.t('lowStock');
+      case StockStatus.inStock:
+        return s.t('inStock');
+    }
+  }
+
+  bool get _showQuickAdd {
+    if (widget.onAddToCart == null) return false;
+    if (widget.product.stockStatus == StockStatus.outOfStock) return false;
+    if (!productCardSupportsHover()) return false;
+    return _hovered || _focused;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
     final product = widget.product;
     final hasPromo =
         product.previousPrice != null && product.previousPrice! > product.price;
-    final colors = product.selectableColors;
-    final sizes = product.selectableSizes;
+    final showRating = product.rating > 0;
+    final radius = BorderRadius.circular(WingerRadius.card);
 
-    return InkWell(
-      onTap: () => _emit(widget.onTap),
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: WingerColors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: WingerColors.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Stack(
+    return FocusableActionDetector(
+      onShowFocusHighlight: (focused) => setState(() => _focused = focused),
+      child: MouseRegion(
+        onEnter: productCardSupportsHover()
+            ? (_) => setState(() => _hovered = true)
+            : null,
+        onExit: productCardSupportsHover()
+            ? (_) => setState(() => _hovered = false)
+            : null,
+        child: Material(
+          color: WingerColors.bgSurface,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: radius,
+            side: BorderSide(color: WingerColors.borderSubtle),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _emit(widget.onTap),
+            borderRadius: radius,
+            focusColor: WingerColors.focusRing.withValues(alpha: 0.08),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(16),
-                  ),
-                  child: AspectRatio(
-                    aspectRatio: 1.35,
-                    child: ProductPhoto(url: _photoUrl()),
-                  ),
-                ),
-                if (widget.onWishlist != null)
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: Material(
-                      color: Colors.white.withValues(alpha: 0.92),
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        constraints: const BoxConstraints.tightFor(
-                          width: 32,
-                          height: 32,
-                        ),
-                        padding: EdgeInsets.zero,
-                        onPressed: widget.onWishlist,
-                        icon: Icon(
-                          widget.wishlisted
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          color: widget.wishlisted
-                              ? WingerColors.dangerInk
-                              : WingerColors.muted,
-                          size: 18,
-                        ),
+                Stack(
+                  children: [
+                    AspectRatio(
+                      aspectRatio: WingerLayout.productImageAspectRatio,
+                      child: ProductPhoto(
+                        url: _photoUrl(),
+                        semanticLabel: product.name,
                       ),
                     ),
-                  ),
-                if (hasPromo)
-                  Positioned(
-                    top: 8,
-                    left: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: WingerColors.attention,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'Sale',
-                        style: TextStyle(
-                          color: WingerColors.attentionInk,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (colors.isNotEmpty) ...[
-                    SizedBox(
-                      height: 28,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: colors.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 6),
-                        itemBuilder: (context, index) {
-                          final color = colors[index];
-                          return _ColorDot(
-                            color: catalogSwatchColor(
-                              color,
-                              hex: _hexFor(color),
-                            ),
-                            selected:
-                                color.trim().toLowerCase() ==
-                                (_color ?? '').trim().toLowerCase(),
-                            label: color,
-                            onTap: () => _chooseColor(color),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                  ],
-                  Text(
-                    product.brand,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: WingerColors.muted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    product.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      height: 1.15,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          product.supplierName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: WingerColors.muted,
-                          ),
-                        ),
-                      ),
-                      if (product.supplierVerified) ...[
-                        const SizedBox(width: 2),
-                        const Icon(
-                          Icons.verified,
-                          size: 12,
-                          color: WingerColors.brand,
-                        ),
-                      ],
-                    ],
-                  ),
-                  if (sizes.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    SizedBox(
-                      height: 26,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: sizes.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 6),
-                        itemBuilder: (context, index) {
-                          final size = sizes[index];
-                          final selected =
-                              size.trim().toLowerCase() ==
-                              (_size ?? '').trim().toLowerCase();
-                          return _SizeChip(
-                            label: size,
-                            selected: selected,
-                            onTap: () => setState(() => _size = size),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.star_rounded,
-                        size: 14,
-                        color: Color(0xFFE0A800),
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        product.rating.toStringAsFixed(1),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          _stockLabel(product),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: product.stockStatus == StockStatus.outOfStock
-                                ? WingerColors.dangerInk
-                                : WingerColors.successInk,
-                          ),
-                        ),
-                      ),
-                      if (widget.onCompare != null)
-                        SizedBox(
-                          width: 28,
-                          height: 28,
+                    if (widget.onWishlist != null)
+                      Positioned(
+                        top: WingerSpacing.s8,
+                        right: WingerSpacing.s8,
+                        child: Material(
+                          color: WingerColors.bgSurface.withValues(alpha: 0.94),
+                          shape: const CircleBorder(),
                           child: IconButton(
+                            tooltip: s.t('wishlist'),
+                            constraints: const BoxConstraints.tightFor(
+                              width: 40,
+                              height: 40,
+                            ),
                             padding: EdgeInsets.zero,
-                            onPressed: widget.onCompare,
+                            onPressed: widget.onWishlist,
                             icon: Icon(
-                              Icons.compare_arrows,
-                              size: 18,
-                              color: widget.compareSelected
-                                  ? WingerColors.brand
-                                  : WingerColors.muted,
+                              widget.wishlisted
+                                  ? Icons.favorite
+                                  : Icons.favorite_border,
+                              color: widget.wishlisted
+                                  ? WingerColors.dangerInk
+                                  : WingerColors.inkMuted,
+                              size: 20,
                             ),
                           ),
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(
-                                text: context.watch<AppSession>().formatMoney(
-                                  product.price,
+                      ),
+                    if (hasPromo)
+                      Positioned(
+                        top: WingerSpacing.s8,
+                        left: WingerSpacing.s8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: WingerColors.attention,
+                            borderRadius: BorderRadius.circular(WingerRadius.chip),
+                          ),
+                          child: Text(
+                            s.t('onSale'),
+                            style: TextStyle(
+                              color: WingerColors.attentionInk,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (_showQuickAdd)
+                      Positioned(
+                        left: WingerSpacing.s8,
+                        right: WingerSpacing.s8,
+                        bottom: WingerSpacing.s8,
+                        child: FilledButton.icon(
+                          onPressed: () => _emit(widget.onAddToCart!),
+                          icon: const Icon(Icons.add_shopping_cart_outlined, size: 18),
+                          label: Text(s.t('addToCart')),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(64, 40),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                WingerRadius.control,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      WingerSpacing.s12,
+                      WingerSpacing.s8,
+                      WingerSpacing.s12,
+                      WingerSpacing.s12,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (product.brand.trim().isNotEmpty)
+                          Text(
+                            product.brand,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                        Text(
+                          product.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                height: 1.2,
+                                color: WingerColors.inkStrong,
+                              ),
+                        ),
+                        const Spacer(),
+                        Row(
+                          children: [
+                            if (showRating) ...[
+                              const Icon(
+                                Icons.star_rounded,
+                                size: 16,
+                                color: Color(0xFFE0A800),
+                              ),
+                              const SizedBox(width: 2),
+                              Text(
+                                product.rating.toStringAsFixed(1),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: WingerColors.inkDefault,
+                                    ),
+                              ),
+                              const SizedBox(width: WingerSpacing.s8),
+                            ],
+                            Flexible(
+                              child: Text(
+                                _stockLabel(s, product),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: product.stockStatus ==
+                                              StockStatus.outOfStock
+                                          ? WingerColors.dangerInk
+                                          : product.stockStatus ==
+                                                  StockStatus.lowStock
+                                              ? WingerColors.attentionInk
+                                              : WingerColors.successInk,
+                                    ),
+                              ),
+                            ),
+                            if (widget.onCompare != null)
+                              IconButton(
+                                tooltip: s.t('compare'),
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 36,
+                                  height: 36,
                                 ),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 14,
-                                  color: WingerColors.brand,
+                                padding: EdgeInsets.zero,
+                                onPressed: widget.onCompare,
+                                icon: Icon(
+                                  Icons.compare_arrows,
+                                  size: 18,
+                                  color: widget.compareSelected
+                                      ? WingerColors.brandPrimary
+                                      : WingerColors.inkMuted,
                                 ),
                               ),
-                              if (hasPromo)
+                          ],
+                        ),
+                        const SizedBox(height: WingerSpacing.s4),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: Text.rich(
                                 TextSpan(
-                                  text:
-                                      ' ${context.read<AppSession>().formatMoney(product.previousPrice!)}',
-                                  style: const TextStyle(
-                                    decoration: TextDecoration.lineThrough,
-                                    color: WingerColors.muted,
-                                    fontSize: 11,
-                                  ),
+                                  children: [
+                                    TextSpan(
+                                      text: session.formatMoney(product.price),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            color: WingerColors.brandPrimary,
+                                            height: 1.1,
+                                          ),
+                                    ),
+                                    if (hasPromo)
+                                      TextSpan(
+                                        text:
+                                            ' ${session.formatMoney(product.previousPrice!)}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                              decoration:
+                                                  TextDecoration.lineThrough,
+                                              color: WingerColors.inkMuted,
+                                            ),
+                                      ),
+                                  ],
                                 ),
-                            ],
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (widget.onAddToCart != null)
-                        SizedBox(
-                          width: 30,
-                          height: 30,
-                          child: IconButton(
-                            padding: EdgeInsets.zero,
-                            onPressed:
-                                product.stockStatus == StockStatus.outOfStock
-                                ? null
-                                : () => _emit(widget.onAddToCart!),
-                            icon: const Icon(
-                              Icons.add_shopping_cart_outlined,
-                              size: 18,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                            color: WingerColors.brand,
-                          ),
+                            if (widget.onAddToCart != null &&
+                                !productCardSupportsHover())
+                              IconButton(
+                                tooltip: s.t('addToCart'),
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 40,
+                                  height: 40,
+                                ),
+                                padding: EdgeInsets.zero,
+                                onPressed:
+                                    product.stockStatus == StockStatus.outOfStock
+                                        ? null
+                                        : () => _emit(widget.onAddToCart!),
+                                icon: const Icon(
+                                  Icons.add_shopping_cart_outlined,
+                                  size: 20,
+                                ),
+                                color: WingerColors.brandPrimary,
+                              ),
+                          ],
                         ),
-                    ],
+                      ],
+                    ),
                   ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _stockLabel(Product product) {
-    switch (product.stockStatus) {
-      case StockStatus.outOfStock:
-        return 'Out';
-      case StockStatus.lowStock:
-        return 'Low';
-      case StockStatus.inStock:
-        return 'In stock';
-    }
-  }
-}
-
-class _ColorDot extends StatelessWidget {
-  const _ColorDot({
-    required this.color,
-    required this.selected,
-    required this.label,
-    required this.onTap,
-  });
-
-  final Color color;
-  final bool selected;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: label,
-      child: Material(
-        type: MaterialType.transparency,
-        child: InkWell(
-          onTap: onTap,
-          customBorder: const CircleBorder(),
-          child: Container(
-            width: 26,
-            height: 26,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: selected ? WingerColors.ink : Colors.transparent,
-                width: 1.6,
-              ),
-            ),
-            child: Container(
-              width: 16,
-              height: 16,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: color,
-                border: Border.all(color: const Color(0xFFD0D0D0)),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SizeChip extends StatelessWidget {
-  const _SizeChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? WingerColors.brand : WingerColors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(
-          color: selected ? WingerColors.brand : WingerColors.border,
-        ),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: selected ? Colors.white : WingerColors.ink,
+                ),
+              ],
             ),
           ),
         ),

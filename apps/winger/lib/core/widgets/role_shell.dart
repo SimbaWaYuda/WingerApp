@@ -1,13 +1,26 @@
 import 'dart:async';
-import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../api/api_client.dart';
 import '../l10n/winger_strings.dart';
 import '../state/app_session.dart';
 import '../theme/winger_colors.dart';
+import '../theme/winger_tokens.dart';
+import 'winger_logo.dart';
+
+/// How the shell should compose chrome on wide layouts.
+enum ShellLayoutKind {
+  /// Customer marketplace — top nav on web, side nav on native desktop.
+  customerMarketplace,
+
+  /// Supplier/admin operations — side nav when wide.
+  operations,
+}
 
 class ShellDestination {
   const ShellDestination({
@@ -15,12 +28,55 @@ class ShellDestination {
     required this.icon,
     required this.path,
     this.badgeCount = 0,
+    this.alsoMatchingPrefixes = const [],
   });
 
   final String labelKey;
   final IconData icon;
   final String path;
   final int badgeCount;
+
+  /// Extra path prefixes that keep this destination selected.
+  final List<String> alsoMatchingPrefixes;
+}
+
+/// Longest-prefix destination selection (exported for tests).
+int selectedShellDestinationIndex(
+  String location,
+  List<ShellDestination> destinations,
+) {
+  var index = 0;
+  var bestLen = -1;
+  for (var i = 0; i < destinations.length; i++) {
+    final paths = <String>[
+      destinations[i].path,
+      ...destinations[i].alsoMatchingPrefixes,
+    ];
+    for (final path in paths) {
+      final match = location == path || location.startsWith('$path/');
+      if (match && path.length > bestLen) {
+        bestLen = path.length;
+        index = i;
+      }
+    }
+  }
+  return index;
+}
+
+/// Resolves bottom / side / marketplace-top chrome (exported for tests).
+enum ShellChrome { bottom, side, marketplaceTop }
+
+ShellChrome resolveShellChrome({
+  required double width,
+  required ShellLayoutKind layoutKind,
+}) {
+  if (!WingerBreakpoints.isWideShell(width)) {
+    return ShellChrome.bottom;
+  }
+  if (layoutKind == ShellLayoutKind.customerMarketplace && kIsWeb) {
+    return ShellChrome.marketplaceTop;
+  }
+  return ShellChrome.side;
 }
 
 class RoleShell extends StatelessWidget {
@@ -31,32 +87,63 @@ class RoleShell extends StatelessWidget {
     required this.destinations,
     required this.child,
     this.bottomBar,
+    this.layoutKind = ShellLayoutKind.operations,
+    this.mobileDestinations,
+    this.showMarketplaceCategories = false,
   });
 
   final String title;
   final String roleLabel;
   final List<ShellDestination> destinations;
+
+  /// Optional compact-only destinations (e.g. supplier More grouping).
+  /// When null, [destinations] is used for every chrome mode.
+  final List<ShellDestination>? mobileDestinations;
   final Widget child;
-  /// Reserved bottom slot (not an overlay) so page actions stay visible.
   final Widget? bottomBar;
+  final ShellLayoutKind layoutKind;
+  final bool showMarketplaceCategories;
+
+  List<ShellDestination> _destinationsFor(ShellChrome chrome) {
+    if (chrome == ShellChrome.bottom && mobileDestinations != null) {
+      return mobileDestinations!;
+    }
+    return destinations;
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
+    final width = MediaQuery.sizeOf(context).width;
+    final chrome = resolveShellChrome(width: width, layoutKind: layoutKind);
+    final navDestinations = _destinationsFor(chrome);
     final location = GoRouterState.of(context).uri.path;
-    final wide = MediaQuery.sizeOf(context).width >= 980;
-    // Prefer the longest matching path so /supplier/products does not
-    // highlight Overview (/supplier).
-    var index = 0;
-    var bestLen = -1;
-    for (var i = 0; i < destinations.length; i++) {
-      final path = destinations[i].path;
-      final match = location == path || location.startsWith('$path/');
-      if (match && path.length > bestLen) {
-        bestLen = path.length;
-        index = i;
-      }
+    final index = selectedShellDestinationIndex(location, navDestinations)
+        .clamp(0, navDestinations.isEmpty ? 0 : navDestinations.length - 1);
+
+    Future<void> showLocale() => _showLocaleSheet(context);
+
+    if (chrome == ShellChrome.marketplaceTop) {
+      return Scaffold(
+        body: Column(
+          children: [
+            _MarketplaceTopBar(
+              apiOnline: session.apiOnline,
+              pendingSyncCount: session.pendingSyncCount,
+              cartCount: session.cartCount,
+              onLocale: showLocale,
+              onSignOut: () {
+                unawaited(session.signOut());
+                context.go('/login');
+              },
+              showCategories: showMarketplaceCategories,
+            ),
+            Expanded(child: child),
+            if (bottomBar != null) bottomBar!,
+          ],
+        ),
+      );
     }
 
     final content = Column(
@@ -65,31 +152,34 @@ class RoleShell extends StatelessWidget {
           title: title,
           apiOnline: session.apiOnline,
           pendingSyncCount: session.pendingSyncCount,
-          onLocale: () => _showLocaleSheet(context),
+          onLocale: showLocale,
           onSignOut: () {
             unawaited(session.signOut());
             context.go('/login');
           },
+          showMenu: chrome == ShellChrome.bottom && navDestinations.length > 5,
+          destinations: navDestinations,
+          selectedIndex: index,
         ),
         Expanded(child: child),
-        // Wide layout has no bottom nav — reserve space in the column.
-        if (wide && bottomBar != null) bottomBar!,
+        if (chrome == ShellChrome.side && bottomBar != null) bottomBar!,
       ],
     );
 
-    if (wide) {
+    if (chrome == ShellChrome.side) {
       return Scaffold(
         body: Row(
           children: [
             _SideNav(
               roleLabel: roleLabel,
-              destinations: destinations,
+              destinations: navDestinations,
               selectedIndex: index,
               userName: session.browsingAsGuest
                   ? s.t('guestShopper')
                   : session.displayName,
               languageLabel: s.languageLabel,
-              onSelect: (i) => context.go(destinations[i].path),
+              onSelect: (i) => context.go(navDestinations[i].path),
+              onLocale: showLocale,
             ),
             Expanded(child: content),
           ],
@@ -103,50 +193,51 @@ class RoleShell extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (bottomBar != null) bottomBar!,
-          _PhoneBottomNav(
-            destinations: destinations,
-            selectedIndex: index.clamp(0, destinations.length - 1),
-            onSelect: (i) => context.go(destinations[i].path),
-          ),
+          if (navDestinations.length <= 5)
+            _FixedBottomNav(
+              destinations: navDestinations,
+              selectedIndex: index,
+              onSelect: (i) => context.go(navDestinations[i].path),
+            ),
         ],
       ),
     );
   }
-
-  Future<void> _showLocaleSheet(BuildContext context) async {
-    final session = context.read<AppSession>();
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final code in LocaleCode.values)
-                ListTile(
-                  title: Text(switch (code) {
-                    LocaleCode.en => 'English',
-                    LocaleCode.es => 'Español',
-                    LocaleCode.sw => 'Kiswahili',
-                  }),
-                  trailing: session.localeCode == code
-                      ? const Icon(Icons.check, color: WingerColors.brand)
-                      : null,
-                  onTap: () async {
-                    await session.setLocale(code);
-                    if (ctx.mounted) Navigator.pop(ctx);
-                  },
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 }
 
-class _PhoneBottomNav extends StatefulWidget {
-  const _PhoneBottomNav({
+Future<void> _showLocaleSheet(BuildContext context) async {
+  final session = context.read<AppSession>();
+  await showModalBottomSheet<void>(
+    context: context,
+    builder: (ctx) {
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final code in LocaleCode.values)
+              ListTile(
+                title: Text(switch (code) {
+                  LocaleCode.en => 'English',
+                  LocaleCode.es => 'Español',
+                  LocaleCode.sw => 'Kiswahili',
+                }),
+                trailing: session.localeCode == code
+                    ? const Icon(Icons.check, color: WingerColors.brandPrimary)
+                    : null,
+                onTap: () async {
+                  await session.setLocale(code);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+              ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+class _FixedBottomNav extends StatelessWidget {
+  const _FixedBottomNav({
     required this.destinations,
     required this.selectedIndex,
     required this.onSelect,
@@ -157,200 +248,271 @@ class _PhoneBottomNav extends StatefulWidget {
   final ValueChanged<int> onSelect;
 
   @override
-  State<_PhoneBottomNav> createState() => _PhoneBottomNavState();
-}
-
-class _PhoneBottomNavState extends State<_PhoneBottomNav> {
-  final _scroll = ScrollController();
-  bool _canLeft = false;
-  bool _canRight = false;
-  List<double> _widths = const [];
-
-  @override
-  void initState() {
-    super.initState();
-    _scroll.addListener(_sync);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _sync();
-      _revealSelected();
-    });
-  }
-
-  @override
-  void didUpdateWidget(covariant _PhoneBottomNav oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedIndex != widget.selectedIndex ||
-        oldWidget.destinations.length != widget.destinations.length) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _revealSelected());
-    }
-  }
-
-  @override
-  void dispose() {
-    _scroll.removeListener(_sync);
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  void _sync() {
-    if (!mounted || !_scroll.hasClients) return;
-    final pos = _scroll.position;
-    final left = pos.pixels > 4;
-    final right = pos.maxScrollExtent > 4 && pos.pixels < pos.maxScrollExtent - 4;
-    if (left != _canLeft || right != _canRight) {
-      setState(() {
-        _canLeft = left;
-        _canRight = right;
-      });
-    }
-  }
-
-  void _revealSelected() {
-    if (!_scroll.hasClients || _widths.isEmpty) return;
-    final index = widget.selectedIndex.clamp(0, _widths.length - 1);
-    var start = 0.0;
-    for (var i = 0; i < index; i++) {
-      start += _widths[i];
-    }
-    final item = _widths[index];
-    final view = _scroll.position.viewportDimension;
-    final lead = _scroll.offset;
-    if (start >= lead && start + item <= lead + view) return;
-    final target = (start - (view - item) / 2).clamp(0.0, _scroll.position.maxScrollExtent);
-    _scroll.animateTo(
-      target,
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
-  Future<void> _move(double delta) async {
-    if (!_scroll.hasClients) return;
-    final target = (_scroll.offset + delta).clamp(0.0, _scroll.position.maxScrollExtent);
-    await _scroll.animateTo(
-      target,
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeOutCubic,
-    );
-    _sync();
-  }
-
-  List<double> _measure(BuildContext context) {
-    final s = WingerStrings.of(context);
-    final style = Theme.of(context).textTheme.labelMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-          fontSize: 12,
-        );
-    return [
-      for (final destination in widget.destinations)
-        math.max(
-          72,
-          _labelWidth(s.t(destination.labelKey), style, Directionality.of(context)) + 28,
-        ),
-    ];
-  }
-
-  double _labelWidth(String label, TextStyle? style, TextDirection direction) {
-    final painter = TextPainter(
-      text: TextSpan(text: label, style: style),
-      maxLines: 1,
-      textDirection: direction,
-    )..layout();
-    return painter.width;
-  }
-
-  Widget _arrow(IconData icon, bool enabled) {
-    return IconButton(
-      visualDensity: VisualDensity.compact,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
-      onPressed: enabled ? () => unawaited(_move(icon == Icons.chevron_left ? -160 : 160)) : null,
-      icon: Icon(
-        icon,
-        size: 22,
-        color: enabled ? WingerColors.brand : WingerColors.muted,
-      ),
-    );
-  }
-
-  Widget _item(BuildContext context, int index) {
-    final s = WingerStrings.of(context);
-    final destination = widget.destinations[index];
-    final selected = index == widget.selectedIndex;
-    final color = selected ? WingerColors.brand : WingerColors.muted;
-    final icon = Icon(destination.icon, color: color);
-    return InkWell(
-      onTap: () => widget.onSelect(index),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            decoration: BoxDecoration(
-              color: selected ? WingerColors.brandMuted : Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: destination.badgeCount > 0
-                ? Badge(label: Text('${destination.badgeCount}'), child: icon)
-                : icon,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            s.t(destination.labelKey),
-            maxLines: 1,
-            softWrap: false,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
     return Material(
-      color: WingerColors.white,
+      color: WingerColors.bgElevated,
+      elevation: WingerElevation.materialLevel1,
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 72,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final widths = _measure(context);
-              _widths = widths;
-              final total = widths.fold<double>(0, (sum, width) => sum + width);
-              final scrollable = total > constraints.maxWidth + 0.5;
-              if (!scrollable) {
-                return Row(
-                  children: [
-                    for (var i = 0; i < widget.destinations.length; i++)
-                      Expanded(child: _item(context, i)),
-                  ],
-                );
-              }
-              return Row(
+          height: 64,
+          child: Row(
+            children: [
+              for (var i = 0; i < destinations.length; i++)
+                Expanded(
+                  child: _BottomNavItem(
+                    destination: destinations[i],
+                    label: s.t(destinations[i].labelKey),
+                    selected: i == selectedIndex,
+                    onTap: () => onSelect(i),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNavItem extends StatelessWidget {
+  const _BottomNavItem({
+    required this.destination,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ShellDestination destination;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? WingerColors.brandPrimary : WingerColors.inkMuted;
+    final icon = Icon(destination.icon, color: color, size: 24);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: InkWell(
+        onTap: onTap,
+        focusColor: WingerColors.focusRing.withValues(alpha: 0.12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: selected ? WingerColors.brandMuted : Colors.transparent,
+                  borderRadius: BorderRadius.circular(WingerRadius.chip),
+                ),
+                child: destination.badgeCount > 0
+                    ? Badge(
+                        label: Text('${destination.badgeCount}'),
+                        child: icon,
+                      )
+                    : icon,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MarketplaceTopBar extends StatelessWidget {
+  const _MarketplaceTopBar({
+    required this.apiOnline,
+    required this.pendingSyncCount,
+    required this.cartCount,
+    required this.onLocale,
+    required this.onSignOut,
+    required this.showCategories,
+  });
+
+  final bool apiOnline;
+  final int pendingSyncCount;
+  final int cartCount;
+  final VoidCallback onLocale;
+  final VoidCallback onSignOut;
+  final bool showCategories;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    return Material(
+      color: WingerColors.bgElevated,
+      elevation: WingerElevation.materialLevel1,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                WingerSpacing.s16,
+                WingerSpacing.s8,
+                WingerSpacing.s16,
+                WingerSpacing.s8,
+              ),
+              child: Row(
                 children: [
-                  _arrow(Icons.chevron_left, _canLeft),
+                  InkWell(
+                    onTap: () => context.go('/customer'),
+                    borderRadius: BorderRadius.circular(WingerRadius.controlCompact),
+                    focusColor: WingerColors.focusRing.withValues(alpha: 0.12),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: WingerLogo(size: 36),
+                    ),
+                  ),
+                  const SizedBox(width: WingerSpacing.s16),
                   Expanded(
-                    child: ListView.builder(
-                      controller: _scroll,
-                      scrollDirection: Axis.horizontal,
-                      itemCount: widget.destinations.length,
-                      itemBuilder: (context, i) => SizedBox(
-                        width: widths[i],
-                        child: _item(context, i),
+                    child: Semantics(
+                      textField: true,
+                      label: s.t('search'),
+                      child: TextField(
+                        readOnly: true,
+                        onTap: () => context.go('/customer/search'),
+                        decoration: InputDecoration(
+                          hintText: s.t('search'),
+                          prefixIcon: const Icon(Icons.search),
+                          isDense: true,
+                        ),
                       ),
                     ),
                   ),
-                  _arrow(Icons.chevron_right, _canRight),
+                  const SizedBox(width: WingerSpacing.s8),
+                  _CurrencyIconButton(),
+                  IconButton(
+                    tooltip: s.languageLabel,
+                    onPressed: onLocale,
+                    icon: const Icon(Icons.language),
+                  ),
+                  IconButton(
+                    tooltip: session.browsingAsGuest
+                        ? s.t('guestShopper')
+                        : s.t('account'),
+                    onPressed: () => context.go('/customer/account'),
+                    icon: const Icon(Icons.person_outline),
+                  ),
+                  IconButton(
+                    tooltip: s.t('cart'),
+                    onPressed: () => context.go('/customer/cart'),
+                    icon: cartCount > 0
+                        ? Badge(
+                            label: Text('$cartCount'),
+                            child: const Icon(Icons.shopping_cart_outlined),
+                          )
+                        : const Icon(Icons.shopping_cart_outlined),
+                  ),
+                  IconButton(
+                    tooltip: s.t('signOut'),
+                    onPressed: onSignOut,
+                    icon: const Icon(Icons.logout),
+                  ),
                 ],
-              );
-            },
-          ),
+              ),
+            ),
+            if (showCategories)
+              SizedBox(
+                height: 40,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: WingerSpacing.s16),
+                  children: [
+                    TextButton(
+                      onPressed: () => context.go('/customer/search'),
+                      child: Text(s.t('allCategories')),
+                    ),
+                    TextButton(
+                      onPressed: () => context.go('/customer/search'),
+                      child: Text(s.t('featuredProducts')),
+                    ),
+                    TextButton(
+                      onPressed: () => context.go('/customer/wishlist'),
+                      child: Text(s.t('wishlist')),
+                    ),
+                  ],
+                ),
+              ),
+            if (pendingSyncCount > 0 || !apiOnline)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  !apiOnline
+                      ? '${s.t('apiStatus')}: ${s.t('offline')}'
+                      : '${s.t('apiStatus')}: ${s.t('online')}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: apiOnline
+                        ? WingerColors.successInk
+                        : WingerColors.attentionInk,
+                  ),
+                ),
+              ),
+            const Divider(height: 1),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CurrencyIconButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final session = context.watch<AppSession>();
+    final api = context.read<ApiClient>();
+    final s = WingerStrings.of(context);
+    final options = session.supportedDisplayCurrencies;
+    final selected = options.contains(session.displayCurrency)
+        ? session.displayCurrency
+        : session.settlementCurrency;
+    return PopupMenuButton<String>(
+      tooltip: s.t('displayCurrency'),
+      initialValue: selected,
+      onSelected: (value) async {
+        try {
+          await api.setDisplayCurrency(value);
+        } catch (_) {
+          // Preserve existing home behaviour: errors surface via snackbars there.
+        }
+      },
+      itemBuilder: (context) => [
+        for (final code in options)
+          PopupMenuItem(value: code, child: Text(code)),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.payments_outlined, size: 20),
+            const SizedBox(width: 4),
+            Text(
+              selected,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+          ],
         ),
       ),
     );
@@ -364,6 +526,9 @@ class _TopBar extends StatelessWidget {
     required this.pendingSyncCount,
     required this.onLocale,
     required this.onSignOut,
+    required this.showMenu,
+    required this.destinations,
+    required this.selectedIndex,
   });
 
   final String title;
@@ -371,34 +536,60 @@ class _TopBar extends StatelessWidget {
   final int pendingSyncCount;
   final VoidCallback onLocale;
   final VoidCallback onSignOut;
+  final bool showMenu;
+  final List<ShellDestination> destinations;
+  final int selectedIndex;
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     return Material(
-      color: WingerColors.white,
+      color: WingerColors.bgElevated,
       child: SafeArea(
         bottom: false,
         child: Container(
           height: 64,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: WingerSpacing.s16),
           decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: WingerColors.border)),
+            border: Border(bottom: BorderSide(color: WingerColors.borderDefault)),
           ),
           child: Row(
             children: [
-              Text(title, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-              const Spacer(),
+              if (showMenu)
+                PopupMenuButton<int>(
+                  tooltip: s.t('more'),
+                  onSelected: (i) => context.go(destinations[i].path),
+                  itemBuilder: (context) => [
+                    for (var i = 0; i < destinations.length; i++)
+                      CheckedPopupMenuItem<int>(
+                        value: i,
+                        checked: i == selectedIndex,
+                        child: Text(s.t(destinations[i].labelKey)),
+                      ),
+                  ],
+                  child: const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: Icon(Icons.menu),
+                  ),
+                ),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               if (pendingSyncCount > 0) ...[
                 Container(
                   margin: const EdgeInsets.only(right: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: WingerColors.info,
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(WingerRadius.chip),
                   ),
                   child: Text(
-                    'Sync $pendingSyncCount',
+                    '${s.t('apiStatus')} $pendingSyncCount',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -408,22 +599,35 @@ class _TopBar extends StatelessWidget {
                 ),
               ],
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: apiOnline ? WingerColors.success : WingerColors.attention,
-                  borderRadius: BorderRadius.circular(20),
+                  color: apiOnline
+                      ? WingerColors.success
+                      : WingerColors.attention,
+                  borderRadius: BorderRadius.circular(WingerRadius.chip),
                 ),
                 child: Text(
                   '${s.t('apiStatus')}: ${apiOnline ? s.t('online') : s.t('offline')}',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: apiOnline ? WingerColors.successInk : WingerColors.attentionInk,
+                    color: apiOnline
+                        ? WingerColors.successInk
+                        : WingerColors.attentionInk,
                   ),
                 ),
               ),
-              IconButton(onPressed: onLocale, icon: const Icon(Icons.language)),
-              IconButton(onPressed: onSignOut, icon: const Icon(Icons.logout)),
+              IconButton(
+                tooltip: s.languageLabel,
+                onPressed: onLocale,
+                icon: const Icon(Icons.language),
+              ),
+              IconButton(
+                tooltip: s.t('signOut'),
+                onPressed: onSignOut,
+                icon: const Icon(Icons.logout),
+              ),
             ],
           ),
         ),
@@ -440,6 +644,7 @@ class _SideNav extends StatelessWidget {
     required this.userName,
     required this.languageLabel,
     required this.onSelect,
+    required this.onLocale,
   });
 
   final String roleLabel;
@@ -448,96 +653,174 @@ class _SideNav extends StatelessWidget {
   final String userName;
   final String languageLabel;
   final ValueChanged<int> onSelect;
+  final VoidCallback onLocale;
 
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
-    return Container(
-      width: 260,
-      color: WingerColors.brand,
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
-              child: Row(
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.arrowDown):
+            _MoveDestinationIntent(1),
+        SingleActivator(LogicalKeyboardKey.arrowUp):
+            _MoveDestinationIntent(-1),
+      },
+      child: Actions(
+        actions: {
+          _MoveDestinationIntent: CallbackAction<_MoveDestinationIntent>(
+            onInvoke: (intent) {
+              if (destinations.isEmpty) return null;
+              final next = (selectedIndex + intent.delta)
+                  .clamp(0, destinations.length - 1);
+              onSelect(next);
+              return null;
+            },
+          ),
+        },
+        child: FocusTraversalGroup(
+          child: Container(
+            width: 260,
+            color: WingerColors.brandPrimary,
+            child: SafeArea(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: WingerColors.white.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: WingerColors.bgSurface.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(
+                              WingerRadius.controlCompact,
+                            ),
+                          ),
+                          child: Text(
+                            'W',
+                            style: TextStyle(
+                              color: WingerColors.bgSurface,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '${s.t('appName')}\n${s.t('tagline').toUpperCase()}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              height: 1.15,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    child: const Text('W', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
                   ),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'Winger\nONE MARKETPLACE',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, height: 1.15),
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(WingerRadius.chip),
+                      ),
+                      child: Text(
+                        roleLabel,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: destinations.length,
+                      itemBuilder: (context, i) {
+                        final d = destinations[i];
+                        final selected = i == selectedIndex;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 2,
+                          ),
+                          child: ListTile(
+                            autofocus: selected,
+                            selected: selected,
+                            selectedTileColor:
+                                Colors.white.withValues(alpha: 0.12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                WingerRadius.cardCompact,
+                              ),
+                            ),
+                            leading: d.badgeCount > 0
+                                ? Badge(
+                                    backgroundColor: WingerColors.attention,
+                                    textColor: WingerColors.attentionInk,
+                                    label: Text('${d.badgeCount}'),
+                                    child: Icon(d.icon, color: Colors.white),
+                                  )
+                                : Icon(d.icon, color: Colors.white),
+                            title: Text(
+                              s.t(d.labelKey),
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                            onTap: () => onSelect(i),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(WingerSpacing.s16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$userName · $languageLabel',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: onLocale,
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                          ),
+                          child: Text(s.languageLabel),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(roleLabel, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: ListView.builder(
-                itemCount: destinations.length,
-                itemBuilder: (context, i) {
-                  final d = destinations[i];
-                  final selected = i == selectedIndex;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                    child: ListTile(
-                      selected: selected,
-                      selectedTileColor: Colors.white.withValues(alpha: 0.12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      leading: d.badgeCount > 0
-                          ? Badge(
-                              backgroundColor: WingerColors.attention,
-                              textColor: WingerColors.attentionInk,
-                              label: Text('${d.badgeCount}'),
-                              child: Icon(d.icon, color: Colors.white),
-                            )
-                          : Icon(d.icon, color: Colors.white),
-                      title: Text(
-                        s.t(d.labelKey),
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                        ),
-                      ),
-                      onTap: () => onSelect(i),
-                    ),
-                  );
-                },
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                '$userName · $languageLabel',
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
+}
+
+class _MoveDestinationIntent extends Intent {
+  const _MoveDestinationIntent(this.delta);
+  final int delta;
 }

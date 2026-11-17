@@ -98,6 +98,7 @@ GoRouter createRouter(AppSession session) {
           GoRoute(path: '/supplier/products', builder: (context, state) => const SupplierProductsScreen()),
           GoRoute(path: '/supplier/delivery', builder: (context, state) => const SupplierDeliveryFeesScreen()),
           GoRoute(path: '/supplier/payments', builder: (context, state) => const SupplierPaymentsScreen()),
+          GoRoute(path: '/supplier/more', builder: (context, state) => const SupplierMoreScreen()),
         ],
       ),
       ShellRoute(

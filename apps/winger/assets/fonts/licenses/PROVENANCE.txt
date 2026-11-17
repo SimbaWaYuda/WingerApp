@@ -1,0 +1,13 @@
+﻿Font provenance (S2.6.20.45)
+============================
+Fraunces Soft (static TTF, 72pt optical size)
+  Source: https://github.com/undercasetype/Fraunces/releases/tag/1.000
+  Artifact: UnderCaseType_Fraunces_1.000.zip
+  License: SIL Open Font License 1.1 (see Fraunces-OFL.txt)
+  Files: Fraunces72ptSoft-Regular/SemiBold/Bold.ttf
+
+Source Sans 3
+  Source: https://github.com/adobe-fonts/source-sans/releases/tag/3.052R
+  Artifact: TTF-source-sans-3.052R.zip
+  License: SIL Open Font License 1.1 (see SourceSans3-OFL.md)
+  Files: SourceSans3-Regular/Medium/Semibold/Bold.ttf

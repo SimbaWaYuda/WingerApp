@@ -114,7 +114,8 @@ class _AdminShellState extends State<AdminShell> {
     }
     return RoleShell(
       title: s.t('dashboard'),
-      roleLabel: 'Administrator',
+      roleLabel: s.t('wingerAdmin'),
+      layoutKind: ShellLayoutKind.operations,
       destinations: adminDestinations(returnsAttention: _returnsAttention),
       child: widget.child,
     );

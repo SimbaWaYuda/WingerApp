@@ -28,6 +28,40 @@ String _deliveryFeeLabel(WingerStrings s, AppSession session, double amount) {
   return session.formatMoney(amount);
 }
 
+/// Localised cart/checkout fulfilment label. Presentation only.
+String _localisedFulfillmentLabel(WingerStrings s, String method) {
+  switch (method) {
+    case 'express':
+      return s.t('fulfillExpress');
+    case 'pickup':
+      return s.t('fulfillPickup');
+    default:
+      return s.t('fulfillStandard');
+  }
+}
+
+/// Explicit checkout confirmation payment presentation.
+/// Uses actual API [PaymentStatus] values: PENDING, PAID, FAILED, REFUNDED.
+/// Unknown / missing statuses are uncertain — never success by default.
+enum _CheckoutPaymentPresentation { success, pending, failed, uncertain }
+
+_CheckoutPaymentPresentation _checkoutPaymentPresentation(
+  CustomerOrder? order,
+) {
+  if (order == null) return _CheckoutPaymentPresentation.uncertain;
+  switch (order.paymentStatus.trim().toUpperCase()) {
+    case 'PAID':
+      return _CheckoutPaymentPresentation.success;
+    case 'PENDING':
+      return _CheckoutPaymentPresentation.pending;
+    case 'FAILED':
+      return _CheckoutPaymentPresentation.failed;
+    default:
+      // Includes REFUNDED and any unrecognised client value.
+      return _CheckoutPaymentPresentation.uncertain;
+  }
+}
+
 String? _carrierLine(WingerStrings s, {String? carrier, String? courierName}) {
   return carrierCaption(
     carrier: carrier,
@@ -53,29 +87,44 @@ String _customerTitle(WingerStrings s, String path) {
   return s.t('home');
 }
 
-List<ShellDestination> customerDestinations({int unreadNotifications = 0}) => [
-  const ShellDestination(
-    labelKey: 'home',
-    icon: Icons.home_outlined,
-    path: '/customer',
-  ),
-  const ShellDestination(
-    labelKey: 'search',
-    icon: Icons.search,
-    path: '/customer/search',
-  ),
-  const ShellDestination(
-    labelKey: 'orders',
-    icon: Icons.receipt_long_outlined,
-    path: '/customer/orders',
-  ),
-  ShellDestination(
-    labelKey: 'account',
-    icon: Icons.person_outline,
-    path: '/customer/account',
-    badgeCount: unreadNotifications,
-  ),
-];
+List<ShellDestination> customerDestinations({
+  int unreadNotifications = 0,
+  int cartCount = 0,
+}) =>
+    [
+      const ShellDestination(
+        labelKey: 'home',
+        icon: Icons.home_outlined,
+        path: '/customer',
+      ),
+      const ShellDestination(
+        labelKey: 'search',
+        icon: Icons.search,
+        path: '/customer/search',
+      ),
+      ShellDestination(
+        labelKey: 'cart',
+        icon: Icons.shopping_cart_outlined,
+        path: '/customer/cart',
+        badgeCount: cartCount,
+        alsoMatchingPrefixes: const ['/customer/checkout'],
+      ),
+      const ShellDestination(
+        labelKey: 'orders',
+        icon: Icons.receipt_long_outlined,
+        path: '/customer/orders',
+      ),
+      ShellDestination(
+        labelKey: 'account',
+        icon: Icons.person_outline,
+        path: '/customer/account',
+        badgeCount: unreadNotifications,
+        alsoMatchingPrefixes: const [
+          '/customer/notifications',
+          '/customer/addresses',
+        ],
+      ),
+    ];
 
 class CustomerShell extends StatefulWidget {
   const CustomerShell({super.key, required this.child});
@@ -129,9 +178,13 @@ class _CustomerShellState extends State<CustomerShell> {
 
     return RoleShell(
       title: _customerTitle(s, location),
-      roleLabel: session.browsingAsGuest ? s.t('guestShopper') : 'Customer',
+      roleLabel:
+          session.browsingAsGuest ? s.t('guestShopper') : s.t('customerRole'),
+      layoutKind: ShellLayoutKind.customerMarketplace,
+      showMarketplaceCategories: true,
       destinations: customerDestinations(
         unreadNotifications: _unreadNotifications,
+        cartCount: session.cartCount,
       ),
       bottomBar: showTray
           ? _CompareTray(
@@ -848,6 +901,71 @@ class _CustomMilesDialogState extends State<_CustomMilesDialog> {
         ),
         FilledButton(onPressed: _apply, child: Text(s.t('apply'))),
       ],
+    );
+  }
+}
+
+class _ProductGridSkeleton extends StatelessWidget {
+  const _ProductGridSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = productGridColumns(constraints.maxWidth);
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: columns * 2,
+          gridDelegate: productGridDelegate(constraints.maxWidth),
+          itemBuilder: (context, index) {
+            return Container(
+              decoration: BoxDecoration(
+                color: WingerColors.bgSurface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: WingerColors.borderSubtle),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const AspectRatio(
+                    aspectRatio: 4 / 5,
+                    child: ColoredBox(color: WingerColors.brandMuted),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            height: 10,
+                            width: 64,
+                            color: WingerColors.brandMuted,
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            height: 14,
+                            width: double.infinity,
+                            color: WingerColors.brandMuted,
+                          ),
+                          const SizedBox(height: 6),
+                          Container(
+                            height: 14,
+                            width: 96,
+                            color: WingerColors.brandMuted,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -1745,8 +1863,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: CircularProgressIndicator()),
+            padding: EdgeInsets.all(16),
+            child: _ProductGridSkeleton(),
           );
         }
         if (snapshot.hasError) {
@@ -1756,7 +1874,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             padding: const EdgeInsets.symmetric(vertical: 32),
             child: Column(
               children: [
-                const Icon(Icons.cloud_off, size: 48, color: WingerColors.muted),
+                const Icon(Icons.cloud_off, size: 48, color: WingerColors.inkMuted),
                 const SizedBox(height: 12),
                 Text(
                   timedOut
@@ -1765,7 +1883,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                       ? s.t('searchBusy')
                       : s.t('searchError'),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: WingerColors.muted),
+                  style: const TextStyle(color: WingerColors.inkMuted),
                 ),
                 const SizedBox(height: 8),
                 TextButton(
@@ -1786,7 +1904,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                 const Icon(
                   Icons.search_off,
                   size: 48,
-                  color: WingerColors.muted,
+                  color: WingerColors.inkMuted,
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -1794,7 +1912,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                       ? s.t('distanceNeedsCity')
                       : s.t('noResults'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: WingerColors.muted),
+                  style: const TextStyle(color: WingerColors.inkMuted),
                 ),
                 const SizedBox(height: 8),
                 TextButton(
@@ -1809,11 +1927,11 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${page!.total} ${s.t('products').toLowerCase()}',
-              style: TextStyle(
-                color: WingerColors.muted,
-                fontWeight: FontWeight.w600,
-              ),
+              s.t('searchResultsCount').replaceAll('{count}', '${page!.total}'),
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: WingerColors.inkMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
             ),
             const SizedBox(height: 12),
             LayoutBuilder(
@@ -2369,20 +2487,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 Builder(
                   builder: (context) {
                     final screen = MediaQuery.sizeOf(context);
-                    final galleryHeight = (screen.height * 0.36).clamp(
-                      220.0,
-                      340.0,
-                    );
+                    final isWide = screen.width >= 900;
                     return Align(
                       alignment: Alignment.centerLeft,
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
-                          maxWidth: screen.width >= 900 ? 520 : double.infinity,
-                          maxHeight: galleryHeight,
+                          maxWidth: isWide ? 520 : double.infinity,
                         ),
-                        child: SizedBox(
-                          width: double.infinity,
-                          height: galleryHeight,
+                        child: AspectRatio(
+                          aspectRatio: 4 / 5,
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(16),
                             child: Stack(
@@ -2398,8 +2511,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                       color: WingerColors.brandMuted,
                                       child: ProductPhoto(
                                         url: gallery[index],
-                                        fit: BoxFit.contain,
+                                        fit: BoxFit.cover,
                                         iconSize: 40,
+                                        semanticLabel: product.name,
                                       ),
                                     );
                                   },
@@ -2408,6 +2522,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   Align(
                                     alignment: Alignment.centerLeft,
                                     child: IconButton(
+                                      tooltip: s.t('back'),
                                       style: IconButton.styleFrom(
                                         backgroundColor: Colors.black45,
                                         foregroundColor: Colors.white,
@@ -2424,6 +2539,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   Align(
                                     alignment: Alignment.centerRight,
                                     child: IconButton(
+                                      tooltip: s.t('continueRole'),
                                       style: IconButton.styleFrom(
                                         backgroundColor: Colors.black45,
                                         foregroundColor: Colors.white,
@@ -2448,7 +2564,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                     ),
                                     decoration: BoxDecoration(
                                       color: Colors.black54,
-                                      borderRadius: BorderRadius.circular(20),
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Text(
                                       s
@@ -2480,7 +2596,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 if (gallery.length > 1) ...[
                   const SizedBox(height: 10),
                   SizedBox(
-                    height: 72,
+                    height: 80,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: gallery.length,
@@ -2503,11 +2619,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(9),
                               child: SizedBox(
-                                width: 72,
-                                height: 72,
+                                width: 64,
+                                height: 80,
                                 child: ProductPhoto(
                                   url: gallery[index],
                                   iconSize: 20,
+                                  semanticLabel: product.name,
                                 ),
                               ),
                             ),
@@ -2520,44 +2637,46 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 const SizedBox(height: 16),
                 Text(
                   product.brand,
-                  style: const TextStyle(
-                    color: WingerColors.muted,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: WingerColors.inkMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
                 Text(
                   product.name,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
+                        fontWeight: FontWeight.w700,
+                        color: WingerColors.inkStrong,
+                      ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   session.formatMoney(product.price),
-                  style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w800,
-                    color: WingerColors.brand,
-                  ),
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: WingerColors.brandPrimary,
+                      ),
                 ),
                 if (product.previousPrice != null &&
                     product.previousPrice! > product.price) ...[
                   const SizedBox(height: 4),
                   Text(
                     session.formatMoney(product.previousPrice!),
-                    style: const TextStyle(
-                      decoration: TextDecoration.lineThrough,
-                      color: WingerColors.muted,
-                    ),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          decoration: TextDecoration.lineThrough,
+                          color: WingerColors.inkMuted,
+                        ),
                   ),
                 ],
                 const SizedBox(height: 8),
                 Text(
-                  '★ ${product.rating.toStringAsFixed(1)} · ${product.category}',
-                  style: TextStyle(
-                    color: WingerColors.muted,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  product.rating > 0
+                      ? '★ ${product.rating.toStringAsFixed(1)} · ${product.category}'
+                      : product.category,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: WingerColors.inkMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
                 const SizedBox(height: 8),
                 Builder(
@@ -3578,10 +3697,90 @@ class _CartScreenState extends State<CartScreen> {
     if (!mounted) return;
     setState(() => _refreshing = false);
     if (ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.showSnackBar(
         SnackBar(content: Text(WingerStrings.of(context).t('cartUpdated'))),
       );
     }
+  }
+
+  Widget _summary(WingerStrings s, AppSession session, {required bool hasStockIssue}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: WingerColors.bgSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: WingerColors.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            s.t('orderSummary'),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '${s.t('fulfillMethod')}: ${_localisedFulfillmentLabel(s, session.deliveryMethod)}',
+            style: TextStyle(color: WingerColors.inkMuted),
+          ),
+          const SizedBox(height: 8),
+          _SummaryRow(
+            label: s.t('subtotal'),
+            value: session.formatMoney(session.cartTotal),
+          ),
+          _SummaryRow(
+            label: s.t('deliveryFee'),
+            value:
+                '${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}'
+                '${session.cartBySupplier.length > 1 ? ' · ${session.cartBySupplier.length} ${s.t('suppliers').toLowerCase()}' : ''}',
+          ),
+          _SummaryRow(
+            label: s.t('estimatedTax'),
+            value: session.formatMoney(session.cartTax),
+          ),
+          if (session.showPaymentEstimate) ...[
+            const SizedBox(height: 4),
+            Text(
+              s
+                  .t('youWillPayIn')
+                  .replaceAll('{pay}', session.paymentCurrency),
+              style: TextStyle(
+                color: WingerColors.inkMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          const Divider(height: 24),
+          _SummaryRow(
+            label: s.t('dueToday'),
+            value: session.formatMoney(session.cartGrandTotal),
+            emphasize: true,
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: hasStockIssue || _refreshing
+                ? null
+                : () async {
+                    final ok = await session.refreshCartFromServer();
+                    if (!mounted) return;
+                    if (!ok || session.cart.isEmpty) {
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        SnackBar(content: Text(s.t('unavailableItem'))),
+                      );
+                      return;
+                    }
+                    this.context.go('/customer/checkout');
+                  },
+            child: Text(s.t('checkoutAll')),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -3590,129 +3789,302 @@ class _CartScreenState extends State<CartScreen> {
     final session = context.watch<AppSession>();
     final grouped = session.cartBySupplier;
     final hasStockIssue = session.cart.any(
-      (item) => item.quantity > item.product.stock || item.product.stock <= 0,
+      (item) =>
+          item.quantity > item.availableStock || item.availableStock <= 0,
     );
+    final wide = MediaQuery.sizeOf(context).width >= 900;
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Row(
-          children: [
-            Text(
-              s.t('cart'),
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const Spacer(),
-            IconButton(
-              onPressed: _refreshing ? null : _refresh,
-              icon: _refreshing
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.refresh),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '${s.t('fulfillMethod')}: ${session.deliveryMethodLabel}',
-          style: TextStyle(color: WingerColors.muted),
-        ),
-        if (_refreshing) ...[
+    if (grouped.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text(
+            s.t('cart'),
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 32),
+          Icon(Icons.shopping_cart_outlined, size: 56, color: WingerColors.inkMuted),
+          const SizedBox(height: 16),
+          Text(
+            s.t('emptyCart'),
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           const SizedBox(height: 8),
           Text(
-            s.t('refreshingCart'),
-            style: TextStyle(color: WingerColors.muted),
+            s.t('emptyCartHint'),
+            style: TextStyle(color: WingerColors.inkMuted),
+          ),
+          const SizedBox(height: 20),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              onPressed: () => context.go('/customer/search'),
+              child: Text(s.t('continueShopping')),
+            ),
           ),
         ],
+      );
+    }
+
+    final lines = <Widget>[
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              s.t('cart'),
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ),
+          IconButton(
+            tooltip: s.t('refreshingCart'),
+            onPressed: _refreshing ? null : _refresh,
+            icon: _refreshing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      if (_refreshing) ...[
+        const SizedBox(height: 8),
+        Text(s.t('refreshingCart'), style: TextStyle(color: WingerColors.inkMuted)),
+      ],
+      if (hasStockIssue) ...[
         const SizedBox(height: 12),
-        if (grouped.isEmpty)
-          Text(s.t('explore'))
-        else ...[
-          if (hasStockIssue) ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: WingerColors.attention,
-                borderRadius: BorderRadius.circular(12),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: WingerColors.attention,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            s.t('unavailableItem'),
+            style: TextStyle(
+              color: WingerColors.attentionInk,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+      const SizedBox(height: 16),
+      for (final entry in grouped.entries) ...[
+        Text(
+          entry.key,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
               ),
-              child: Text(
-                s.t('unavailableItem'),
-                style: TextStyle(
-                  color: WingerColors.attentionInk,
-                  fontWeight: FontWeight.w700,
+        ),
+        const SizedBox(height: 8),
+        for (final item in entry.value) ...[
+          _CartLineCard(item: item),
+          const SizedBox(height: 8),
+        ],
+        const SizedBox(height: 8),
+      ],
+    ];
+
+    if (!wide) {
+      return ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          ...lines,
+          const SizedBox(height: 8),
+          _summary(s, session, hasStockIssue: hasStockIssue),
+        ],
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 3,
+            child: ListView(children: lines),
+          ),
+          const SizedBox(width: 24),
+          SizedBox(
+            width: 320,
+            child: SingleChildScrollView(
+              child: _summary(s, session, hasStockIssue: hasStockIssue),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({
+    required this.label,
+    required this.value,
+    this.emphasize = false,
+  });
+
+  final String label;
+  final String value;
+  final bool emphasize;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = emphasize
+        ? Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: WingerColors.inkStrong,
+            )
+        : Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: WingerColors.inkMuted,
+            );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: style)),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: style?.copyWith(
+                color: emphasize ? WingerColors.brandPrimary : null,
+                fontWeight: emphasize ? FontWeight.w700 : FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CartLineCard extends StatelessWidget {
+  const _CartLineCard({required this.item});
+
+  final CartItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    final session = context.watch<AppSession>();
+    final unavailable =
+        item.quantity > item.availableStock || item.availableStock <= 0;
+    final wishlisted = session.isWishlisted(item.product.id);
+
+    return Material(
+      color: WingerColors.bgSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: unavailable ? WingerColors.danger : WingerColors.borderSubtle,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 72,
+              child: AspectRatio(
+                aspectRatio: 4 / 5,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: ProductPhoto(
+                    url: item.product.imageUrl,
+                    semanticLabel: item.product.name,
+                    iconSize: 24,
+                  ),
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-          ],
-          for (final entry in grouped.entries) ...[
-            Text(
-              entry.key,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            for (final item in entry.value)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: ListTile(
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        item.product.imageUrl,
-                        width: 48,
-                        height: 48,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    title: Text(
-                      item.product.name,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: Text(
-                      [
-                        if (item.optionLabel != null) item.optionLabel!,
-                        if (item.quantity > item.availableStock ||
-                            item.availableStock <= 0)
-                          '${s.t('unavailableItem')}\n${session.formatMoney(item.product.price)} × ${item.quantity}'
-                        else
-                          '${session.formatMoney(item.product.price)} × ${item.quantity} = ${session.formatMoney(item.lineTotal)}',
-                      ].join('\n'),
-                      style: TextStyle(
-                        color:
-                            item.quantity > item.availableStock ||
-                                item.availableStock <= 0
-                            ? WingerColors.dangerInk
-                            : null,
-                      ),
-                    ),
-                    isThreeLine: true,
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          onPressed: () => unawaited(
-                            session.updateQuantity(
-                              item.product.id,
-                              item.quantity - 1,
-                              variantId: item.variantId,
-                              variantColor: item.variantColor,
-                              variantSize: item.variantSize,
-                            ),
-                          ),
-                          icon: const Icon(Icons.remove),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.product.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
                         ),
-                        Text('${item.quantity}'),
-                        IconButton(
-                          onPressed: item.quantity >= item.availableStock
-                              ? null
-                              : () => unawaited(
+                  ),
+                  if (item.optionLabel != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      item.optionLabel!,
+                      style: TextStyle(
+                        color: WingerColors.inkMuted,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  Text(
+                    unavailable
+                        ? s.t('unavailableItem')
+                        : '${session.formatMoney(item.product.price)} × ${item.quantity} = ${session.formatMoney(item.lineTotal)}',
+                    style: TextStyle(
+                      color: unavailable
+                          ? WingerColors.dangerInk
+                          : WingerColors.inkDefault,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      IconButton(
+                        tooltip: s.t('qty'),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 40,
+                          height: 40,
+                        ),
+                        onPressed: () => unawaited(
+                          session.updateQuantity(
+                            item.product.id,
+                            item.quantity - 1,
+                            variantId: item.variantId,
+                            variantColor: item.variantColor,
+                            variantSize: item.variantSize,
+                          ),
+                        ),
+                        icon: const Icon(Icons.remove_circle_outline),
+                      ),
+                      Semantics(
+                        label: '${s.t('qty')} ${item.quantity}',
+                        child: Text(
+                          '${item.quantity}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: s.t('qty'),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 40,
+                          height: 40,
+                        ),
+                        onPressed: item.quantity >= item.availableStock
+                            ? null
+                            : () => unawaited(
                                   session.updateQuantity(
                                     item.product.id,
                                     item.quantity + 1,
@@ -3721,64 +4093,47 @@ class _CartScreenState extends State<CartScreen> {
                                     variantSize: item.variantSize,
                                   ),
                                 ),
-                          icon: const Icon(Icons.add),
+                        icon: const Icon(Icons.add_circle_outline),
+                      ),
+                      IconButton(
+                        tooltip: s.t('saveForLater'),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 40,
+                          height: 40,
                         ),
-                        IconButton(
-                          tooltip: s.t('remove'),
-                          onPressed: () => unawaited(
-                            session.removeFromCart(
-                              item.product.id,
-                              variantId: item.variantId,
-                              variantColor: item.variantColor,
-                              variantSize: item.variantSize,
-                            ),
+                        onPressed: () =>
+                            unawaited(session.toggleWishlist(item.product.id)),
+                        icon: Icon(
+                          wishlisted ? Icons.favorite : Icons.favorite_border,
+                          color: wishlisted
+                              ? WingerColors.dangerInk
+                              : WingerColors.inkMuted,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: s.t('remove'),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 40,
+                          height: 40,
+                        ),
+                        onPressed: () => unawaited(
+                          session.removeFromCart(
+                            item.product.id,
+                            variantId: item.variantId,
+                            variantColor: item.variantColor,
+                            variantSize: item.variantSize,
                           ),
-                          icon: const Icon(Icons.delete_outline),
                         ),
-                      ],
-                    ),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
                   ),
-                ),
+                ],
               ),
-            const SizedBox(height: 12),
+            ),
           ],
-          Text(
-            '${s.t('subtotal')}: ${session.formatMoney(session.cartTotal)}',
-            style: const TextStyle(color: WingerColors.muted),
-          ),
-          Text(
-            '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}'
-            '${session.cartBySupplier.length > 1 ? ' · ${session.cartBySupplier.length} ${s.t('suppliers').toLowerCase()}' : ''}',
-            style: const TextStyle(color: WingerColors.muted),
-          ),
-          Text(
-            '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
-            style: const TextStyle(color: WingerColors.muted),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)}',
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-          ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: hasStockIssue || _refreshing
-                ? null
-                : () async {
-                    final ok = await session.refreshCartFromServer();
-                    if (!context.mounted) return;
-                    if (!ok || session.cart.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(s.t('unavailableItem'))),
-                      );
-                      return;
-                    }
-                    context.go('/customer/checkout');
-                  },
-            child: Text(s.t('checkoutAll')),
-          ),
-        ],
-      ],
+        ),
+      ),
     );
   }
 }
@@ -3936,7 +4291,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final phone = _phone.text.trim();
     final phoneDigits = phone.replaceAll(RegExp(r'\D'), '');
     if (city.isEmpty || address.isEmpty) {
-      setState(() => _payError = 'City and address are required');
+      setState(() => _payError = s.t('cityAddressRequired'));
       return;
     }
     if (phoneDigits.length < 7) {
@@ -3964,10 +4319,74 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  Widget _checkoutSideSummary(WingerStrings s, AppSession session) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: WingerColors.bgSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: WingerColors.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            s.t('orderSummary'),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            s
+                .t('cartReviewSummary')
+                .replaceAll('{items}', '${session.cartCount}')
+                .replaceAll(
+                  '{suppliers}',
+                  '${session.cartBySupplier.length}',
+                ),
+            style: TextStyle(color: WingerColors.inkMuted, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          _SummaryRow(
+            label: s.t('subtotal'),
+            value: session.formatMoney(session.cartTotal),
+          ),
+          _SummaryRow(
+            label: s.t('deliveryFee'),
+            value: _deliveryFeeLabel(s, session, session.cartDeliveryFee),
+          ),
+          _SummaryRow(
+            label: s.t('estimatedTax'),
+            value: session.formatMoney(session.cartTax),
+          ),
+          Text(
+            s
+                .t('paymentCurrencyLabel')
+                .replaceAll('{pay}', session.paymentCurrency),
+            style: TextStyle(
+              color: WingerColors.inkMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Divider(height: 24),
+          _SummaryRow(
+            label: s.t('dueToday'),
+            value: session.formatMoney(session.cartGrandTotal),
+            emphasize: true,
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
+    final wide = MediaQuery.sizeOf(context).width >= 1024;
     final steps = [
       s.t('review'),
       s.t('address'),
@@ -3976,62 +4395,80 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       s.t('confirmation'),
     ];
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          s.t('checkout'),
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+    final header = <Widget>[
+      Text(
+        s.t('checkout'),
+        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        s
+            .t('checkoutStepOf')
+            .replaceAll('{current}', '${step + 1}')
+            .replaceAll('{total}', '${steps.length}'),
+        style: TextStyle(
+          color: WingerColors.inkMuted,
+          fontWeight: FontWeight.w600,
         ),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 8,
-          children: [
-            for (var i = 0; i < steps.length; i++)
-              ActionChip(
-                label: Text(steps[i]),
-                backgroundColor: i == step
-                    ? WingerColors.brand
-                    : WingerColors.brandMuted,
-                labelStyle: TextStyle(
-                  color: i == step ? Colors.white : WingerColors.ink,
-                  fontWeight: FontWeight.w700,
-                ),
-                onPressed: () {
-                  if (_paying || i >= step || step >= 4) return;
-                  setState(() {
-                    _payError = null;
-                    step = i;
-                  });
-                },
+      ),
+      const SizedBox(height: 12),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (var i = 0; i < steps.length; i++)
+            ActionChip(
+              label: Text(steps[i]),
+              backgroundColor: i == step
+                  ? WingerColors.brandPrimary
+                  : i < step
+                      ? WingerColors.brandMuted
+                      : WingerColors.bgApp,
+              labelStyle: TextStyle(
+                color: i == step ? Colors.white : WingerColors.inkDefault,
+                fontWeight: FontWeight.w700,
               ),
-          ],
-        ),
-        const SizedBox(height: 20),
+              onPressed: () {
+                if (_paying || i >= step || step >= 4) return;
+                setState(() {
+                  _payError = null;
+                  step = i;
+                });
+              },
+            ),
+        ],
+      ),
+      const SizedBox(height: 20),
+    ];
+
+    final body = <Widget>[
         if (step < 4) ...[
           if (step == 0) ...[
             Text(
-              'Review ${session.cartCount} item${session.cartCount == 1 ? '' : 's'} '
-              'from ${session.cartBySupplier.length} supplier'
-              '${session.cartBySupplier.length == 1 ? '' : 's'}.',
-              style: TextStyle(color: WingerColors.muted),
+              s
+                  .t('cartReviewSummary')
+                  .replaceAll('{items}', '${session.cartCount}')
+                  .replaceAll(
+                    '{suppliers}',
+                    '${session.cartBySupplier.length}',
+                  ),
+              style: TextStyle(color: WingerColors.inkMuted),
             ),
             const SizedBox(height: 12),
             if (session.cart.isEmpty)
               Text(
-                'Your cart is empty.',
-                style: TextStyle(color: WingerColors.muted),
+                s.t('emptyCart'),
+                style: TextStyle(color: WingerColors.inkMuted),
               )
             else ...[
               for (final entry in session.cartBySupplier.entries) ...[
                 Text(
                   entry.key,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 16,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
                 const SizedBox(height: 8),
                 for (final item in entry.value)
@@ -4041,18 +4478,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         horizontal: 12,
                         vertical: 4,
                       ),
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.network(
-                          item.product.imageUrl,
-                          width: 52,
-                          height: 52,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 52,
-                            height: 52,
-                            color: WingerColors.brandMuted,
-                            child: const Icon(Icons.image_outlined),
+                      leading: SizedBox(
+                        width: 52,
+                        height: 52,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: ProductPhoto(
+                            url: item.product.imageUrl,
+                            semanticLabel: item.product.name,
+                            iconSize: 20,
                           ),
                         ),
                       ),
@@ -4081,22 +4515,34 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   children: [
                     Text(
                       '${s.t('subtotal')}: ${session.formatMoney(session.cartTotal)}',
-                      style: const TextStyle(color: WingerColors.muted),
+                      style: TextStyle(color: WingerColors.inkMuted),
                     ),
                     Text(
                       '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}',
-                      style: const TextStyle(color: WingerColors.muted),
+                      style: TextStyle(color: WingerColors.inkMuted),
                     ),
                     Text(
                       '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
-                      style: const TextStyle(color: WingerColors.muted),
+                      style: TextStyle(color: WingerColors.inkMuted),
                     ),
+                    if (session.showPaymentEstimate)
+                      Text(
+                        s
+                            .t('youWillPayIn')
+                            .replaceAll('{pay}', session.paymentCurrency),
+                        style: TextStyle(
+                          color: WingerColors.inkMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     const SizedBox(height: 4),
                     Text(
                       '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)}',
                       style: const TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 18,
+                        color: WingerColors.brandPrimary,
                       ),
                     ),
                   ],
@@ -4134,7 +4580,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ] else if (step == 2) ...[
             Text(
-              'Deliver to ${session.city} · ${session.addressLine} · ${session.displayName}',
+              s
+                  .t('deliverToSummary')
+                  .replaceAll('{city}', session.city)
+                  .replaceAll('{address}', session.addressLine)
+                  .replaceAll('{name}', session.displayName),
             ),
             const SizedBox(height: 16),
             Text(
@@ -4146,10 +4596,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final option in const [
-                  ('express', 'Express 1–2 days'),
-                  ('standard', 'Standard 3–5 days'),
-                  ('pickup', 'Pickup'),
+                for (final option in [
+                  ('express', s.t('fulfillExpress')),
+                  ('standard', s.t('fulfillStandard')),
+                  ('pickup', s.t('fulfillPickup')),
                 ])
                   ChoiceChip(
                     key: ValueKey('checkout-fulfill-${option.$1}'),
@@ -4170,6 +4620,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               const SizedBox(height: 8),
               const LinearProgressIndicator(minHeight: 2),
             ],
+            if (session.cartBySupplier.length > 1) ...[
+              const SizedBox(height: 12),
+              Text(
+                s.t('multiSupplierFulfillNote'),
+                style: TextStyle(
+                  color: WingerColors.inkMuted,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             Text(
               s.t('shipments'),
@@ -4185,6 +4645,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   ),
                   subtitle: Text(
                     [
+                      '${s.t('fulfillMethod')}: ${_fulfillment == 'pickup' ? s.t('fulfillPickup') : _fulfillment == 'express' ? s.t('fulfillExpress') : s.t('fulfillStandard')}',
                       shipment.estimate,
                       ?_carrierLine(
                         s,
@@ -4202,16 +4663,29 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Text(
               '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)} · '
               '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
-              style: const TextStyle(color: WingerColors.muted),
+              style: TextStyle(color: WingerColors.inkMuted),
             ),
             Text(
               '${s.t('dueToday')}: ${session.formatMoney(session.cartGrandTotal)}',
-              style: const TextStyle(fontWeight: FontWeight.w800),
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                color: WingerColors.brandPrimary,
+              ),
             ),
           ] else ...[
             Text(
               s.t('paymentMethod'),
               style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              s
+                  .t('paymentCurrencyLabel')
+                  .replaceAll('{pay}', session.paymentCurrency),
+              style: TextStyle(
+                color: WingerColors.inkMuted,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 12),
             _CheckoutPayChoices(
@@ -4313,9 +4787,32 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ],
           if (_payError != null) ...[
             const SizedBox(height: 12),
-            Text(
-              _payError!,
-              style: const TextStyle(color: WingerColors.dangerInk),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: WingerColors.danger,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    step == 3
+                        ? s.t('paymentFailedTitle')
+                        : s.t('checkoutErrorTitle'),
+                    style: TextStyle(
+                      color: WingerColors.dangerInk,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _payError!,
+                    style: TextStyle(color: WingerColors.dangerInk),
+                  ),
+                ],
+              ),
             ),
           ],
           const SizedBox(height: 20),
@@ -4464,61 +4961,186 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ],
           ),
         ] else ...[
-          const Icon(
-            Icons.check_circle,
-            color: WingerColors.successInk,
-            size: 64,
+          Builder(
+            builder: (context) {
+              final order = session.lastOrder;
+              final presentation = _checkoutPaymentPresentation(order);
+              final icon = switch (presentation) {
+                _CheckoutPaymentPresentation.failed => Icons.error_outline,
+                _CheckoutPaymentPresentation.success => Icons.check_circle,
+                _CheckoutPaymentPresentation.pending ||
+                _CheckoutPaymentPresentation.uncertain =>
+                  Icons.hourglass_top,
+              };
+              final iconColor = switch (presentation) {
+                _CheckoutPaymentPresentation.failed => WingerColors.dangerInk,
+                _CheckoutPaymentPresentation.success => WingerColors.successInk,
+                _CheckoutPaymentPresentation.pending ||
+                _CheckoutPaymentPresentation.uncertain =>
+                  WingerColors.attentionInk,
+              };
+              final title = switch (presentation) {
+                _CheckoutPaymentPresentation.failed =>
+                  s.t('paymentFailedTitle'),
+                _CheckoutPaymentPresentation.success =>
+                  s.t('paymentSuccessTitle'),
+                _CheckoutPaymentPresentation.pending =>
+                  s.t('paymentPendingTitle'),
+                _CheckoutPaymentPresentation.uncertain =>
+                  s.t('paymentUncertainTitle'),
+              };
+              final paymentBody = switch (presentation) {
+                _CheckoutPaymentPresentation.failed => s.t('paymentFailedBody'),
+                _CheckoutPaymentPresentation.success =>
+                  s.t('paymentSuccessBody'),
+                _CheckoutPaymentPresentation.pending =>
+                  s.t('paymentPendingBody'),
+                _CheckoutPaymentPresentation.uncertain =>
+                  s.t('paymentUncertainBody'),
+              };
+              final orderLine = switch (presentation) {
+                _CheckoutPaymentPresentation.success => order == null
+                    ? s.t('orderConfirmed')
+                    : '${s.t('orderConfirmed')} · ${order.id}',
+                _CheckoutPaymentPresentation.pending ||
+                _CheckoutPaymentPresentation.uncertain ||
+                _CheckoutPaymentPresentation.failed =>
+                  order == null
+                      ? s.t('orderReceivedNoId')
+                      : s.t('orderReceived').replaceAll('{id}', order.id),
+              };
+              final bannerColor = switch (presentation) {
+                _CheckoutPaymentPresentation.failed => WingerColors.danger,
+                _CheckoutPaymentPresentation.success => WingerColors.brandMuted,
+                _CheckoutPaymentPresentation.pending ||
+                _CheckoutPaymentPresentation.uncertain =>
+                  WingerColors.attention,
+              };
+              final bannerInk = switch (presentation) {
+                _CheckoutPaymentPresentation.failed => WingerColors.dangerInk,
+                _CheckoutPaymentPresentation.success =>
+                  WingerColors.inkDefault,
+                _CheckoutPaymentPresentation.pending ||
+                _CheckoutPaymentPresentation.uncertain =>
+                  WingerColors.attentionInk,
+              };
+              final isLipa = order?.paymentMethod == 'lipa' ||
+                  order?.paymentMode == 'lipa';
+              final statusDetail = order == null
+                  ? null
+                  : order.isCodPending
+                      ? s
+                            .t('codPendingBanner')
+                            .replaceAll(
+                              '{amount}',
+                              order.lockedAmountLabel(),
+                            )
+                      : isLipa &&
+                            presentation ==
+                                _CheckoutPaymentPresentation.pending
+                      ? s.t('lipaPendingBanner')
+                      : s
+                            .t('paymentStatusLine')
+                            .replaceAll('{status}', order.paymentStatus)
+                            .replaceAll('{mode}', order.paymentMode);
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(icon, color: iconColor, size: 64),
+                  const SizedBox(height: 12),
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: iconColor,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (presentation == _CheckoutPaymentPresentation.success)
+                    Text(
+                      s.t('thanksOrder'),
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  Text(orderLine),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: bannerColor,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          paymentBody,
+                          style: TextStyle(
+                            color: bannerInk,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (statusDetail != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            statusDetail,
+                            style: TextStyle(color: bannerInk),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (isLipa) ...[
+                    const SizedBox(height: 12),
+                    _LipaPayInstructions(
+                      targets: _lipaTargets,
+                      amountLabel: order?.customerPayLabel() ??
+                          session.formatMoney(session.cartGrandTotal),
+                      hint: s.t('payWithLipaHint'),
+                      numberLabel: s.t('lipaOrTillNumber'),
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 12),
-          Text(
-            s.t('thanksOrder'),
-            style: Theme.of(
-              context,
-            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          Text(
-            session.lastOrder == null
-                ? s.t('orderConfirmed')
-                : '${s.t('orderConfirmed')} · ${session.lastOrder!.id}',
-          ),
-          if (session.lastOrder?.paymentMethod == 'lipa') ...[
-            const SizedBox(height: 12),
-            _LipaPayInstructions(
-              targets: _lipaTargets,
-              amountLabel:
-                  session.lastOrder?.customerPayLabel() ??
-                  session.formatMoney(session.cartGrandTotal),
-              hint: s.t('payWithLipaHint'),
-              numberLabel: s.t('lipaOrTillNumber'),
-            ),
-          ] else if (session.lastOrder != null)
-            Text(
-              session.lastOrder!.isCodPending
-                  ? s
-                        .t('codPendingBanner')
-                        .replaceAll(
-                          '{amount}',
-                          session.lastOrder!.lockedAmountLabel(),
-                        )
-                  : session.lastOrder!.paymentMode == 'cod'
-                  ? '${s.t('payOnDelivery')}: ${session.lastOrder!.paymentStatus}'
-                  : 'Payment: ${session.lastOrder!.paymentStatus} (${session.lastOrder!.paymentMode})',
-              style: TextStyle(
-                color: session.lastOrder?.isCodPending == true
-                    ? WingerColors.attentionInk
-                    : WingerColors.muted,
-                fontWeight: session.lastOrder?.isCodPending == true
-                    ? FontWeight.w600
-                    : FontWeight.w400,
-              ),
-            ),
           const SizedBox(height: 16),
           FilledButton(
             onPressed: () => context.go('/customer/orders'),
             child: Text(s.t('trackOrder')),
           ),
         ],
-      ],
+    ];
+
+    if (step < 4 && wide) {
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 3,
+              child: ListView(children: [...header, ...body]),
+            ),
+            const SizedBox(width: 24),
+            SizedBox(
+              width: 320,
+              child: SingleChildScrollView(
+                child: _checkoutSideSummary(s, session),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [...header, ...body],
     );
   }
 }
@@ -4553,17 +5175,55 @@ class _CheckoutPayChoices extends StatelessWidget {
         for (final choice in choices) ...[
           SizedBox(
             width: double.infinity,
-            child: choice.$1 == method
-                ? FilledButton.icon(
-                    onPressed: () => onChanged(choice.$1),
-                    icon: Icon(choice.$3),
-                    label: Text(choice.$2),
-                  )
-                : OutlinedButton.icon(
-                    onPressed: () => onChanged(choice.$1),
-                    icon: Icon(choice.$3),
-                    label: Text(choice.$2),
+            child: Material(
+              color: choice.$1 == method
+                  ? WingerColors.brandMuted
+                  : WingerColors.bgSurface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: choice.$1 == method
+                      ? WingerColors.brandPrimary
+                      : WingerColors.borderSubtle,
+                  width: choice.$1 == method ? 2 : 1,
+                ),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => onChanged(choice.$1),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
                   ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        choice.$3,
+                        color: choice.$1 == method
+                            ? WingerColors.brandPrimary
+                            : WingerColors.inkMuted,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          choice.$2,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: WingerColors.inkDefault,
+                          ),
+                        ),
+                      ),
+                      if (choice.$1 == method)
+                        const Icon(
+                          Icons.check_circle,
+                          color: WingerColors.brandPrimary,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 8),
         ],
