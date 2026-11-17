@@ -131,10 +131,17 @@ void main() {
         expect(strings.t('overview'), isNotEmpty);
         expect(strings.t('moreMenuHint'), isNotEmpty);
         expect(strings.t('customerRole'), isNotEmpty);
+        expect(strings.t('pendingSync'), isNotEmpty);
+        expect(strings.t('pendingSyncHint'), isNotEmpty);
+        expect(strings.t('apiStatus'), 'API');
       }
       expect(WingerStrings(const Locale('en')).t('catalogue'), 'Catalogue');
       expect(WingerStrings(const Locale('es')).t('catalogue'), 'Catálogo');
       expect(WingerStrings(const Locale('sw')).t('catalogue'), 'Katalogi');
+      expect(
+        WingerStrings(const Locale('en')).t('pendingSync'),
+        'Pending sync',
+      );
     });
   });
 }

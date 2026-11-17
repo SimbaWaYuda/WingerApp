@@ -493,6 +493,9 @@ class WingerStrings {
       'apiStatus': 'API',
       'online': 'Online',
       'offline': 'Offline (using demo data)',
+      'pendingSync': 'Pending sync',
+      'pendingSyncHint':
+          'Local changes awaiting synchronisation',
       'qty': 'Quantity',
       'deliveryTo': 'Delivery to Nairobi',
       'review': 'Review',
@@ -1259,6 +1262,9 @@ class WingerStrings {
       'apiStatus': 'API',
       'online': 'En línea',
       'offline': 'Sin conexión (datos demo)',
+      'pendingSync': 'Sincronización pendiente',
+      'pendingSyncHint':
+          'Cambios locales en espera de sincronización',
       'qty': 'Cantidad',
       'deliveryTo': 'Entrega a Nairobi',
       'review': 'Revisión',
@@ -2027,6 +2033,9 @@ class WingerStrings {
       'apiStatus': 'API',
       'online': 'Mtandaoni',
       'offline': 'Nje ya mtandao (data ya demo)',
+      'pendingSync': 'Usawazishaji unasubiri',
+      'pendingSyncHint':
+          'Mabadiliko ya ndani yanasubiri usawazishaji',
       'qty': 'Idadi',
       'deliveryTo': 'Uwasilishaji Nairobi',
       'review': 'Kagua',

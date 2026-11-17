@@ -580,20 +580,30 @@ class _TopBar extends StatelessWidget {
                 ),
               ),
               if (pendingSyncCount > 0) ...[
-                Container(
-                  margin: const EdgeInsets.only(right: 8),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: WingerColors.info,
-                    borderRadius: BorderRadius.circular(WingerRadius.chip),
-                  ),
-                  child: Text(
-                    '${s.t('apiStatus')} $pendingSyncCount',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: WingerColors.infoInk,
+                Semantics(
+                  label:
+                      '${s.t('pendingSyncHint')} ($pendingSyncCount)',
+                  child: Tooltip(
+                    message: s.t('pendingSyncHint'),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: WingerColors.info,
+                        borderRadius:
+                            BorderRadius.circular(WingerRadius.chip),
+                      ),
+                      child: Text(
+                        '${s.t('pendingSync')} · $pendingSyncCount',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: WingerColors.infoInk,
+                        ),
+                      ),
                     ),
                   ),
                 ),
