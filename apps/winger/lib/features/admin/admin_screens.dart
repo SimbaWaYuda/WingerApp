@@ -192,7 +192,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
-    final wide = MediaQuery.sizeOf(context).width >= 900;
     final future = _future;
     if (future == null) {
       return const Center(child: CircularProgressIndicator());
@@ -345,13 +344,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
               ),
             ] else ...[
-              GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: wide ? 4 : 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: wide ? 1.35 : 0.92,
+              KpiCardGrid(
                 children: [for (final kpi in kpis) KpiCard(data: kpi)],
               ),
               const SizedBox(height: 20),
@@ -896,7 +889,6 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
-    final wide = MediaQuery.sizeOf(context).width >= 900;
     final future = _future;
     if (future == null) {
       return const Center(child: CircularProgressIndicator());
@@ -974,13 +966,7 @@ class _AdminDeliveryScreenState extends State<AdminDeliveryScreen> {
                 ),
               )
             else ...[
-              GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: wide ? 3 : 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: wide ? 1.35 : 0.92,
+              KpiCardGrid(
                 children: [for (final kpi in kpis) KpiCard(data: kpi)],
               ),
               const SizedBox(height: 20),
