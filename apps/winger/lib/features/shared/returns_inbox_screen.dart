@@ -319,7 +319,6 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
       return const Center(child: CircularProgressIndicator());
     }
 
-    final wide = MediaQuery.sizeOf(context).width >= 900;
     final overview = _overview;
     final platformOpen = (overview?['openReturns'] as num?)?.toInt();
     final platformPendingRefunds =
@@ -373,13 +372,8 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                   ),
                   if (_showOverview) ...[
                     const SizedBox(height: 12),
-                    GridView.count(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisCount: wide ? 4 : 2,
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: wide ? 1.55 : 1.35,
+                    KpiCardGrid(
+                      spacing: 10,
                       children: [
                         KpiCard(
                           data: KpiCardData(

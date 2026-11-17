@@ -318,7 +318,6 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
-    final wide = MediaQuery.sizeOf(context).width >= 900;
     final future = _future;
     if (future == null) {
       return const Center(child: CircularProgressIndicator());
@@ -438,13 +437,7 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                 ),
               ),
             ] else ...[
-              GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: wide ? 5 : 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: wide ? 1.35 : 1.15,
+              KpiCardGrid(
                 children: [
                   for (var i = 0; i < kpis.length; i++)
                     KpiCard(
@@ -2795,15 +2788,7 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
                 child: Text(s.t('retry')),
               ),
             ] else ...[
-              GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: MediaQuery.sizeOf(context).width >= 900 ? 3 : 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: MediaQuery.sizeOf(context).width >= 900
-                    ? 1.45
-                    : 0.95,
+              KpiCardGrid(
                 children: [
                   KpiCard(
                     data: KpiCardData(
