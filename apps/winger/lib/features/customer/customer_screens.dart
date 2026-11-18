@@ -3516,7 +3516,7 @@ class _CompareScreenState extends State<CompareScreen> {
             const SizedBox(height: 12),
             if (session.compareIds.isEmpty)
               Text(
-                s.t('searchHint'),
+                s.t('compareEmpty'),
                 style: TextStyle(color: WingerColors.muted),
               )
             else if (snapshot.connectionState != ConnectionState.done)

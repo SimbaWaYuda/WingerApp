@@ -53,6 +53,8 @@ class WingerStrings {
       'home': 'Home',
       'search': 'Search',
       'compare': 'Compare',
+      'compareEmpty':
+          'No products to compare yet. Add products to compare their features side by side.',
       'cart': 'Cart',
       'orders': 'Orders',
       'account': 'Account',
@@ -821,6 +823,8 @@ class WingerStrings {
       'home': 'Inicio',
       'search': 'Buscar',
       'compare': 'Comparar',
+      'compareEmpty':
+          'Aún no hay productos para comparar. Añade productos para comparar sus características lado a lado.',
       'cart': 'Carrito',
       'orders': 'Pedidos',
       'account': 'Cuenta',
@@ -1592,6 +1596,8 @@ class WingerStrings {
       'home': 'Nyumbani',
       'search': 'Tafuta',
       'compare': 'Linganisha',
+      'compareEmpty':
+          'Bado hakuna bidhaa za kulinganisha. Ongeza bidhaa ili kulinganisha sifa zake bega kwa bega.',
       'cart': 'Kikapu',
       'orders': 'Oda',
       'account': 'Akaunti',
