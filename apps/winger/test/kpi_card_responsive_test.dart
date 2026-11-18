@@ -237,9 +237,10 @@ void main() {
 
             expect(overflows, isEmpty, reason: overflows.join('\n'));
             expect(find.text(cash), findsOneWidget);
-            // SW maps commissionWaiting and pendingCommission to the same
-            // phrase; assert visibility rather than uniqueness.
-            expect(find.text(waiting), findsAtLeastNWidgets(1));
+            final pendingLabel = s.t('pendingCommission');
+            expect(waiting, isNot(equals(pendingLabel)));
+            expect(find.text(waiting), findsOneWidget);
+            expect(find.text(pendingLabel), findsOneWidget);
             expect(find.text('\$12.00'), findsOneWidget);
             expect(find.text('\$3.00'), findsOneWidget);
           },

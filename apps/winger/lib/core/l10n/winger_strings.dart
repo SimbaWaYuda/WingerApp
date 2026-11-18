@@ -1838,7 +1838,7 @@ class WingerStrings {
       'payoutSent': 'Malipo yametumwa',
       'payoutNone':
           'Hakuna malipo yaliyotumwa. Oda za pesa taslimu hubaki kwenye Winger.',
-      'commissionWaiting': 'Kamisheni inayosubiri',
+      'commissionWaiting': 'Kamisheni inayosubiri malipo',
       'cashStaysInWinger': 'Pesa taslimu hubaki kwenye Winger',
       'payoutsAlreadySent': 'Malipo yaliyotumwa',
       'payoutSplitHint':
@@ -2165,7 +2165,7 @@ class WingerStrings {
       'supplierAccount': 'Akaunti ya msambazaji',
       'activeRate': 'Kiwango kinachotumika',
       'settleableCommission': 'Kamisheni inayolipika',
-      'pendingCommission': 'Kamisheni inayosubiri',
+      'pendingCommission': 'Kamisheni haijatambuliwa',
       'settleable': 'Inayolipika',
       'pending': 'Inayosubiri',
       'commissionLines': 'Mistari ya kamisheni',
