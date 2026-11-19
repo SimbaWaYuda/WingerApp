@@ -27,6 +27,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SupplierPaymentsService } from '../supplier-payments/supplier-payments.service';
+import { resolveOrderDeliveryAddress } from './delivery-address';
 import {
   cityTaxRateFor,
   computeFulfillmentFees,
@@ -111,6 +112,7 @@ export type ValidateCartDto = {
   items: CreateOrderItemDto[];
   deliveryMethod?: string;
   city?: string;
+  addressLine?: string;
 };
 
 export type UpdateItemStatusDto = {
@@ -249,6 +251,15 @@ export class OrdersService {
     }
     if (!dto.items?.length) {
       throw new BadRequestException('Cart is empty');
+    }
+
+    const deliveryAddress = resolveOrderDeliveryAddress({
+      deliveryMethod: dto.deliveryMethod,
+      addressLine: dto.addressLine,
+      city: dto.city,
+    });
+    if (!deliveryAddress.ok) {
+      throw new BadRequestException(deliveryAddress.message);
     }
 
     const quantities = new Map<
@@ -393,7 +404,7 @@ export class OrdersService {
     const fees = await this.quoteFulfillment({
       subtotal,
       deliveryMethod: dto.deliveryMethod,
-      city: dto.city,
+      city: deliveryAddress.value.city ?? undefined,
       lines: lines.flatMap((line) =>
         line.product
           ? [
@@ -461,6 +472,8 @@ export class OrdersService {
       display: displayQuote,
       fxError,
       deliveryMethod: fees.deliveryMethod,
+      addressLine: deliveryAddress.value.addressLine,
+      city: deliveryAddress.value.city,
       shipments: fees.shipments,
       lines,
     };
@@ -557,10 +570,21 @@ export class OrdersService {
       (sum, line) => sum.add(line.lineTotal),
       new Prisma.Decimal(0),
     );
+    const deliveryMethod = normalizeDeliveryMethod(dto.deliveryMethod);
+    const deliveryAddress = resolveOrderDeliveryAddress({
+      deliveryMethod,
+      addressLine: dto.addressLine,
+      city: dto.city,
+    });
+    if (!deliveryAddress.ok) {
+      throw new BadRequestException(deliveryAddress.message);
+    }
+    const addressLine = deliveryAddress.value.addressLine;
+    const city = deliveryAddress.value.city;
     const fees = await this.quoteFulfillment({
       subtotal: Number(subtotal),
-      deliveryMethod: dto.deliveryMethod,
-      city: dto.city,
+      deliveryMethod,
+      city: city ?? undefined,
       lines: lines.map((line) => ({
         supplierId: line.product.supplierId,
         supplierName: line.product.supplierName,
@@ -578,16 +602,6 @@ export class OrdersService {
       dto,
       payOnDelivery || payWithLipa,
     );
-    const deliveryMethod = normalizeDeliveryMethod(dto.deliveryMethod);
-    const addressLine = (dto.addressLine ?? '').trim();
-    const city = (dto.city ?? '').trim();
-    if ((payOnDelivery || payWithLipa) && deliveryMethod !== 'pickup') {
-      if (!addressLine || !city) {
-        throw new BadRequestException(
-          'Address and city are required for pay on delivery',
-        );
-      }
-    }
     const lipaSuppliers = payWithLipa
       ? await this.requireLipaForLines(lines.map((line) => line.product.supplierId))
       : [];
@@ -684,8 +698,8 @@ export class OrdersService {
           taxAmount: new Prisma.Decimal(fees.tax.toFixed(2)),
           deliveryFee: new Prisma.Decimal(fees.deliveryFee.toFixed(2)),
           total,
-          addressLine: addressLine || 'Westlands',
-          city: city || 'Nairobi',
+          addressLine,
+          city,
           checkoutIdempotencyKey: checkoutKey,
           shipments: {
             create: lockedShipments.map((row) => ({

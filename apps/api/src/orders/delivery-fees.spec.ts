@@ -116,6 +116,53 @@ describe('delivery fees', () => {
     expect(cityTaxRateFor(rules, 'Mombasa')).toBeNull();
   });
 
+  it('does not invent Nairobi when delivery city is missing or blank', () => {
+    const blank = computeFulfillmentFees({
+      subtotal: 40,
+      deliveryMethod: 'standard',
+      city: '   ',
+      suppliers: [kijani],
+    });
+    expect(blank.shipments[0].estimate).toBe('3–5 days');
+    expect(blank.shipments[0].estimate).not.toMatch(/Nairobi/i);
+    expect(blank.deliveryFee).toBe(4.99);
+    expect(blank.tax).toBe(3.2);
+
+    const omitted = computeFulfillmentFees({
+      subtotal: 40,
+      deliveryMethod: 'express',
+      suppliers: [{ ...kijani, taxOnDelivery: false }],
+    });
+    expect(omitted.shipments[0].estimate).toBe('1–2 days');
+    expect(omitted.shipments[0].estimate).not.toMatch(/Nairobi/i);
+    expect(omitted.deliveryFee).toBe(9.99);
+  });
+
+  it('keeps valid-city fee and tax behaviour unchanged', () => {
+    const quote = computeFulfillmentFees({
+      subtotal: 40,
+      deliveryMethod: 'standard',
+      city: 'Dar es Salaam',
+      suppliers: [{ ...kijani, cityTaxRatePercent: 16, taxOnDelivery: true }],
+    });
+    expect(quote.deliveryFee).toBe(4.99);
+    expect(quote.tax).toBe(7.2);
+    expect(quote.shipments[0].estimate).toBe('3–5 days to Dar es Salaam');
+  });
+
+  it('allows pickup without a delivery city', () => {
+    const quote = computeFulfillmentFees({
+      subtotal: 40,
+      deliveryMethod: 'pickup',
+      city: '',
+      suppliers: [{ ...kijani, carrier: 'courier', courierName: 'Sendy' }],
+    });
+    expect(quote.deliveryFee).toBe(0);
+    expect(quote.shipments[0].carrier).toBeNull();
+    expect(quote.shipments[0].estimate).toBe('Ready for pickup');
+    expect(quote.shipments[0].estimate).not.toMatch(/Nairobi/i);
+  });
+
   it('records supplier delivery, a named courier, and no carrier on pickup', () => {
     const supplierDelivery = computeFulfillmentFees({
       subtotal: 40,

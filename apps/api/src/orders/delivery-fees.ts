@@ -128,14 +128,15 @@ export function taxForSupplier(deliveryFee: number, supplier: SupplierDeliveryQu
   return taxPartsForSupplier(deliveryFee, supplier).tax;
 }
 
-export function estimateLabel(method: DeliveryMethod, city: string): string {
+export function estimateLabel(method: DeliveryMethod, city?: string | null): string {
+  const dest = (city ?? '').trim();
   switch (method) {
     case 'express':
-      return `1–2 days to ${city}`;
+      return dest ? `1–2 days to ${dest}` : '1–2 days';
     case 'pickup':
-      return `Ready for pickup in ${city}`;
+      return dest ? `Ready for pickup in ${dest}` : 'Ready for pickup';
     default:
-      return `3–5 days to ${city}`;
+      return dest ? `3–5 days to ${dest}` : '3–5 days';
   }
 }
 
@@ -147,7 +148,9 @@ export function computeFulfillmentFees(input: {
   suppliers: SupplierDeliveryQuote[];
 }) {
   const method = normalizeDeliveryMethod(input.deliveryMethod);
-  const city = (input.city ?? 'Nairobi').trim() || 'Nairobi';
+  // Never invent a city (e.g. Nairobi). Blank city keeps supplier/default tax rates
+  // via cityTaxRateFor(null) and city-agnostic estimate labels — not a geo quote.
+  const city = (input.city ?? '').trim();
   const fallback: SupplierDeliveryQuote = {
     supplierId: '',
     supplierName: 'Supplier',
