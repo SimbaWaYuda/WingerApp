@@ -47,8 +47,9 @@ class AppSession extends ChangeNotifier {
   String? accessToken;
   bool mustChangePassword = false;
   String phone = '';
-  String city = 'Nairobi';
-  String addressLine = 'Westlands';
+  /// Empty until profile/checkout confirms a destination — never invent geography.
+  String city = '';
+  String addressLine = '';
   /// express | standard | pickup
   String deliveryMethod = 'standard';
   String settlementCurrency = 'USD';
@@ -64,6 +65,9 @@ class AppSession extends ChangeNotifier {
   double cartDeliveryFee = 0;
   double cartTax = 0;
   List<CartShipmentQuote> cartShipments = [];
+  /// True when fees come from local `_recomputeLocalFees` (not a server quote).
+  /// UI must label these as estimates; order creation always uses the API quote.
+  bool cartFeesAreLocalEstimate = false;
   LocaleCode localeCode = LocaleCode.en;
   final List<CartItem> _cart = [];
   final List<String> compareIds = [];
@@ -231,13 +235,14 @@ class AppSession extends ChangeNotifier {
   }
 
   String deliveryEstimateFor(String city) {
+    final dest = city.trim();
     switch (deliveryMethod) {
       case 'express':
-        return '1–2 days to $city';
+        return dest.isEmpty ? '1–2 days' : '1–2 days to $dest';
       case 'pickup':
-        return 'Ready for pickup in $city';
+        return dest.isEmpty ? 'Ready for pickup' : 'Ready for pickup in $dest';
       default:
-        return '3–5 days to $city';
+        return dest.isEmpty ? '3–5 days' : '3–5 days to $dest';
     }
   }
 
@@ -263,6 +268,7 @@ class AppSession extends ChangeNotifier {
       cartShipments.fold<double>(0, (sum, s) => sum + s.fee),
     );
     cartTax = _roundMoney(cartTotal * 0.08);
+    cartFeesAreLocalEstimate = true;
   }
 
   void _applyFeeQuote({
@@ -273,6 +279,7 @@ class AppSession extends ChangeNotifier {
     cartDeliveryFee = deliveryFee;
     cartTax = tax;
     cartShipments = List.of(shipments);
+    cartFeesAreLocalEstimate = false;
   }
 
   static double _roundMoney(double value) =>
@@ -300,8 +307,9 @@ class AppSession extends ChangeNotifier {
     if (selectedRole != UserRole.supplier) supplierApproved = null;
     mustChangePassword = passwordChangeRequired;
     if (phoneNumber != null) phone = phoneNumber;
-    if (cityName != null && cityName.isNotEmpty) city = cityName;
-    if (address != null && address.isNotEmpty) addressLine = address;
+    // Allow clearing: null skips; empty string clears prior silent defaults.
+    if (cityName != null) city = cityName.trim();
+    if (address != null) addressLine = address.trim();
     notifyListeners();
     authSignal.ping();
   }
@@ -314,11 +322,25 @@ class AppSession extends ChangeNotifier {
   }) {
     displayName = name;
     phone = phoneNumber;
-    city = cityName;
-    addressLine = address;
+    city = cityName.trim();
+    addressLine = address.trim();
     if (_cart.isNotEmpty) _recomputeLocalFees();
     notifyListeners();
   }
+
+  /// Confirmed checkout destination shared by summary, validate, and placeOrder.
+  void setConfirmedDeliveryAddress({
+    required String cityName,
+    required String address,
+  }) {
+    city = cityName.trim();
+    addressLine = address.trim();
+    if (_cart.isNotEmpty) _recomputeLocalFees();
+    notifyListeners();
+  }
+
+  bool get hasConfirmedDeliveryAddress =>
+      addressLine.trim().isNotEmpty && city.trim().isNotEmpty;
 
   void setMustChangePassword(bool required) {
     if (mustChangePassword == required) return;
@@ -366,8 +388,8 @@ class AppSession extends ChangeNotifier {
     authPrompt = null;
     if (!asGuest) {
       phone = '';
-      city = 'Nairobi';
-      addressLine = 'Westlands';
+      city = '';
+      addressLine = '';
       compareIds.clear();
       lastOrder = null;
       displayName = '';
@@ -493,6 +515,7 @@ class AppSession extends ChangeNotifier {
       cartDeliveryFee = 0;
       cartTax = 0;
       cartShipments = [];
+      cartFeesAreLocalEstimate = false;
     } else {
       _recomputeLocalFees();
     }
@@ -516,6 +539,7 @@ class AppSession extends ChangeNotifier {
         List.of(_cart),
         deliveryMethod: deliveryMethod,
         city: city,
+        addressLine: addressLine,
       );
       final next = <CartItem>[];
       for (final line in result.lines) {
@@ -561,6 +585,7 @@ class AppSession extends ChangeNotifier {
         cartDeliveryFee = 0;
         cartTax = 0;
         cartShipments = [];
+        cartFeesAreLocalEstimate = false;
       } else {
         _applyFeeQuote(
           deliveryFee: result.deliveryFee,
@@ -572,6 +597,7 @@ class AppSession extends ChangeNotifier {
       return result.ok &&
           !_cart.any((item) => item.quantity > item.availableStock);
     } catch (_) {
+      // Server quote unavailable (e.g. no confirmed address yet) — local estimate only.
       _recomputeLocalFees();
       notifyListeners();
       return !_cart.any(
@@ -638,14 +664,9 @@ class AppSession extends ChangeNotifier {
       throw Exception('Cart is empty');
     }
 
-    final cod = paymentMethod == 'pay_on_delivery' ||
-        paymentMethod == 'cod' ||
-        paymentMethod == 'cash_on_delivery' ||
-        paymentMethod == 'lipa';
-    if (cod && deliveryMethod != 'pickup') {
-      if (addressLine.trim().isEmpty || city.trim().isEmpty) {
-        throw Exception('Address and city are required for pay on delivery');
-      }
+    final pickup = deliveryMethod.trim().toLowerCase() == 'pickup';
+    if (!pickup && !hasConfirmedDeliveryAddress) {
+      throw Exception('Address and city are required for delivery');
     }
 
     if (apiOnline && accessToken != null && _api != null) {
@@ -664,6 +685,7 @@ class AppSession extends ChangeNotifier {
       cartDeliveryFee = 0;
       cartTax = 0;
       cartShipments = [];
+      cartFeesAreLocalEstimate = false;
       notifyListeners();
       await _cartRepository?.clear();
       return order;
@@ -671,9 +693,7 @@ class AppSession extends ChangeNotifier {
 
     // Offline cannot place a real order — keep the cart so the customer can retry.
     throw Exception(
-      cod
-          ? 'Pay on delivery needs an online connection. Connect and try again.'
-          : 'Checkout needs an online connection. Connect and try again.',
+      'Checkout needs an online connection. Connect and try again.',
     );
   }
 

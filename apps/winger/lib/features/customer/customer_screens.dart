@@ -23,9 +23,23 @@ import '../../core/widgets/status_badge.dart';
 import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
 
+String _deliveryFeeFieldLabel(WingerStrings s, AppSession session) {
+  if (session.cartFeesAreLocalEstimate) return s.t('deliveryFeeEstimateLabel');
+  return s.t('deliveryFee');
+}
+
 String _deliveryFeeLabel(WingerStrings s, AppSession session, double amount) {
-  if (amount <= 0) return s.t('freeDelivery');
-  return session.formatMoney(amount);
+  if (amount <= 0) {
+    if (session.cartFeesAreLocalEstimate) {
+      return '${s.t('freeDelivery')} · ${s.t('deliveryFeeEstimate')}';
+    }
+    return s.t('freeDelivery');
+  }
+  final money = session.formatMoney(amount);
+  if (session.cartFeesAreLocalEstimate) {
+    return '$money · ${s.t('deliveryFeeEstimate')}';
+  }
+  return money;
 }
 
 /// Localised cart/checkout fulfilment label. Presentation only.
@@ -3733,11 +3747,22 @@ class _CartScreenState extends State<CartScreen> {
             value: session.formatMoney(session.cartTotal),
           ),
           _SummaryRow(
-            label: s.t('deliveryFee'),
+            label: _deliveryFeeFieldLabel(s, session),
             value:
                 '${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}'
                 '${session.cartBySupplier.length > 1 ? ' · ${session.cartBySupplier.length} ${s.t('suppliers').toLowerCase()}' : ''}',
           ),
+          if (session.cartFeesAreLocalEstimate) ...[
+            const SizedBox(height: 4),
+            Text(
+              s.t('deliveryFeeEstimateHint'),
+              style: TextStyle(
+                color: WingerColors.inkMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
           _SummaryRow(
             label: s.t('estimatedTax'),
             value: session.formatMoney(session.cartTax),

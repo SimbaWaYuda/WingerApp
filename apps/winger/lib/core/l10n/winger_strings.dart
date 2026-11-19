@@ -138,6 +138,10 @@ class WingerStrings {
       'refreshingCart': 'Updating prices and stock…',
       'cartUpdated': 'Cart updated with current prices and stock',
       'deliveryFee': 'Delivery',
+      'deliveryFeeEstimateLabel': 'Delivery (estimate)',
+      'deliveryFeeEstimate': 'estimate',
+      'deliveryFeeEstimateHint':
+          'Temporary estimate until you confirm your address. Final delivery fee is set at checkout.',
       'tax': 'Tax',
       'orderDetails': 'Order details',
       'cancelOrder': 'Cancel order',
@@ -908,6 +912,10 @@ class WingerStrings {
       'refreshingCart': 'Actualizando precios y stock…',
       'cartUpdated': 'Carrito actualizado con precios y stock actuales',
       'deliveryFee': 'Entrega',
+      'deliveryFeeEstimateLabel': 'Entrega (estimación)',
+      'deliveryFeeEstimate': 'estimación',
+      'deliveryFeeEstimateHint':
+          'Estimación temporal hasta que confirmes tu dirección. La tarifa final se fija al pagar.',
       'tax': 'Impuesto',
       'orderDetails': 'Detalles del pedido',
       'cancelOrder': 'Cancelar pedido',
@@ -1681,6 +1689,10 @@ class WingerStrings {
       'refreshingCart': 'Inasasisha bei na stock…',
       'cartUpdated': 'Rukwama imesasishwa na bei na stock za sasa',
       'deliveryFee': 'Uwasilishaji',
+      'deliveryFeeEstimateLabel': 'Uwasilishaji (makadirio)',
+      'deliveryFeeEstimate': 'makadirio',
+      'deliveryFeeEstimateHint':
+          'Makadirio ya muda hadi uthibitishe anwani yako. Ada ya mwisho huwekwa wakati wa kulipa.',
       'tax': 'Kodi',
       'orderDetails': 'Maelezo ya oda',
       'cancelOrder': 'Ghairi oda',

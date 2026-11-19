@@ -795,8 +795,8 @@ class ApiClient {
   Future<CustomerOrder> createOrder({
     required List<CartItem> items,
     String paymentMethod = 'card',
-    String addressLine = 'Westlands',
-    String city = 'Nairobi',
+    required String addressLine,
+    required String city,
     String? deliveryMethod,
     String? stripePaymentMethodId,
     String? checkoutIdempotencyKey,
