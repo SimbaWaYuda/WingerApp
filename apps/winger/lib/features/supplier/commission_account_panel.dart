@@ -5,6 +5,23 @@ import '../../core/api/api_client.dart';
 import '../../core/l10n/winger_strings.dart';
 import '../../core/theme/winger_colors.dart';
 
+/// Formats Lipa evidence [submittedAt] for display (local `YYYY-MM-DD HH:mm`).
+/// Null, empty, or invalid values return an empty string — never throws.
+String formatSupplierEvidenceTimestamp(Object? raw) {
+  if (raw == null) return '';
+  final text = raw.toString().trim();
+  if (text.isEmpty) return '';
+  final parsed = DateTime.tryParse(text);
+  if (parsed == null) return '';
+  final local = parsed.toLocal();
+  final y = local.year.toString().padLeft(4, '0');
+  final m = local.month.toString().padLeft(2, '0');
+  final d = local.day.toString().padLeft(2, '0');
+  final hh = local.hour.toString().padLeft(2, '0');
+  final mm = local.minute.toString().padLeft(2, '0');
+  return '$y-$m-$d $hh:$mm';
+}
+
 class SupplierCommissionAccountPanel extends StatefulWidget {
   const SupplierCommissionAccountPanel({super.key});
 
@@ -239,13 +256,14 @@ class _SupplierCommissionAccountPanelState
 
   Widget _evidenceHistoryTile(WingerStrings s, Map row) {
     final note = '${row['reviewNote'] ?? ''}'.trim();
+    final submitted = formatSupplierEvidenceTimestamp(row['submittedAt']);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Text(
         [
           '${row['orderNumber']} · ${_evidenceStatusLabel(s, '${row['status']}')}',
           '${row['reference']}',
-          '${row['submittedAt']}',
+          if (submitted.isNotEmpty) submitted,
           if (note.isNotEmpty) '${s.t('lipaEvidenceRejectNote')}: $note',
         ].join('\n'),
       ),

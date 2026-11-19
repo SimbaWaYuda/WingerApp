@@ -374,6 +374,8 @@ class _ReturnsInboxScreenState extends State<ReturnsInboxScreen>
                     const SizedBox(height: 12),
                     KpiCardGrid(
                       spacing: 10,
+                      // Prefer 2×2 or 4-across — never 3+1 with Rejected alone.
+                      balanceFourCardLayout: true,
                       children: [
                         KpiCard(
                           data: KpiCardData(

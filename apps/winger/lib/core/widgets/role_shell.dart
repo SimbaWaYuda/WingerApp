@@ -251,6 +251,7 @@ class _FixedBottomNav extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     return Material(
+      key: const ValueKey('role-shell-bottom-nav'),
       color: WingerColors.bgElevated,
       elevation: WingerElevation.materialLevel1,
       child: SafeArea(
@@ -293,10 +294,13 @@ class _BottomNavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = selected ? WingerColors.brandPrimary : WingerColors.inkMuted;
     final icon = Icon(destination.icon, color: color, size: 24);
+    // excludeSemantics: one accessible name (avoids "Overview Overview" from
+    // Semantics.label + child Text) while keeping a single selected flag.
     return Semantics(
       button: true,
       selected: selected,
       label: label,
+      excludeSemantics: true,
       child: InkWell(
         onTap: onTap,
         focusColor: WingerColors.focusRing.withValues(alpha: 0.12),

@@ -27,6 +27,19 @@ import '../auth/password_cards.dart';
 import '../onboarding/onboarding_checklist.dart';
 import 'commission_account_panel.dart';
 
+/// Top-bar title for the current supplier route (exported for tests).
+String supplierShellTitle(WingerStrings s, String path) {
+  if (path.startsWith('/supplier/orders')) return s.t('orders');
+  if (path.startsWith('/supplier/products')) return s.t('catalogue');
+  if (path.startsWith('/supplier/returns')) return s.t('returns');
+  if (path.startsWith('/supplier/delivery')) return s.t('deliveryFees');
+  if (path.startsWith('/supplier/payments')) return s.t('payments');
+  if (path.startsWith('/supplier/more')) return s.t('more');
+  if (path.startsWith('/supplier/onboarding')) return s.t('supplierPendingNav');
+  // /supplier and unknown supplier paths.
+  return s.t('overview');
+}
+
 /// Full supplier destinations for wide/side navigation (all routes preserved).
 List<ShellDestination> supplierDestinations({int openReturns = 0}) => [
       const ShellDestination(
@@ -112,6 +125,11 @@ List<ShellDestination> supplierMoreMenuDestinations({int openReturns = 0}) => [
       ),
     ];
 
+/// Whether a More-hub destination matches [location] (exported for tests).
+bool supplierMoreDestinationSelected(String location, String path) {
+  return location == path || location.startsWith('$path/');
+}
+
 class SupplierShell extends StatefulWidget {
   const SupplierShell({super.key, required this.child});
 
@@ -175,6 +193,7 @@ class _SupplierShellState extends State<SupplierShell> {
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
+    final location = GoRouterState.of(context).uri.path;
     final pending = session.supplierApproved == false;
     final pendingDestinations = const [
       ShellDestination(
@@ -184,7 +203,7 @@ class _SupplierShellState extends State<SupplierShell> {
       ),
     ];
     return RoleShell(
-      title: s.t('dashboard'),
+      title: supplierShellTitle(s, location),
       roleLabel: s.t('supplier'),
       layoutKind: ShellLayoutKind.operations,
       destinations: pending
@@ -205,6 +224,7 @@ class SupplierMoreScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = WingerStrings.of(context);
     final session = context.watch<AppSession>();
+    final location = GoRouterState.of(context).uri.path;
     final items = supplierMoreMenuDestinations();
     return ListView(
       padding: const EdgeInsets.all(WingerSpacing.s16),
@@ -220,6 +240,7 @@ class SupplierMoreScreen extends StatelessWidget {
         const SizedBox(height: WingerSpacing.s16),
         for (final item in items)
           ListTile(
+            selected: supplierMoreDestinationSelected(location, item.path),
             leading: item.badgeCount > 0
                 ? Badge(
                     label: Text('${item.badgeCount}'),
@@ -231,64 +252,113 @@ class SupplierMoreScreen extends StatelessWidget {
             onTap: () => context.go(item.path),
           ),
         const Divider(),
-        ListTile(
-          leading: const Icon(Icons.person_outline),
-          title: Text(s.t('account')),
-          subtitle: Text(
-            session.displayName.isEmpty ? session.email : session.displayName,
+        // Account / language / sign-out are actions, never route destinations.
+        Semantics(
+          selected: false,
+          child: ListTile(
+            leading: const Icon(Icons.person_outline),
+            title: Text(s.t('account')),
+            subtitle: Text(
+              session.displayName.isEmpty ? session.email : session.displayName,
+            ),
           ),
         ),
-        ListTile(
-          leading: const Icon(Icons.language),
-          title: Text(s.languageLabel),
-          onTap: () async {
-            await showModalBottomSheet<void>(
-              context: context,
-              builder: (ctx) {
-                return SafeArea(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (final code in LocaleCode.values)
-                        ListTile(
-                          title: Text(switch (code) {
-                            LocaleCode.en => 'English',
-                            LocaleCode.es => 'Español',
-                            LocaleCode.sw => 'Kiswahili',
-                          }),
-                          trailing: session.localeCode == code
-                              ? const Icon(
-                                  Icons.check,
-                                  color: WingerColors.brandPrimary,
-                                )
-                              : null,
-                          onTap: () async {
-                            await session.setLocale(code);
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
-                        ),
-                    ],
-                  ),
-                );
-              },
-            );
-          },
+        Semantics(
+          selected: false,
+          button: true,
+          child: ListTile(
+            leading: const Icon(Icons.language),
+            title: Text(s.languageLabel),
+            onTap: () async {
+              await showModalBottomSheet<void>(
+                context: context,
+                builder: (ctx) {
+                  return SafeArea(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final code in LocaleCode.values)
+                          ListTile(
+                            title: Text(switch (code) {
+                              LocaleCode.en => 'English',
+                              LocaleCode.es => 'Español',
+                              LocaleCode.sw => 'Kiswahili',
+                            }),
+                            trailing: session.localeCode == code
+                                ? const Icon(
+                                    Icons.check,
+                                    color: WingerColors.brandPrimary,
+                                  )
+                                : null,
+                            onTap: () async {
+                              await session.setLocale(code);
+                              if (ctx.mounted) Navigator.pop(ctx);
+                            },
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
         ),
-        ListTile(
-          leading: const Icon(Icons.logout),
-          title: Text(s.t('signOut')),
-          onTap: () {
-            unawaited(session.signOut());
-            context.go('/login');
-          },
+        Semantics(
+          selected: false,
+          button: true,
+          child: ListTile(
+            leading: const Icon(Icons.logout),
+            title: Text(s.t('signOut')),
+            onTap: () {
+              unawaited(session.signOut());
+              context.go('/login');
+            },
+          ),
         ),
       ],
     );
   }
 }
 
+/// Compact voluntary password action for supplier Overview (below KPIs).
+/// Not used for mandatory [AppSession.mustChangePassword] flows.
+class SupplierVoluntaryPasswordSection extends StatefulWidget {
+  const SupplierVoluntaryPasswordSection({super.key});
+
+  @override
+  State<SupplierVoluntaryPasswordSection> createState() =>
+      _SupplierVoluntaryPasswordSectionState();
+}
+
+class _SupplierVoluntaryPasswordSectionState
+    extends State<SupplierVoluntaryPasswordSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = WingerStrings.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          key: const ValueKey('supplier-voluntary-password'),
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.lock_outline),
+          title: Text(s.t('changePassword')),
+          trailing: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
+          onTap: () => setState(() => _expanded = !_expanded),
+        ),
+        if (_expanded) const ChangePasswordCard(),
+      ],
+    );
+  }
+}
+
 class SupplierDashboardScreen extends StatefulWidget {
-  const SupplierDashboardScreen({super.key});
+  const SupplierDashboardScreen({super.key, this.dashboardLoader});
+
+  /// Test override for Overview data. Production uses [ApiClient.fetchSupplierDashboard].
+  final Future<Map<String, dynamic>> Function()? dashboardLoader;
 
   @override
   State<SupplierDashboardScreen> createState() =>
@@ -305,6 +375,8 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
   }
 
   Future<Map<String, dynamic>> _load() async {
+    final override = widget.dashboardLoader;
+    if (override != null) return override();
     final session = context.read<AppSession>();
     final token = session.accessToken;
     if (token == null || token.isEmpty) {
@@ -400,8 +472,6 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            const ChangePasswordCard(),
-            const SizedBox(height: 16),
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())
             else if (snapshot.hasError) ...[
@@ -486,6 +556,10 @@ class _SupplierDashboardScreenState extends State<SupplierDashboardScreen> {
                   ),
                 ),
               ],
+              // Voluntary change-password: compact secondary block below KPIs.
+              // Mandatory changes stay on /choose-password via access_gate.
+              const SizedBox(height: 16),
+              const SupplierVoluntaryPasswordSection(),
               const SizedBox(height: 20),
               Text(
                 s.t('orders'),
@@ -1038,13 +1112,17 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
                           children: [
                             Row(
                               children: [
-                                Text(
-                                  order.id,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
+                                Expanded(
+                                  child: Text(
+                                    order.id,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                 ),
-                                const Spacer(),
+                                const SizedBox(width: 8),
                                 StatusBadge(status: item.status),
                               ],
                             ),

@@ -65,6 +65,31 @@ class KpiCard extends StatelessWidget {
   }
 }
 
+/// Column count for [KpiCardGrid] (exported for layout tests).
+///
+/// When [balanceFourCardLayout] is true and there are exactly four children,
+/// prefer 4-across or 2×2 — never a 3+1 orphan last row.
+int kpiCardColumnCount({
+  required double maxWidth,
+  required int childCount,
+  double minCardWidth = 168,
+  double spacing = 12,
+  bool balanceFourCardLayout = false,
+}) {
+  if (childCount <= 0 || maxWidth <= 0) return 1;
+  final natural = math.max(
+    1,
+    ((maxWidth + spacing) / (minCardWidth + spacing)).floor(),
+  );
+  if (!balanceFourCardLayout || childCount != 4) {
+    return math.min(natural, childCount);
+  }
+  final canFour = maxWidth + 0.001 >= (4 * minCardWidth) + (3 * spacing);
+  if (canFour) return 4;
+  if (natural >= 2) return 2;
+  return 1;
+}
+
 /// Responsive KPI row/grid that sizes cards by available width only.
 ///
 /// Heights follow content (no fixed [GridView] aspect ratio), so wrapped
@@ -75,11 +100,15 @@ class KpiCardGrid extends StatelessWidget {
     required this.children,
     this.minCardWidth = 168,
     this.spacing = 12,
+    this.balanceFourCardLayout = false,
   });
 
   final List<Widget> children;
   final double minCardWidth;
   final double spacing;
+
+  /// Returns overview: avoid 3+1 so Rejected is not alone on a second row.
+  final bool balanceFourCardLayout;
 
   @override
   Widget build(BuildContext context) {
@@ -88,9 +117,12 @@ class KpiCardGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxW = constraints.maxWidth;
-        final count = math.max(
-          1,
-          ((maxW + spacing) / (minCardWidth + spacing)).floor(),
+        final count = kpiCardColumnCount(
+          maxWidth: maxW,
+          childCount: children.length,
+          minCardWidth: minCardWidth,
+          spacing: spacing,
+          balanceFourCardLayout: balanceFourCardLayout,
         );
         final cardW = count == 1
             ? maxW

@@ -143,6 +143,56 @@ void main() {
     );
   });
 
+  test('mustChangePassword forces choose-password for supplier protected routes',
+      () {
+    for (final path in [
+      '/supplier',
+      '/supplier/orders',
+      '/supplier/products',
+      '/supplier/more',
+      '/supplier/payments',
+      '/supplier/returns',
+      '/supplier/delivery',
+      '/login',
+    ]) {
+      final decision = gate(
+        signedIn: true,
+        role: UserRole.supplier,
+        supplierApproved: true,
+        mustChangePassword: true,
+        location: path,
+      );
+      expect(
+        decision.location,
+        '/choose-password',
+        reason: 'must gate $path until password change completes',
+      );
+    }
+    expect(
+      gate(
+        signedIn: true,
+        role: UserRole.supplier,
+        supplierApproved: true,
+        mustChangePassword: true,
+        location: '/choose-password',
+      ).location,
+      isNull,
+    );
+  });
+
+  test('mustChangePassword cleared allows supplier overview again', () {
+    expect(
+      gate(
+        signedIn: true,
+        role: UserRole.supplier,
+        supplierApproved: true,
+        mustChangePassword: false,
+        location: '/supplier',
+      ).location,
+      isNull,
+    );
+  });
+
   test('guest cart remains after registration', () async {
     final session = AppSession();
     session.continueAsGuest();

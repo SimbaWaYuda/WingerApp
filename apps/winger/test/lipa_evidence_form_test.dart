@@ -208,6 +208,12 @@ void main() {
     expect(find.textContaining('TEST-CUST-LIPA-V3-001'), findsOneWidget);
     expect(find.textContaining('WG-10127 · Rejected'), findsOneWidget);
     expect(find.textContaining('Rejection note: Test rejection, payment not received'), findsOneWidget);
+    expect(find.textContaining('2026-11-14T20:41:20.660Z'), findsNothing);
+    expect(find.textContaining('2026-11-14T20:09:38.263Z'), findsNothing);
+    expect(
+      find.textContaining(formatSupplierEvidenceTimestamp('2026-11-14T20:41:20.660Z')),
+      findsOneWidget,
+    );
     expect(find.widgetWithText(TextButton, 'Reject'), findsNothing);
     expect(find.widgetWithText(TextButton, 'Verify payment'), findsNothing);
   });
