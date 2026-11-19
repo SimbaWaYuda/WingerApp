@@ -62,6 +62,21 @@ describe('ApprovedSupplierGuard', () => {
     ).resolves.toBe(true);
   });
 
+  it('rejects an unlinked supplier before looking up the account', async () => {
+    await expect(
+      guard.canActivate(
+        contextFor({
+          sub: 's-unlinked',
+          email: 'unlinked@supplier.example',
+          name: 'Unlinked',
+          role: UserRole.SUPPLIER,
+        }),
+      ),
+    ).rejects.toThrow(new ForbiddenException('Supplier account required'));
+
+    expect(prisma.supplier.findUnique).not.toHaveBeenCalled();
+  });
+
   it('allows an approved supplier', async () => {
     prisma.supplier.findUnique.mockResolvedValue({
       verificationStatus: 'APPROVED',

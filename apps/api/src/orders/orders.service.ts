@@ -1760,8 +1760,25 @@ export class OrdersService {
       throw new BadRequestException('Invalid refund status');
     }
 
-    const row = await this.prisma.returnRequest.findUnique({
+    // The line's supplier is stored at checkout and is not reassigned.
+    // Compare it before selecting payment or parent-total columns.
+    const ownership = await this.prisma.returnRequest.findUnique({
       where: { id: returnId },
+      select: {
+        id: true,
+        orderItem: { select: { supplierId: true } },
+      },
+    });
+    if (!ownership) throw new NotFoundException('Return request not found');
+    if (
+      user.role === UserRole.SUPPLIER &&
+      ownership.orderItem.supplierId !== user.supplierId
+    ) {
+      throw new ForbiddenException('Cannot review another supplier return');
+    }
+
+    const row = await this.prisma.returnRequest.findUnique({
+      where: { id: ownership.id },
       include: {
         order: {
           select: {
@@ -1778,13 +1795,6 @@ export class OrdersService {
       },
     });
     if (!row) throw new NotFoundException('Return request not found');
-
-    if (
-      user.role === UserRole.SUPPLIER &&
-      row.orderItem.supplierId !== user.supplierId
-    ) {
-      throw new ForbiddenException('Cannot review another supplier return');
-    }
 
     if (dto.status != null) {
       const next = dto.status;
@@ -3254,18 +3264,42 @@ export class OrdersService {
     if (user.role !== UserRole.SUPPLIER && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Only suppliers or admins can update items');
     }
+    // The line's supplier is stored at checkout and is not reassigned.
+    // Compare it before loading the parent order and its payment columns.
+    if (user.role === UserRole.SUPPLIER && !user.supplierId) {
+      throw new ForbiddenException('Cannot update another supplier item');
+    }
+
+    const ownership = await this.prisma.orderItem.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        orderId: true,
+        supplierId: true,
+        order: { select: { id: true, displayId: true } },
+      },
+    });
+    if (
+      !ownership ||
+      (ownership.orderId !== orderId && ownership.order.displayId !== orderId)
+    ) {
+      throw new NotFoundException('Order item not found');
+    }
+    if (
+      user.role === UserRole.SUPPLIER &&
+      ownership.supplierId !== user.supplierId
+    ) {
+      throw new ForbiddenException('Cannot update another supplier item');
+    }
 
     const item = await this.prisma.orderItem.findUnique({
-      where: { id: itemId },
+      where: { id: ownership.id },
       include: { order: true },
     });
     if (!item || (item.orderId !== orderId && item.order.displayId !== orderId)) {
       throw new NotFoundException('Order item not found');
     }
-    if (
-      user.role === UserRole.SUPPLIER &&
-      item.supplierId !== user.supplierId
-    ) {
+    if (user.role === UserRole.SUPPLIER && item.supplierId !== user.supplierId) {
       throw new ForbiddenException('Cannot update another supplier item');
     }
 

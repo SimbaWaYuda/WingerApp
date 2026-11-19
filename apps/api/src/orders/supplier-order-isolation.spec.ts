@@ -159,8 +159,75 @@ function singleOrder() {
   return order;
 }
 
-function openService(orders: ReturnType<typeof mixedOrder>[]) {
-  const returns = [
+function embeddedReturn(input: {
+  id: string;
+  orderItemId: string;
+  supplierId: string;
+  supplierName: string;
+  productName: string;
+  notes: string;
+  createdAt: string;
+  paymentIntent: string;
+}) {
+  return {
+    id: input.id,
+    orderId: 'ord-mixed',
+    orderItemId: input.orderItemId,
+    reason: 'damaged',
+    notes: input.notes,
+    quantity: 1,
+    status: 'REQUESTED',
+    refundStatus: 'NONE',
+    refundNote: null,
+    refundedAt: null,
+    stripePaymentIntentId: input.paymentIntent,
+    paymentAmount: 400000,
+    subtotal: 130,
+    total: 148,
+    createdAt: new Date(input.createdAt),
+    order: {
+      displayId: 'WG-MIXED',
+      paymentMode: 'test',
+      stripePaymentIntentId: input.paymentIntent,
+    },
+    orderItem: {
+      productName: input.productName,
+      supplierName: input.supplierName,
+      supplierId: input.supplierId,
+    },
+  };
+}
+
+function sharedDetailReturns() {
+  return [
+    embeddedReturn({
+      id: 'ret-a',
+      orderItemId: 'line-a',
+      supplierId: 'sup-a',
+      supplierName: 'Kijani Fixture',
+      productName: 'Kijani Kettle',
+      notes: 'kijani return note',
+      createdAt: '2026-01-15T00:00:00.000Z',
+      paymentIntent: 'pi_detail_a',
+    }),
+    embeddedReturn({
+      id: 'ret-b',
+      orderItemId: 'line-b',
+      supplierId: 'sup-b',
+      supplierName: 'Atlas Fixture',
+      productName: 'Atlas Lamp',
+      notes: 'atlas return note',
+      createdAt: '2026-01-16T00:00:00.000Z',
+      paymentIntent: 'pi_detail_b',
+    }),
+  ];
+}
+
+function openService(
+  orders: ReturnType<typeof mixedOrder>[],
+  returnsOverride?: ReturnType<typeof sharedDetailReturns>,
+) {
+  const returns = returnsOverride ?? [
     {
       id: 'ret-b',
       orderId: 'ord-mixed',
@@ -448,7 +515,10 @@ function actionHarness(
       count: jest.fn(async () => 0),
     },
     product: { findUnique: jest.fn(async () => null) },
-    inventoryLedger: { findUnique: jest.fn(async () => null) },
+    inventoryLedger: {
+      findUnique: jest.fn(async () => null),
+      create: jest.fn(async () => ({})),
+    },
     $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
   };
   return { service: serviceFrom(prisma, calls), prisma, calls, order };
@@ -696,6 +766,17 @@ describe('supplier order data isolation', () => {
     expect(result.total).not.toBe(148);
   });
 
+  it('rejects an unlinked supplier before querying orders', async () => {
+    const { service, prisma } = openService([mixedOrder()]);
+
+    await expect(service.list(user(UserRole.SUPPLIER))).rejects.toThrow(
+      'Supplier account is missing supplierId',
+    );
+
+    expect(prisma.order.findMany).not.toHaveBeenCalled();
+    expect(prisma.orderItem.findMany).not.toHaveBeenCalled();
+  });
+
   it('keeps the full order for the customer and for an admin', async () => {
     const service = serviceFor([mixedOrder()]);
     const customer = await service.findOne('WG-MIXED', user(UserRole.CUSTOMER));
@@ -810,6 +891,271 @@ describe('supplier order data isolation', () => {
         distinct: ['orderId'],
       }),
     );
+  });
+
+  it('rejects a customer before querying an item action', async () => {
+    const { service, prisma } = actionHarness();
+
+    await expect(
+      service.updateItemStatus('ord-mixed', 'line-a', { status: OrderStatus.READY_FOR_PICKUP }, user(UserRole.CUSTOMER)),
+    ).rejects.toThrow(
+      new ForbiddenException('Only suppliers or admins can update items'),
+    );
+
+    expect(prisma.orderItem.findUnique).not.toHaveBeenCalled();
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unlinked supplier before querying an item action', async () => {
+    const { service, prisma } = actionHarness();
+
+    await expect(
+      service.updateItemStatus(
+        'ord-mixed',
+        'line-a',
+        { status: OrderStatus.READY_FOR_PICKUP },
+        user(UserRole.SUPPLIER),
+      ),
+    ).rejects.toThrow(new ForbiddenException('Cannot update another supplier item'));
+
+    expect(prisma.orderItem.findUnique).not.toHaveBeenCalled();
+    expect(prisma.order.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('rejects another supplier from the minimal item query', async () => {
+    const { service, prisma } = actionHarness();
+
+    await expect(
+      service.updateItemStatus(
+        'ord-mixed',
+        'line-a',
+        { status: OrderStatus.READY_FOR_PICKUP },
+        user(UserRole.SUPPLIER, 'sup-b'),
+      ),
+    ).rejects.toThrow(new ForbiddenException('Cannot update another supplier item'));
+
+    expect(prisma.orderItem.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.orderItem.findUnique).toHaveBeenCalledWith({
+      where: { id: 'line-a' },
+      select: {
+        id: true,
+        orderId: true,
+        supplierId: true,
+        order: { select: { id: true, displayId: true } },
+      },
+    });
+    const gate = JSON.stringify(prisma.orderItem.findUnique.mock.calls[0][0]);
+    expect(gate).not.toContain('stripePaymentIntentId');
+    expect(gate).not.toContain('paymentAmount');
+    expect(gate).not.toContain('subtotal');
+    expect(gate).not.toContain('taxAmount');
+    expect(gate).not.toContain('deliveryFee');
+    expect(gate).not.toContain('"total"');
+    expect(prisma.orderItem.findUnique.mock.calls[0][0].include).toBeUndefined();
+  });
+
+  it('does not mutate an item when another supplier is rejected', async () => {
+    const { service, prisma, calls } = actionHarness();
+
+    await expect(
+      service.updateItemStatus(
+        'WG-MIXED',
+        'line-a',
+        { status: OrderStatus.CANCELLED, collectPayment: true },
+        user(UserRole.SUPPLIER, 'sup-b'),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(prisma.cashCollection.create).not.toHaveBeenCalled();
+    expect(prisma.courierBooking.update).not.toHaveBeenCalled();
+    expect(prisma.product.findUnique).not.toHaveBeenCalled();
+    expect(prisma.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(calls.refund).not.toHaveBeenCalled();
+    expect(calls.clawback).not.toHaveBeenCalled();
+    expect(prisma.order.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('returns the supplier-scoped reload after an owner status update', async () => {
+    const { service } = actionHarness();
+
+    const result = await service.updateItemStatus(
+      'ord-mixed',
+      'line-a',
+      { status: OrderStatus.READY_FOR_PICKUP },
+      user(UserRole.SUPPLIER, 'sup-a'),
+    );
+
+    expectSupplierABucket(result);
+    expect(result.items[0].status).toBe(OrderStatus.READY_FOR_PICKUP);
+  });
+
+  it('loads the parent order only after the owner gate', async () => {
+    const { service, prisma } = actionHarness();
+
+    await service.updateItemStatus(
+      'ord-mixed',
+      'line-a',
+      { status: OrderStatus.READY_FOR_PICKUP },
+      user(UserRole.SUPPLIER, 'sup-a'),
+    );
+
+    const calls = prisma.orderItem.findUnique.mock.calls;
+    expect(calls[0][0]).toEqual({
+      where: { id: 'line-a' },
+      select: {
+        id: true,
+        orderId: true,
+        supplierId: true,
+        order: { select: { id: true, displayId: true } },
+      },
+    });
+    expect(calls[1][0]).toEqual({
+      where: { id: 'line-a' },
+      include: { order: true },
+    });
+    expect(prisma.orderItem.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.orderItem.findUnique.mock.invocationCallOrder[1],
+    );
+    expect(prisma.orderItem.findUnique.mock.invocationCallOrder[1]).toBeLessThan(
+      prisma.orderItem.update.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('returns the full order after an admin status update', async () => {
+    const { service } = actionHarness();
+
+    const result = await service.updateItemStatus(
+      'ord-mixed',
+      'line-a',
+      { status: OrderStatus.READY_FOR_PICKUP },
+      user(UserRole.ADMIN),
+    );
+
+    expect(result.stripePaymentIntentId).toBe('pi_mixed_secret');
+    expect(result.subtotal).toBe(130);
+    expect(result.total).toBe(148);
+    expect(result.items.map((item: { productName: string }) => item.productName).sort()).toEqual([
+      'Atlas Lamp',
+      'Kijani Kettle',
+    ]);
+  });
+
+  it('loads the parent order for an admin only after the item gate', async () => {
+    const { service, prisma } = actionHarness();
+
+    await service.updateItemStatus(
+      'ord-mixed',
+      'line-a',
+      { status: OrderStatus.READY_FOR_PICKUP },
+      user(UserRole.ADMIN),
+    );
+
+    expect(prisma.orderItem.findUnique.mock.calls[0][0].select.order.select).toEqual({
+      id: true,
+      displayId: true,
+    });
+    expect(prisma.orderItem.findUnique.mock.calls[0][0].include).toBeUndefined();
+    expect(prisma.orderItem.findUnique.mock.calls[1][0].include).toEqual({ order: true });
+    expect(prisma.orderItem.findUnique.mock.invocationCallOrder[1]).toBeLessThan(
+      prisma.orderItem.update.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('rechecks supplier ownership on the full read before any write', async () => {
+    const { service, prisma, calls } = actionHarness();
+    prisma.orderItem.findUnique
+      .mockImplementationOnce(async () => ({
+        id: 'line-a',
+        orderId: 'ord-mixed',
+        supplierId: 'sup-a',
+        order: { id: 'ord-mixed', displayId: 'WG-MIXED' },
+      }))
+      .mockImplementationOnce(async () => ({
+        id: 'line-a',
+        orderId: 'ord-mixed',
+        supplierId: 'sup-b',
+        status: OrderStatus.PROCESSING,
+        order: { id: 'ord-mixed', displayId: 'WG-MIXED' },
+      }));
+
+    await expect(
+      service.updateItemStatus(
+        'ord-mixed',
+        'line-a',
+        { status: OrderStatus.READY_FOR_PICKUP },
+        user(UserRole.SUPPLIER, 'sup-a'),
+      ),
+    ).rejects.toThrow(new ForbiddenException('Cannot update another supplier item'));
+
+    expect(prisma.orderItem.findUnique).toHaveBeenCalledTimes(2);
+    expect(prisma.orderItem.findUnique.mock.calls[1][0].include).toEqual({ order: true });
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(calls.refund).not.toHaveBeenCalled();
+    expect(calls.clawback).not.toHaveBeenCalled();
+    expect(prisma.order.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing item from the ownership query without a mutation', async () => {
+    const { service, prisma } = actionHarness();
+
+    await expect(
+      service.updateItemStatus(
+        'ord-mixed',
+        'line-missing',
+        { status: OrderStatus.READY_FOR_PICKUP },
+        user(UserRole.SUPPLIER, 'sup-a'),
+      ),
+    ).rejects.toThrow(new NotFoundException('Order item not found'));
+
+    expect(prisma.orderItem.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.orderItem.findUnique.mock.calls[0][0].include).toBeUndefined();
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
+  it('reports a mismatched order from the ownership query without a mutation', async () => {
+    const { service, prisma } = actionHarness();
+
+    await expect(
+      service.updateItemStatus(
+        'WG-OTHER',
+        'line-a',
+        { status: OrderStatus.READY_FOR_PICKUP },
+        user(UserRole.SUPPLIER, 'sup-a'),
+      ),
+    ).rejects.toThrow(new NotFoundException('Order item not found'));
+
+    expect(prisma.orderItem.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(prisma.order.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('reports an item deleted between the two reads without a mutation', async () => {
+    const { service, prisma, calls } = actionHarness();
+    prisma.orderItem.findUnique
+      .mockImplementationOnce(async () => ({
+        id: 'line-a',
+        orderId: 'ord-mixed',
+        supplierId: 'sup-a',
+        order: { id: 'ord-mixed', displayId: 'WG-MIXED' },
+      }))
+      .mockImplementationOnce(async () => null);
+
+    await expect(
+      service.updateItemStatus(
+        'ord-mixed',
+        'line-a',
+        { status: OrderStatus.CANCELLED },
+        user(UserRole.SUPPLIER, 'sup-a'),
+      ),
+    ).rejects.toThrow(new NotFoundException('Order item not found'));
+
+    expect(prisma.orderItem.findUnique).toHaveBeenCalledTimes(2);
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(calls.refund).not.toHaveBeenCalled();
+    expect(calls.clawback).not.toHaveBeenCalled();
+    expect(prisma.product.findUnique).not.toHaveBeenCalled();
   });
 
   it('omits the payment intent and combined totals from a supplier status update', async () => {
@@ -976,6 +1322,77 @@ describe('supplier order data isolation', () => {
     expect(prisma.returnRequest.findMany).not.toHaveBeenCalled();
   });
 
+  it('returns only the supplier return embedded on the order detail', async () => {
+    const { service } = openService([mixedOrder()], sharedDetailReturns());
+
+    const result = await service.findOne('WG-MIXED', user(UserRole.SUPPLIER, 'sup-a'));
+    const body = JSON.stringify(result);
+    const [request] = result.returnRequests;
+
+    expect(result.returnRequests).toHaveLength(1);
+    expect(Object.keys(request).sort()).toEqual([
+      'createdAt',
+      'id',
+      'notes',
+      'orderId',
+      'orderItemId',
+      'paymentMode',
+      'productName',
+      'quantity',
+      'reason',
+      'refundNote',
+      'refundStatus',
+      'refundedAt',
+      'status',
+      'supplierName',
+    ]);
+    expect(request).toEqual({
+      id: 'ret-a',
+      orderId: 'WG-MIXED',
+      paymentMode: 'test',
+      orderItemId: 'line-a',
+      productName: 'Kijani Kettle',
+      supplierName: 'Kijani Fixture',
+      reason: 'damaged',
+      notes: 'kijani return note',
+      quantity: 1,
+      status: 'REQUESTED',
+      refundStatus: 'NONE',
+      refundNote: null,
+      refundedAt: null,
+      createdAt: '2026-01-15T00:00:00.000Z',
+    });
+    expect(body).toContain('kijani return note');
+    expect(body).not.toContain('ret-b');
+    expect(body).not.toContain('atlas return note');
+    expect(body).not.toContain('Atlas Lamp');
+    expect(body).not.toContain('Atlas Fixture');
+    expect(body).not.toContain('pi_detail_a');
+    expect(body).not.toContain('pi_detail_b');
+    expect(body).not.toContain('pi_mixed_secret');
+    expect(request).not.toHaveProperty('stripePaymentIntentId');
+    expect(request).not.toHaveProperty('paymentAmount');
+    expect(request).not.toHaveProperty('subtotal');
+    expect(request).not.toHaveProperty('total');
+  });
+
+  it('filters the embedded return query by order and supplier', async () => {
+    const { service, prisma } = openService([mixedOrder()], sharedDetailReturns());
+
+    await service.findOne('ord-mixed', user(UserRole.SUPPLIER, 'sup-a'));
+
+    expect(prisma.returnRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { orderId: 'ord-mixed', orderItem: { supplierId: 'sup-a' } },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          order: { select: { displayId: true, paymentMode: true } },
+          orderItem: { select: { productName: true, supplierName: true } },
+        },
+      }),
+    );
+  });
+
   it('omits the payment intent on a supplier replacement and keeps it null for an admin', async () => {
     const supplierRun = replacementHarness();
     const supplier = await supplierRun.service.createReplacementOrder(
@@ -1047,6 +1464,56 @@ describe('supplier order data isolation', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(customerRun.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a replacement of another supplier item before creating an order', async () => {
+    const { service, prisma, tx } = replacementHarness();
+
+    await expect(
+      service.createReplacementOrder(
+        'WG-MIXED',
+        'line-a',
+        user(UserRole.SUPPLIER, 'sup-b'),
+      ),
+    ).rejects.toThrow(
+      new ForbiddenException('Cannot replace another supplier item'),
+    );
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(tx.order.create).not.toHaveBeenCalled();
+    expect(tx.product.update).not.toHaveBeenCalled();
+    expect(tx.inventoryLedger.create).not.toHaveBeenCalled();
+    expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+    expect(prisma.orderItem.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'line-a' },
+        include: expect.objectContaining({
+          order: {
+            select: {
+              displayId: true,
+              customerId: true,
+              customerName: true,
+              customerEmail: true,
+              customerPhone: true,
+              currency: true,
+              settlementCurrency: true,
+              addressLine: true,
+              city: true,
+            },
+          },
+          product: true,
+        }),
+      }),
+    );
+    const sourceQuery = prisma.orderItem.findUnique.mock.calls[0][0] as {
+      include: { order: { select: Record<string, unknown> } };
+    };
+    expect(sourceQuery.include.order.select).not.toHaveProperty(
+      'stripePaymentIntentId',
+    );
+    expect(sourceQuery.include.order.select).not.toHaveProperty('subtotal');
+    expect(sourceQuery.include.order.select).not.toHaveProperty('total');
+    expect(sourceQuery.include.order.select).not.toHaveProperty('paymentAmount');
   });
 
   it('keeps parent money on a single-supplier detail query and omits the payment intent', async () => {
