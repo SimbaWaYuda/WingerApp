@@ -196,6 +196,30 @@ const orderWithItems = {
   customer: { select: { phone: true } },
 } as const;
 
+/** Parent columns a supplier replacement needs. Payment and combined totals stay out. */
+const supplierReplacementOrderSelect = {
+  displayId: true,
+  customerId: true,
+  customerName: true,
+  customerEmail: true,
+  customerPhone: true,
+  currency: true,
+  settlementCurrency: true,
+  addressLine: true,
+  city: true,
+} as const;
+
+const supplierShipmentSelect = {
+  supplierId: true,
+  merchandise: true,
+  deliveryFee: true,
+  merchandiseTax: true,
+  deliveryTax: true,
+  paymentMerchandise: true,
+  paymentDelivery: true,
+  paymentTax: true,
+} as const;
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -1158,16 +1182,29 @@ export class OrdersService {
             },
           ],
         },
-        include: {
+        select: this.supplierOrderSelect(user.supplierId, {
+          parentMoney: true,
+          customerPhone: false,
           items: {
             where: { supplierId: user.supplierId },
             include: orderWithItems.items.include,
           },
-          shipments: true,
-        },
+        }),
         orderBy: { createdAt: 'desc' },
       });
-      return orders.map((order) => this.toResponse(order));
+      const sharedOrderIds = await this.orderIdsWithOtherSuppliers(
+        orders.map((order) => order.id),
+        user.supplierId,
+      );
+      return orders.map((order) =>
+        this.toResponse(
+          this.supplierVisibleOrder(order, user.supplierId!, {
+            shared: sharedOrderIds.has(order.id),
+          }),
+          undefined,
+          { supplierView: true },
+        ),
+      );
     }
 
     const orders = await this.prisma.order.findMany({
@@ -1179,6 +1216,9 @@ export class OrdersService {
   }
 
   async findOne(id: string, user: AuthUser) {
+    if (user.role === UserRole.SUPPLIER && user.supplierId) {
+      return this.findOneForSupplier(id, user);
+    }
     const order = await this.prisma.order.findFirst({
       where: {
         OR: [{ id }, { displayId: id }],
@@ -1195,6 +1235,48 @@ export class OrdersService {
     const canRateSuppliers = await this.listRateableSuppliers(order, user.sub);
     const returnableItems = await this.listReturnableItems(order);
     return { ...base, canRateSuppliers, returnRequests, returnableItems };
+  }
+
+  /**
+   * Supplier detail loads supplier ids first, then only that supplier's lines.
+   * An order with no matching line stays forbidden. A missing order stays not-found.
+   */
+  private async findOneForSupplier(id: string, user: AuthUser) {
+    const supplierId = user.supplierId!;
+    const gate = await this.prisma.order.findFirst({
+      where: {
+        OR: [{ id }, { displayId: id }],
+      },
+      select: {
+        id: true,
+        customerId: true,
+        items: { select: { supplierId: true } },
+      },
+    });
+    if (!gate) throw new NotFoundException('Order not found');
+    this.assertCanView(gate, user);
+
+    const shared = gate.items.some((item) => item.supplierId !== supplierId);
+    const order = await this.prisma.order.findUnique({
+      where: { id: gate.id },
+      select: this.supplierOrderSelect(supplierId, {
+        parentMoney: !shared,
+        customerPhone: true,
+        items: {
+          where: { supplierId },
+          include: orderWithItems.items.include,
+        },
+      }),
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const base = this.toResponse(
+      this.supplierVisibleOrder(order, supplierId, { shared }),
+      undefined,
+      { supplierView: true },
+    );
+    const returnRequests = await this.listReturnRequests(order.id, user);
+    return { ...base, returnRequests };
   }
 
   /**
@@ -1477,14 +1559,27 @@ export class OrdersService {
       );
     }
 
-    const source = await this.prisma.orderItem.findUnique({
-      where: { id: itemId },
-      include: {
-        order: true,
-        product: true,
-        replacedBy: { select: { id: true, order: { select: { displayId: true } } } },
-      },
-    });
+    const replacedBy = {
+      select: { id: true, order: { select: { displayId: true } } },
+    } as const;
+    const source =
+      user.role === UserRole.SUPPLIER && user.supplierId
+        ? await this.prisma.orderItem.findUnique({
+            where: { id: itemId },
+            include: {
+              order: { select: supplierReplacementOrderSelect },
+              product: true,
+              replacedBy,
+            },
+          })
+        : await this.prisma.orderItem.findUnique({
+            where: { id: itemId },
+            include: {
+              order: true,
+              product: true,
+              replacedBy,
+            },
+          });
     if (
       !source ||
       (source.orderId !== orderId && source.order.displayId !== orderId)
@@ -1621,10 +1716,15 @@ export class OrdersService {
       return created;
     });
 
+    const supplierView = user.role === UserRole.SUPPLIER && !!user.supplierId;
+    const visible = supplierView
+      ? this.supplierVisibleOrder(replacement, user.supplierId!)
+      : replacement;
     return {
       ...this.toResponse(
-        replacement,
+        visible,
         `Replacement order ${replacement.displayId} created for ${source.order.displayId}`,
+        supplierView ? { supplierView: true } : undefined,
       ),
       replacesOrderId: source.order.displayId,
       replacesOrderItemId: source.id,
@@ -2784,22 +2884,19 @@ export class OrdersService {
     const where =
       user.role === UserRole.CUSTOMER
         ? { orderId, customerId: user.sub }
-        : { orderId };
+        : user.role === UserRole.SUPPLIER && user.supplierId
+          ? { orderId, orderItem: { supplierId: user.supplierId } }
+          : { orderId };
     const rows = await this.prisma.returnRequest.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       include: {
         order: { select: { displayId: true, paymentMode: true } },
         orderItem: {
-          select: { productName: true, supplierName: true, supplierId: true },
+          select: { productName: true, supplierName: true },
         },
       },
     });
-    if (user.role === UserRole.SUPPLIER && user.supplierId) {
-      return rows
-        .filter((row) => row.orderItem.supplierId === user.supplierId)
-        .map((row) => this.toReturnResponse(row));
-    }
     return rows.map((row) => this.toReturnResponse(row));
   }
 
@@ -3365,19 +3462,39 @@ export class OrdersService {
   }
 
   private async reloadItemOrder(orderId: string, user: AuthUser) {
+    const supplierId =
+      user.role === UserRole.SUPPLIER && user.supplierId ? user.supplierId : null;
+    if (!supplierId) {
+      const order = await this.prisma.order.findUniqueOrThrow({
+        where: { id: orderId },
+        include: {
+          items: { include: { commission: true, courierBooking: true } },
+        },
+      });
+      return this.toResponse(order);
+    }
     const order = await this.prisma.order.findUniqueOrThrow({
       where: { id: orderId },
-      include: {
+      select: this.supplierOrderSelect(supplierId, {
+        parentMoney: true,
+        customerPhone: false,
         items: {
-          ...(user.role === UserRole.SUPPLIER && user.supplierId
-            ? { where: { supplierId: user.supplierId } }
-            : {}),
+          where: { supplierId },
           include: { commission: true, courierBooking: true },
         },
-      },
+      }),
     });
-
-    return this.toResponse(order);
+    const sharedOrderIds = await this.orderIdsWithOtherSuppliers(
+      [order.id],
+      supplierId,
+    );
+    return this.toResponse(
+      this.supplierVisibleOrder(order, supplierId, {
+        shared: sharedOrderIds.has(order.id),
+      }),
+      undefined,
+      { supplierView: true },
+    );
   }
 
   /**
@@ -5361,6 +5478,160 @@ export class OrdersService {
     };
   }
 
+  /**
+   * Order ids that still have a line for someone other than this supplier.
+   * Selects only the order id, so the other supplier's product and fulfilment
+   * fields are not loaded for the response.
+   */
+  private async orderIdsWithOtherSuppliers(orderIds: string[], supplierId: string) {
+    if (orderIds.length === 0) return new Set<string>();
+    const rows = await this.prisma.orderItem.findMany({
+      where: {
+        orderId: { in: orderIds },
+        supplierId: { not: supplierId },
+      },
+      select: { orderId: true },
+      distinct: ['orderId'],
+    });
+    return new Set(rows.map((row) => row.orderId));
+  }
+
+  /**
+   * Supplier reads list the response fields and that supplier's lines and
+   * shipment bucket. Payment-intent and reconciliation columns are omitted.
+   * Combined parent money is included only when a single-supplier response
+   * still returns those figures.
+   */
+  private supplierOrderSelect<T extends object>(
+    supplierId: string,
+    options: {
+      parentMoney: boolean;
+      customerPhone: boolean;
+      items: T;
+    },
+  ) {
+    return {
+      id: true,
+      displayId: true,
+      customerId: true,
+      customerName: true,
+      customerEmail: true,
+      customerPhone: true,
+      status: true,
+      paymentStatus: true,
+      paymentMethod: true,
+      paymentMode: true,
+      currency: true,
+      settlementCurrency: true,
+      displayCurrency: true,
+      paymentCurrency: true,
+      fxRate: true,
+      addressLine: true,
+      city: true,
+      createdAt: true,
+      ...(options.parentMoney
+        ? {
+            subtotal: true,
+            taxAmount: true,
+            deliveryFee: true,
+            total: true,
+            paymentAmount: true,
+            displaySubtotal: true,
+            displayTaxAmount: true,
+            displayDeliveryFee: true,
+            displayTotal: true,
+          }
+        : {}),
+      ...(options.customerPhone
+        ? { customer: { select: { phone: true as const } } }
+        : {}),
+      items: options.items,
+      shipments: {
+        where: { supplierId },
+        select: supplierShipmentSelect,
+      },
+    };
+  }
+
+  /**
+   * Supplier responses keep that supplier's lines only. When another supplier
+   * shares the order, money fields come from this supplier's locked shipment
+   * bucket so the combined order totals cannot reveal the other party's sales.
+   * `shared` covers a list or reload whose items were already limited to the
+   * caller and whose shipment rows are missing.
+   */
+  private supplierVisibleOrder<
+    T extends {
+      items: Array<{ supplierId: string; lineTotal: Prisma.Decimal | number }>;
+      shipments?: Array<{
+        supplierId: string;
+        merchandise: Prisma.Decimal | number;
+        deliveryFee: Prisma.Decimal | number;
+        merchandiseTax: Prisma.Decimal | number;
+        deliveryTax: Prisma.Decimal | number;
+        paymentMerchandise: Prisma.Decimal | number;
+        paymentDelivery: Prisma.Decimal | number;
+        paymentTax: Prisma.Decimal | number;
+      }>;
+      subtotal?: Prisma.Decimal | number;
+      taxAmount?: Prisma.Decimal | number;
+      deliveryFee?: Prisma.Decimal | number;
+      total?: Prisma.Decimal | number;
+      paymentAmount?: Prisma.Decimal | number | null;
+      displayTotal?: Prisma.Decimal | number | null;
+      displaySubtotal?: Prisma.Decimal | number | null;
+      displayTaxAmount?: Prisma.Decimal | number | null;
+      displayDeliveryFee?: Prisma.Decimal | number | null;
+    },
+  >(order: T, supplierId: string, options?: { shared?: boolean }): T {
+    const items = order.items.filter((item) => item.supplierId === supplierId);
+    const shipments = order.shipments ?? [];
+    const own = shipments.find((row) => row.supplierId === supplierId);
+    const shared =
+      options?.shared === true ||
+      order.items.some((item) => item.supplierId !== supplierId) ||
+      shipments.some((row) => row.supplierId !== supplierId);
+    if (!shared) {
+      return {
+        ...order,
+        items,
+        shipments: shipments.filter((row) => row.supplierId === supplierId),
+      };
+    }
+    const amount = (value: Prisma.Decimal | number | null | undefined) =>
+      Number(value ?? 0);
+    const subtotal = own
+      ? amount(own.merchandise)
+      : items.reduce((sum, item) => sum + amount(item.lineTotal), 0);
+    const deliveryFee = own ? amount(own.deliveryFee) : 0;
+    const tax = own ? amount(own.merchandiseTax) + amount(own.deliveryTax) : 0;
+    const paymentAmount = own
+      ? this.money(
+          amount(own.paymentMerchandise) +
+            amount(own.paymentDelivery) +
+            amount(own.paymentTax),
+        )
+      : null;
+    return {
+      ...order,
+      items,
+      shipments: own ? [own] : [],
+      subtotal: this.money(subtotal),
+      taxAmount: this.money(tax),
+      deliveryFee: this.money(deliveryFee),
+      total: this.money(subtotal + deliveryFee + tax),
+      paymentAmount,
+      displayTotal: null,
+      displaySubtotal: null,
+      displayTaxAmount: null,
+      displayDeliveryFee: null,
+    };
+  }
+
+  private money(value: number): Prisma.Decimal {
+    return new Prisma.Decimal((Math.round(value * 100) / 100).toFixed(2));
+  }
+
   private toResponse(
     order: {
       id: string;
@@ -5374,7 +5645,7 @@ export class OrdersService {
       paymentStatus: PaymentStatus;
       paymentMethod: string;
       paymentMode: string;
-      stripePaymentIntentId: string | null;
+      stripePaymentIntentId?: string | null;
       currency: string;
       subtotal: Prisma.Decimal;
       taxAmount?: Prisma.Decimal;
@@ -5426,6 +5697,7 @@ export class OrdersService {
       }>;
     },
     paymentMessage?: string,
+    view?: { supplierView?: boolean },
   ) {
     return {
       id: order.id,
@@ -5440,7 +5712,9 @@ export class OrdersService {
       paymentStatus: order.paymentStatus,
       paymentMethod: order.paymentMethod,
       paymentMode: order.paymentMode,
-      stripePaymentIntentId: order.stripePaymentIntentId,
+      ...(view?.supplierView
+        ? {}
+        : { stripePaymentIntentId: order.stripePaymentIntentId ?? null }),
       currency: order.currency,
       settlementCurrency:
         'settlementCurrency' in order
