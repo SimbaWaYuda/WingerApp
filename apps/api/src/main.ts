@@ -4,7 +4,6 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { assertProductionEnvOrExit } from './config/env.validation';
 import { getLocalUploadRoot, storageDriver } from './storage/upload-paths';
-import { isPaymentReconcileWorkerEnabled } from './orders/payment-reconcile.worker';
 
 // Windows shells often default libpq to WIN1252; supplier names need UTF-8.
 if (!process.env.PGCLIENTENCODING) {
@@ -21,10 +20,9 @@ async function bootstrap() {
     origin: true,
     credentials: true,
   });
-  // Only when the reconcile worker is enabled — preserves default API shutdown otherwise.
-  if (isPaymentReconcileWorkerEnabled()) {
-    app.enableShutdownHooks();
-  }
+  // Always enable so platform SIGTERM can drain Nest (and Prisma) cleanly.
+  // Worker lifecycle remains gated by PAYMENT_RECONCILE_WORKER_ENABLED elsewhere.
+  app.enableShutdownHooks();
   if (storageDriver() === 'local') {
     const uploadRoot = getLocalUploadRoot();
     app.useStaticAssets(uploadRoot, {
