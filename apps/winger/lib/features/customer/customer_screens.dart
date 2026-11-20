@@ -4315,7 +4315,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final address = _address.text.trim();
     final phone = _phone.text.trim();
     final phoneDigits = phone.replaceAll(RegExp(r'\D'), '');
-    if (city.isEmpty || address.isEmpty) {
+    final pickup = session.deliveryMethod.trim().toLowerCase() == 'pickup';
+    if (!pickup && (city.isEmpty || address.isEmpty)) {
       setState(() => _payError = s.t('cityAddressRequired'));
       return;
     }
@@ -4323,7 +4324,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       setState(() => _payError = s.t('contactPhoneRequired'));
       return;
     }
-    if (session.accessToken != null && session.apiOnline) {
+    // A blank pickup address must not be written to the saved profile.
+    final hasDeliveryAddress = city.isNotEmpty && address.isNotEmpty;
+    if ((!pickup || hasDeliveryAddress) &&
+        session.accessToken != null &&
+        session.apiOnline) {
       await api.updateProfile(
         name: session.displayName,
         phone: phone,
@@ -4338,6 +4343,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         address: address,
       );
     }
+    // Same confirmed destination for summary, validate, and placeOrder.
+    session.setConfirmedDeliveryAddress(cityName: city, address: address);
     setState(() {
       _payError = null;
       step = 2;
@@ -4887,11 +4894,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                               _CheckoutPayMethod.lipa => 'lipa',
                               _CheckoutPayMethod.card => 'card',
                             };
-                            if (method == 'pay_on_delivery' &&
-                                session.deliveryMethod != 'pickup' &&
-                                (session.addressLine.trim().isEmpty ||
-                                    session.city.trim().isEmpty)) {
-                              throw Exception(s.t('codAddressRequired'));
+                            final pickup =
+                                session.deliveryMethod.trim().toLowerCase() ==
+                                'pickup';
+                            if (!pickup) {
+                              final city = _city.text.trim();
+                              final address = _address.text.trim();
+                              if (city.isEmpty || address.isEmpty) {
+                                throw Exception(s.t('cityAddressRequired'));
+                              }
+                              session.setConfirmedDeliveryAddress(
+                                cityName: city,
+                                address: address,
+                              );
                             }
                             if (session.apiOnline &&
                                 session.accessToken != null) {

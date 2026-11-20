@@ -299,8 +299,9 @@ class ApiClient {
       session.applyProfile(
         name: user['name'] as String? ?? session.displayName,
         phoneNumber: user['phone'] as String? ?? '',
-        cityName: user['city'] as String? ?? 'Nairobi',
-        address: user['addressLine'] as String? ?? 'Westlands',
+        // Null/blank profile fields stay unset — never invent Nairobi/Westlands.
+        cityName: (user['city'] as String?)?.trim() ?? '',
+        address: (user['addressLine'] as String?)?.trim() ?? '',
       );
       session.setMustChangePassword(user['mustChangePassword'] == true);
       session.setSupplierVerification(
@@ -713,6 +714,7 @@ class ApiClient {
     List<CartItem> items, {
     String? deliveryMethod,
     String? city,
+    String? addressLine,
   }) async {
     final response = await http
         .post(
@@ -721,6 +723,7 @@ class ApiClient {
           body: jsonEncode({
             'deliveryMethod': deliveryMethod ?? session.deliveryMethod,
             'city': city ?? session.city,
+            'addressLine': addressLine ?? session.addressLine,
             'items': [
               for (final item in items)
                 {
