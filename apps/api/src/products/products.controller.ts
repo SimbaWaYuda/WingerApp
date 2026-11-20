@@ -13,6 +13,7 @@ import {
   Query,
   Req,
   UploadedFiles,
+  UseFilters,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -36,6 +37,7 @@ import {
   ProductSearchBody,
   ProductsSearchService,
 } from './products-search.service';
+import { ProductImageUploadExceptionFilter } from './product-image-upload.exception-filter';
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg',
@@ -197,6 +199,7 @@ export class ProductsController {
   @Post(':id/images')
   @UseGuards(JwtAuthGuard, RolesGuard, ApprovedSupplierGuard)
   @Roles(UserRole.SUPPLIER)
+  @UseFilters(ProductImageUploadExceptionFilter)
   @UseInterceptors(
     FilesInterceptor('files', 8, {
       storage: memoryStorage(),
