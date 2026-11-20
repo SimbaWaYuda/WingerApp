@@ -1131,4 +1131,72 @@ concurrencyDescribe('PostgreSQL webhook payment races (S2.6.18.13)', () => {
     expect(onboardFail).not.toHaveBeenCalled();
     expect(stripeCheckout.chargeOrder).not.toHaveBeenCalled();
   });
+
+  it('S2.6.20.30: two concurrent failed charges restore stock exactly once', async () => {
+    const order = await seedPendingOrder({ piId: null, startingStock: 10 });
+    const reserved = (
+      await sessionGate.product.findUniqueOrThrow({ where: { id: productId } })
+    ).stock;
+    expect(reserved).toBe(9);
+
+    const failedCharge = {
+      mode: 'demo' as const,
+      status: 'failed' as const,
+      message: 'Card payments are not configured',
+    };
+    const stripe: StripeWebhookMock = {
+      retrievePaymentIntentForWebhook: jest.fn(),
+      retrievePaymentIntentStatus: jest.fn(),
+      refundCardCharge: jest.fn(),
+      chargeOrder: jest.fn(),
+      confirmPaymentIntent: jest.fn(),
+      checkoutMode: 'demo',
+    };
+    const onboardA = jest.fn().mockResolvedValue(undefined);
+    const onboardB = jest.fn().mockResolvedValue(undefined);
+    const a = bindOrdersService({
+      prisma: sessionA,
+      stripe,
+      onOrderPlaced: onboardA,
+    });
+    const b = bindOrdersService({
+      prisma: sessionB,
+      stripe,
+      onOrderPlaced: onboardB,
+    });
+
+    const results = await Promise.allSettled([
+      a.orders.recordCardCharge(order.id, failedCharge, customer),
+      b.orders.recordCardCharge(order.id, failedCharge, customer),
+    ]);
+
+    expect(results.some((r) => r.status === 'rejected')).toBe(true);
+
+    const final = await sessionGate.order.findUniqueOrThrow({
+      where: { id: order.id },
+    });
+    expect(final.paymentStatus).toBe(PaymentStatus.FAILED);
+    expect(final.paymentStatus).not.toBe(PaymentStatus.PAID);
+    expect(final.status).toBe(OrderStatus.CANCELLED);
+
+    const stock = (
+      await sessionGate.product.findUniqueOrThrow({ where: { id: productId } })
+    ).stock;
+    expect(stock).toBe(10);
+
+    const restoreEventId = `order-restore-ORDER_PAYMENT_FAILED-${order.id}-${productId}-base`;
+    const ledger = await sessionGate.inventoryLedger.findMany({
+      where: { eventId: restoreEventId },
+    });
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].delta).toBe(1);
+    expect(ledger[0].reason).toBe('ORDER_PAYMENT_FAILED');
+
+    const commissions = await sessionGate.orderItemCommission.findMany({
+      where: { orderItem: { orderId: order.id } },
+    });
+    expect(commissions).toHaveLength(0);
+    expect(onboardA).not.toHaveBeenCalled();
+    expect(onboardB).not.toHaveBeenCalled();
+  });
 });

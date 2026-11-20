@@ -167,10 +167,18 @@ describe('payment and commission reliability', () => {
         findUnique: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
         findUniqueOrThrow: jest.fn(),
+        create: jest.fn(),
         update: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         aggregate: jest.fn(),
         count: jest.fn(),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          displayCurrency: 'USD',
+          phone: '',
+        }),
+        update: jest.fn(),
       },
       orderItem: {
         findUnique: jest.fn(),
@@ -217,6 +225,7 @@ describe('payment and commission reliability', () => {
         findUnique: jest.fn().mockResolvedValue(null),
       },
       product: {
+        findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
         update: jest.fn(),
@@ -508,6 +517,8 @@ describe('payment and commission reliability', () => {
     const result = await service.create(
       {
         items: [{ productId: 'p1', quantity: 1 }],
+        addressLine: 'Tegeta',
+        city: 'Dar es Salaam',
         paymentMethod: 'card',
         checkoutIdempotencyKey: 'checkout-key-1',
       },
@@ -619,6 +630,385 @@ describe('payment and commission reliability', () => {
     expect(state.status).toBe(OrderStatus.CANCELLED);
     expect(prisma.inventoryLedger.create).toHaveBeenCalled();
     expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+  });
+
+  describe('S2.6.20.30 production fail-closed regression', () => {
+    const restoreEventId =
+      'order-restore-ORDER_PAYMENT_FAILED-ord-1-p1-base';
+
+    function mockStockProduct(initialStock: number) {
+      let stock = initialStock;
+      const ledger = new Set<string>();
+      prisma.orderItem.findMany.mockResolvedValue([
+        lineItem({ status: OrderStatus.PROCESSING, quantity: 1 }),
+      ]);
+      prisma.product.findUnique.mockImplementation(async () => ({
+        id: 'p1',
+        stock,
+        supplierId: 'sup-1',
+      }));
+      prisma.product.findUniqueOrThrow.mockImplementation(async () => ({
+        id: 'p1',
+        stock,
+        supplierId: 'sup-1',
+      }));
+      prisma.product.update.mockImplementation(
+        async ({ data }: { data: Record<string, unknown> }) => {
+          if (typeof data.stock === 'number') stock = data.stock;
+          return { id: 'p1', stock, supplierId: 'sup-1' };
+        },
+      );
+      prisma.inventoryLedger.findUnique.mockImplementation(
+        async ({ where }: { where: { eventId: string } }) =>
+          ledger.has(where.eventId) ? { eventId: where.eventId } : null,
+      );
+      prisma.inventoryLedger.create.mockImplementation(
+        async ({ data }: { data: { eventId: string } }) => {
+          ledger.add(data.eventId);
+          return data;
+        },
+      );
+      return {
+        get stock() {
+          return stock;
+        },
+        setStock(next: number) {
+          stock = next;
+        },
+        ledger,
+      };
+    }
+
+    it('A: production fail-closed restores stock once and never marks PAID', async () => {
+      const originalStock = 4;
+      const inventory = mockStockProduct(originalStock);
+      const state = orderShell({
+        paymentStatus: PaymentStatus.PENDING,
+        status: OrderStatus.PROCESSING,
+        paymentMode: 'demo',
+        stripePaymentIntentId: null,
+        items: [lineItem({ status: OrderStatus.PROCESSING, quantity: 1 })],
+      });
+      // Simulate reserved quantity: product currently holds originalStock - 1.
+      inventory.setStock(originalStock - 1);
+      expect(inventory.stock).toBe(originalStock - 1);
+
+      prisma.order.findUnique.mockResolvedValue(state);
+      prisma.order.update.mockImplementation(
+        async ({ data }: { data: Record<string, unknown> }) => {
+          Object.assign(state, data);
+          return { ...state };
+        },
+      );
+
+      const failedCharge = {
+        mode: 'demo' as const,
+        status: 'failed' as const,
+        message: 'Card payments are not configured',
+      };
+
+      await expect(
+        service.recordCardCharge('ord-1', failedCharge, customer()),
+      ).rejects.toThrow(/Card payments are not configured/);
+
+      expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+      expect(state.paymentStatus).not.toBe(PaymentStatus.PAID);
+      expect(state.status).toBe(OrderStatus.CANCELLED);
+      expect(state.stripePaymentIntentId).toBeNull();
+      expect(inventory.stock).toBe(originalStock);
+      expect(prisma.inventoryLedger.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            eventId: restoreEventId,
+            productId: 'p1',
+            delta: 1,
+            reason: 'ORDER_PAYMENT_FAILED',
+            quantityAfter: originalStock,
+          }),
+        }),
+      );
+      expect(inventory.ledger.has(restoreEventId)).toBe(true);
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+      expect(onboarding.onOrderPlaced).not.toHaveBeenCalled();
+
+      const ledgerCreatesAfterFirst = prisma.inventoryLedger.create.mock.calls
+        .length;
+
+      await expect(
+        service.recordCardCharge('ord-1', failedCharge, customer()),
+      ).rejects.toThrow(/Card payments are not configured/);
+
+      expect(state.paymentStatus).toBe(PaymentStatus.FAILED);
+      expect(inventory.stock).toBe(originalStock);
+      expect(prisma.inventoryLedger.create.mock.calls.length).toBe(
+        ledgerCreatesAfterFirst,
+      );
+      expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+      expect(onboarding.onOrderPlaced).not.toHaveBeenCalled();
+    });
+
+    it('B: production create() card checkout cannot mark PAID without Stripe', async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      const previousStripeSecret = process.env.STRIPE_SECRET_KEY;
+      delete process.env.STRIPE_SECRET_KEY;
+      process.env.NODE_ENV = 'production';
+
+      try {
+        const realStripe = new StripeService();
+        expect(realStripe.configured).toBe(false);
+        Object.assign(service, { stripe: realStripe });
+
+        const originalStock = 5;
+        const inventory = mockStockProduct(originalStock);
+        inventory.setStock(originalStock - 1);
+
+        const pending = orderShell({
+          paymentStatus: PaymentStatus.PENDING,
+          paymentMode: 'demo',
+          checkoutIdempotencyKey: 'checkout-prod-fail-closed',
+          stripePaymentIntentId: null,
+          stripeChargeAttemptAt: new Date(),
+          items: [lineItem({ status: OrderStatus.PROCESSING, quantity: 1 })],
+        });
+        prisma.order.findUnique.mockResolvedValue(pending);
+        prisma.order.update.mockImplementation(
+          async ({ data }: { data: Record<string, unknown> }) => {
+            Object.assign(pending, data);
+            return { ...pending };
+          },
+        );
+
+        await expect(
+          service.create(
+            {
+              items: [{ productId: 'p1', quantity: 1 }],
+              addressLine: 'Tegeta',
+              city: 'Dar es Salaam',
+              paymentMethod: 'card',
+              checkoutIdempotencyKey: 'checkout-prod-fail-closed',
+            },
+            customer(),
+          ),
+        ).rejects.toThrow(/Card payments are not configured/);
+
+        expect(pending.paymentStatus).toBe(PaymentStatus.FAILED);
+        expect(pending.paymentStatus).not.toBe(PaymentStatus.PAID);
+        expect(pending.stripePaymentIntentId).toBeNull();
+        expect(inventory.stock).toBe(originalStock);
+        expect(prisma.inventoryLedger.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              eventId: restoreEventId,
+              reason: 'ORDER_PAYMENT_FAILED',
+              delta: 1,
+            }),
+          }),
+        );
+        expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+        expect(onboarding.onOrderPlaced).not.toHaveBeenCalled();
+      } finally {
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previousNodeEnv;
+        if (previousStripeSecret === undefined) {
+          delete process.env.STRIPE_SECRET_KEY;
+        } else {
+          process.env.STRIPE_SECRET_KEY = previousStripeSecret;
+        }
+      }
+    });
+
+    it('B2: production create() greenfield card path decrements then restores stock', async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      const previousStripeSecret = process.env.STRIPE_SECRET_KEY;
+      delete process.env.STRIPE_SECRET_KEY;
+      process.env.NODE_ENV = 'production';
+
+      try {
+        const realStripe = new StripeService();
+        Object.assign(service, { stripe: realStripe });
+
+        let stock = 5;
+        const originalStock = 5;
+        const ledger = new Set<string>();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let createdOrder: any = null;
+
+        (service as any).fx = {
+          publicConfig: async () => ({
+            settlementCurrency: 'USD',
+            displayCurrencies: ['USD'],
+            paymentCurrencies: ['USD'],
+          }),
+          normalize: (code: string) => code,
+          quote: async () => ({
+            baseCurrency: 'USD',
+            quoteCurrency: 'USD',
+            rate: 1,
+            source: 'test',
+            fetchedAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+            fresh: true,
+          }),
+          resolvePaymentCurrency: async () => 'USD',
+        };
+        jest.spyOn(service as any, 'quoteFulfillment').mockResolvedValue({
+          subtotal: 50,
+          tax: 0,
+          deliveryFee: 0,
+          total: 50,
+          deliveryMethod: 'standard',
+          shipments: [
+            {
+              supplierId: 'sup-1',
+              supplierName: 'Kijani',
+              merchandise: 50,
+              fee: 0,
+              merchandiseTax: 0,
+              deliveryTax: 0,
+              carrier: null,
+              courierName: null,
+            },
+          ],
+        });
+
+        prisma.product.findMany.mockResolvedValue([
+          {
+            id: 'p1',
+            name: 'Lamp',
+            price: 50,
+            stock: originalStock,
+            supplierId: 'sup-1',
+            supplierName: 'Kijani',
+            priceCurrency: 'USD',
+            taxRatePercent: null,
+            color: null,
+            size: null,
+            imageUrl: '',
+            variants: [],
+          },
+        ]);
+        prisma.user.findUnique.mockResolvedValue({
+          displayCurrency: 'USD',
+          phone: '',
+        });
+        prisma.order.count.mockResolvedValue(0);
+        prisma.order.findUnique.mockImplementation(
+          async ({
+            where,
+          }: {
+            where: { checkoutIdempotencyKey?: string; id?: string };
+          }) => {
+            if (where.checkoutIdempotencyKey) return null;
+            if (where.id && createdOrder && where.id === createdOrder.id) {
+              return createdOrder;
+            }
+            return null;
+          },
+        );
+        prisma.order.create.mockImplementation(
+          async ({ data }: { data: Record<string, unknown> }) => {
+            createdOrder = orderShell({
+              id: 'ord-1',
+              displayId: 'WG-10025',
+              paymentStatus: PaymentStatus.PENDING,
+              paymentMode: 'demo',
+              paymentMethod: 'card',
+              checkoutIdempotencyKey: data.checkoutIdempotencyKey,
+              stripePaymentIntentId: null,
+              stripeChargeAttemptAt: null,
+              paymentAmount: 50,
+              total: 50,
+              items: [
+                lineItem({ status: OrderStatus.PROCESSING, quantity: 1 }),
+              ],
+            });
+            return createdOrder;
+          },
+        );
+        prisma.order.update.mockImplementation(
+          async ({ data }: { data: Record<string, unknown> }) => {
+            Object.assign(createdOrder!, data);
+            return { ...createdOrder! };
+          },
+        );
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+        prisma.product.updateMany.mockImplementation(
+          async ({
+            where,
+            data,
+          }: {
+            where: { id: string; stock?: { gte: number } };
+            data: { stock?: { decrement: number } };
+          }) => {
+            const need = where.stock?.gte ?? 0;
+            const dec = data.stock?.decrement ?? 0;
+            if (stock < need) return { count: 0 };
+            stock -= dec;
+            return { count: 1 };
+          },
+        );
+        prisma.product.findUniqueOrThrow.mockImplementation(async () => ({
+          id: 'p1',
+          stock,
+          supplierId: 'sup-1',
+        }));
+        prisma.product.findUnique.mockImplementation(async () => ({
+          id: 'p1',
+          stock,
+          supplierId: 'sup-1',
+        }));
+        prisma.product.update.mockImplementation(
+          async ({ data }: { data: Record<string, unknown> }) => {
+            if (typeof data.stock === 'number') stock = data.stock;
+            return { id: 'p1', stock, supplierId: 'sup-1' };
+          },
+        );
+        prisma.orderItem.findMany.mockImplementation(async () => [
+          lineItem({ status: OrderStatus.PROCESSING, quantity: 1 }),
+        ]);
+        prisma.inventoryLedger.findUnique.mockImplementation(
+          async ({ where }: { where: { eventId: string } }) =>
+            ledger.has(where.eventId) ? { eventId: where.eventId } : null,
+        );
+        prisma.inventoryLedger.create.mockImplementation(
+          async ({ data }: { data: { eventId: string } }) => {
+            ledger.add(data.eventId);
+            return data;
+          },
+        );
+
+        await expect(
+          service.create(
+            {
+              items: [{ productId: 'p1', quantity: 1 }],
+              addressLine: 'Tegeta',
+              city: 'Dar es Salaam',
+              paymentMethod: 'card',
+              deliveryMethod: 'standard',
+              checkoutIdempotencyKey: 'checkout-greenfield-prod',
+            },
+            customer(),
+          ),
+        ).rejects.toThrow(/Card payments are not configured/);
+
+        expect(createdOrder).toBeTruthy();
+        expect(createdOrder.paymentStatus).toBe(PaymentStatus.FAILED);
+        expect(createdOrder.paymentStatus).not.toBe(PaymentStatus.PAID);
+        expect(stock).toBe(originalStock);
+        expect(ledger.has('order-ord-1-p1')).toBe(true); // ORDER_SALE
+        expect(ledger.has(restoreEventId)).toBe(true);
+        expect(commissions.createSnapshotsForOrder).not.toHaveBeenCalled();
+        expect(onboarding.onOrderPlaced).not.toHaveBeenCalled();
+      } finally {
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previousNodeEnv;
+        if (previousStripeSecret === undefined) {
+          delete process.env.STRIPE_SECRET_KEY;
+        } else {
+          process.env.STRIPE_SECRET_KEY = previousStripeSecret;
+        }
+      }
+    });
   });
 
   it('keeps PENDING when payment_failed retrieves requires_payment_method', async () => {
@@ -1263,6 +1653,8 @@ describe('payment and commission reliability', () => {
     await service.create(
       {
         items: [{ productId: 'p1', quantity: 1 }],
+        addressLine: 'Tegeta',
+        city: 'Dar es Salaam',
         paymentMethod: 'card',
         stripePaymentMethodId: 'pm_card_visa',
         checkoutIdempotencyKey: 'checkout-key-1',
@@ -1443,6 +1835,8 @@ describe('payment and commission reliability', () => {
     await service.create(
       {
         items: [{ productId: 'p1', quantity: 1 }],
+        addressLine: 'Tegeta',
+        city: 'Dar es Salaam',
         paymentMethod: 'card',
         stripePaymentMethodId: 'pm_card_visa',
         checkoutIdempotencyKey: 'checkout-key-1',
@@ -1483,6 +1877,8 @@ describe('payment and commission reliability', () => {
       service.create(
         {
           items: [{ productId: 'p1', quantity: 1 }],
+          addressLine: 'Tegeta',
+          city: 'Dar es Salaam',
           paymentMethod: 'card',
           stripePaymentMethodId: 'pm_card_visa',
           checkoutIdempotencyKey: 'checkout-key-1',
@@ -1492,6 +1888,8 @@ describe('payment and commission reliability', () => {
       service.create(
         {
           items: [{ productId: 'p1', quantity: 1 }],
+          addressLine: 'Tegeta',
+          city: 'Dar es Salaam',
           paymentMethod: 'card',
           stripePaymentMethodId: 'pm_card_visa',
           checkoutIdempotencyKey: 'checkout-key-1',
@@ -1525,6 +1923,8 @@ describe('payment and commission reliability', () => {
     await service.create(
       {
         items: [{ productId: 'p1', quantity: 1 }],
+        addressLine: 'Tegeta',
+        city: 'Dar es Salaam',
         paymentMethod: 'card',
         stripePaymentMethodId: 'pm_card_visa',
         checkoutIdempotencyKey: 'checkout-key-1',
@@ -1550,6 +1950,8 @@ describe('payment and commission reliability', () => {
       service.create(
         {
           items: [{ productId: 'p1', quantity: 1 }],
+          addressLine: 'Tegeta',
+          city: 'Dar es Salaam',
           paymentMethod: 'card',
           stripePaymentMethodId: 'pm_card_visa',
           checkoutIdempotencyKey: 'checkout-key-1',
@@ -1574,6 +1976,8 @@ describe('payment and commission reliability', () => {
     await service.create(
       {
         items: [{ productId: 'p1', quantity: 1 }],
+        addressLine: 'Tegeta',
+        city: 'Dar es Salaam',
         paymentMethod: 'cod',
         checkoutIdempotencyKey: 'cod-key-1',
       },
@@ -1598,6 +2002,8 @@ describe('payment and commission reliability', () => {
     const result = await service.create(
       {
         items: [{ productId: 'p1', quantity: 1 }],
+        addressLine: 'Tegeta',
+        city: 'Dar es Salaam',
         paymentMethod: 'lipa',
         checkoutIdempotencyKey: 'lipa-key-1',
       },
@@ -1645,6 +2051,8 @@ describe('payment and commission reliability', () => {
       return service.create(
         {
           items: [{ productId: 'p1', quantity: 1 }],
+          addressLine: 'Tegeta',
+          city: 'Dar es Salaam',
           paymentMethod: 'card',
           stripePaymentMethodId: 'pm_card_visa',
           checkoutIdempotencyKey: 'checkout-key-1',
@@ -1988,6 +2396,8 @@ describe('payment and commission reliability', () => {
       return service.create(
         {
           items: [{ productId: 'p1', quantity: 1 }],
+          addressLine: 'Tegeta',
+          city: 'Dar es Salaam',
           paymentMethod: 'card',
           stripePaymentMethodId: 'pm_card_visa',
           checkoutIdempotencyKey: 'checkout-key-1',
