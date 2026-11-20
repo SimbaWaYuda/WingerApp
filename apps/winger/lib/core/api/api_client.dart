@@ -15,12 +15,112 @@ class ProductPhotoUpload {
   final Uint8List bytes;
 }
 
+/// Positive finite FX rate, or null when missing/invalid.
+double? parsePositiveFiniteFxRate(Object? raw) {
+  if (raw is! num) return null;
+  final value = raw.toDouble();
+  if (!value.isFinite || value <= 0) return null;
+  return value;
+}
+
+/// True when quote currencies match the requested settlement→display pair.
+bool fxQuoteCurrenciesMatch(
+  Map<String, dynamic> quote, {
+  required String from,
+  required String to,
+}) {
+  final base = (quote['baseCurrency'] as String?)?.trim().toUpperCase();
+  final quoteCurrency =
+      (quote['quoteCurrency'] as String?)?.trim().toUpperCase();
+  if (base == null ||
+      base.isEmpty ||
+      quoteCurrency == null ||
+      quoteCurrency.isEmpty) {
+    return false;
+  }
+  return base == from.toUpperCase() && quoteCurrency == to.toUpperCase();
+}
+
+/// Settlement-currency display fallback. Keeps [AppSession.preferredDisplayCurrency].
+void markDisplayFxUnavailable(
+  AppSession session, {
+  String? settlement,
+  List<String>? displayOptions,
+  List<String>? paymentOptions,
+}) {
+  final settle = (settlement ?? session.settlementCurrency).toUpperCase();
+  session.applyCurrencyQuote(
+    settlement: settle,
+    display: settle,
+    rate: 1,
+    fresh: false,
+    error: 'fxUnavailable',
+    displayOptions: displayOptions,
+    paymentOptions: paymentOptions,
+  );
+}
+
+/// Applies a cross-currency quote only when rate/pair/freshness are valid.
+/// Returns false when the payload must not be treated as a live quote.
+bool applyValidatedFxQuote(
+  AppSession session, {
+  required Map<String, dynamic> quote,
+  required String settlement,
+  required String display,
+  List<String>? displayOptions,
+  List<String>? paymentOptions,
+}) {
+  if (display.toUpperCase() == settlement.toUpperCase()) {
+    session.applyCurrencyQuote(
+      settlement: settlement.toUpperCase(),
+      display: display.toUpperCase(),
+      rate: 1,
+      fresh: true,
+      displayOptions: displayOptions,
+      paymentOptions: paymentOptions,
+    );
+    return true;
+  }
+  if (!fxQuoteCurrenciesMatch(quote, from: settlement, to: display)) {
+    return false;
+  }
+  if (quote['fresh'] != true) {
+    return false;
+  }
+  final rate = parsePositiveFiniteFxRate(quote['rate']);
+  if (rate == null) {
+    return false;
+  }
+  session.applyCurrencyQuote(
+    settlement: settlement.toUpperCase(),
+    display: display.toUpperCase(),
+    rate: rate,
+    fresh: true,
+    displayOptions: displayOptions,
+    paymentOptions: paymentOptions,
+  );
+  return true;
+}
+
 class ApiClient {
-  ApiClient(this.session);
+  ApiClient(this.session, {http.Client? httpClient}) : _httpClient = httpClient;
 
   final AppSession session;
+  final http.Client? _httpClient;
 
   Uri _uri(String path) => Uri.parse('${session.apiBaseUrl}$path');
+
+  Future<http.Response> _get(
+    Uri uri, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 5),
+  }) {
+    final client = _httpClient;
+    final future = client == null
+        ? http.get(uri, headers: headers)
+        : client.get(uri, headers: headers);
+    return future.timeout(timeout);
+  }
 
   void _requireAccessToken() {
     final token = session.accessToken;
@@ -309,7 +409,9 @@ class ApiClient {
       );
       final preferred = user['displayCurrency'] as String?;
       if (preferred != null && preferred.isNotEmpty) {
-        session.displayCurrency = preferred.toUpperCase();
+        final code = preferred.toUpperCase();
+        session.preferredDisplayCurrency = code;
+        session.displayCurrency = code;
       }
       await refreshCurrencyQuote();
       final locale = user['preferredLocale'] as String?;
@@ -321,35 +423,45 @@ class ApiClient {
 
   Future<void> refreshCurrencyQuote() async {
     try {
-      final configResponse = await http
-          .get(_uri('/fx/config'))
-          .timeout(const Duration(seconds: 5));
-      if (configResponse.statusCode != 200) return;
-      final config = jsonDecode(configResponse.body) as Map<String, dynamic>;
-      final settlement = (config['settlementCurrency'] as String? ?? 'USD')
+      final configResponse = await _get(_uri('/fx/config'));
+      if (configResponse.statusCode != 200) {
+        markDisplayFxUnavailable(session);
+        return;
+      }
+      final decoded = _tryJson(configResponse.body);
+      if (decoded == null) {
+        markDisplayFxUnavailable(session);
+        return;
+      }
+      final settlement = (decoded['settlementCurrency'] as String? ?? 'USD')
           .toUpperCase();
       final displayOptions =
-          (config['supportedDisplayCurrencies'] as List<dynamic>? ?? const [])
+          (decoded['supportedDisplayCurrencies'] as List<dynamic>? ?? const [])
               .map((e) => e.toString().toUpperCase())
               .toList();
       final paymentOptions =
-          (config['supportedPaymentCurrencies'] as List<dynamic>? ?? const [])
+          (decoded['supportedPaymentCurrencies'] as List<dynamic>? ?? const [])
               .map((e) => e.toString().toUpperCase())
               .toList();
-      final mode = config['stripeCheckoutMode'] as String? ?? 'demo';
+      final mode = decoded['stripeCheckoutMode'] as String? ?? 'demo';
       session.stripeCheckoutMode = mode == 'test' || mode == 'live'
           ? mode
           : 'demo';
-      final publishable = config['stripePublishableKey'] as String?;
+      final publishable = decoded['stripePublishableKey'] as String?;
       session.stripePublishableKey =
           publishable != null && publishable.isNotEmpty ? publishable : null;
-      final display = displayOptions.contains(session.displayCurrency)
-          ? session.displayCurrency
-          : settlement;
-      if (display == settlement) {
+
+      final preferred = displayOptions.contains(session.preferredDisplayCurrency)
+          ? session.preferredDisplayCurrency
+          : displayOptions.contains(session.displayCurrency)
+              ? session.displayCurrency
+              : settlement;
+
+      // Legitimate identity conversion — not a missing cross-currency quote.
+      if (preferred == settlement) {
         session.applyCurrencyQuote(
           settlement: settlement,
-          display: display,
+          display: preferred,
           rate: 1,
           fresh: true,
           displayOptions: displayOptions,
@@ -357,37 +469,41 @@ class ApiClient {
         );
         return;
       }
-      final quoteResponse = await http
-          .get(
-            _uri(
-              '/fx/quote',
-            ).replace(queryParameters: {'from': settlement, 'to': display}),
-          )
-          .timeout(const Duration(seconds: 5));
+
+      final quoteResponse = await _get(
+        _uri('/fx/quote').replace(
+          queryParameters: {'from': settlement, 'to': preferred},
+        ),
+      );
       if (quoteResponse.statusCode != 200) {
-        final body = _tryJson(quoteResponse.body);
-        session.applyCurrencyQuote(
+        markDisplayFxUnavailable(
+          session,
           settlement: settlement,
-          display: settlement,
-          rate: 1,
-          fresh: false,
-          error: body?['message']?.toString() ?? 'Exchange rate unavailable',
           displayOptions: displayOptions,
           paymentOptions: paymentOptions,
         );
         return;
       }
-      final quote = jsonDecode(quoteResponse.body) as Map<String, dynamic>;
-      session.applyCurrencyQuote(
-        settlement: settlement,
-        display: display,
-        rate: (quote['rate'] as num?)?.toDouble() ?? 1,
-        fresh: quote['fresh'] == true,
-        displayOptions: displayOptions,
-        paymentOptions: paymentOptions,
-      );
-    } catch (error) {
-      session.fxError = error.toString();
+      final quote = _tryJson(quoteResponse.body);
+      if (quote == null ||
+          !applyValidatedFxQuote(
+            session,
+            quote: quote,
+            settlement: settlement,
+            display: preferred,
+            displayOptions: displayOptions,
+            paymentOptions: paymentOptions,
+          )) {
+        markDisplayFxUnavailable(
+          session,
+          settlement: settlement,
+          displayOptions: displayOptions,
+          paymentOptions: paymentOptions,
+        );
+      }
+    } catch (_) {
+      // Transport / decode failures: same safe fallback as HTTP non-200.
+      markDisplayFxUnavailable(session);
     }
   }
 
@@ -408,6 +524,7 @@ class ApiClient {
         );
       }
     }
+    session.preferredDisplayCurrency = normalized;
     session.displayCurrency = normalized;
     await refreshCurrencyQuote();
   }

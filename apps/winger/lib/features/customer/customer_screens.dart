@@ -42,6 +42,24 @@ String _deliveryFeeLabel(WingerStrings s, AppSession session, double amount) {
   return money;
 }
 
+/// Customer-facing FX status copy. Never returns raw exceptions or request URLs.
+String localisedFxStatusMessage(WingerStrings s, String? fxError) {
+  if (fxError == null || fxError.isEmpty) return '';
+  final lower = fxError.toLowerCase();
+  final technical = lower.contains('clientexception') ||
+      lower.contains('socketexception') ||
+      lower.contains('timeoutexception') ||
+      lower.contains('uri=') ||
+      lower.contains('http://') ||
+      lower.contains('https://') ||
+      lower.contains('exception:') ||
+      lower.contains('error:');
+  if (technical) return s.t('fxUnavailable');
+  final translated = s.t(fxError);
+  if (translated != fxError) return translated;
+  return s.t('fxUnavailable');
+}
+
 /// Localised cart/checkout fulfilment label. Presentation only.
 String _localisedFulfillmentLabel(WingerStrings s, String method) {
   switch (method) {
@@ -343,30 +361,30 @@ class _CurrencyFilter extends StatelessWidget {
               }
             },
           ),
-          if (session.fxError != null)
-            Expanded(
-              child: Text(
-                session.fxError!,
-                style: const TextStyle(
-                  color: WingerColors.dangerInk,
-                  fontSize: 12,
-                ),
-              ),
-            )
-          else
-            Expanded(
-              child: Text(
-                session.showPaymentEstimate
-                    ? s
-                        .t('pricesShownPayIn')
-                        .replaceAll('{display}', session.displayCurrency)
-                        .replaceAll('{pay}', session.paymentCurrency)
-                    : s
-                        .t('youWillPayIn')
-                        .replaceAll('{pay}', session.paymentCurrency),
-                style: const TextStyle(color: WingerColors.muted, fontSize: 12),
-              ),
-            ),
+          Expanded(
+            child: session.fxError != null
+                ? Text(
+                    localisedFxStatusMessage(s, session.fxError),
+                    style: const TextStyle(
+                      color: WingerColors.dangerInk,
+                      fontSize: 12,
+                    ),
+                  )
+                : Text(
+                    session.showPaymentEstimate
+                        ? s
+                            .t('pricesShownPayIn')
+                            .replaceAll('{display}', session.displayCurrency)
+                            .replaceAll('{pay}', session.paymentCurrency)
+                        : s
+                            .t('youWillPayIn')
+                            .replaceAll('{pay}', session.paymentCurrency),
+                    style: const TextStyle(
+                      color: WingerColors.muted,
+                      fontSize: 12,
+                    ),
+                  ),
+          ),
         ],
       ),
     );

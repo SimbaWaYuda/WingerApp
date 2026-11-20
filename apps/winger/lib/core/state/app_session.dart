@@ -54,6 +54,8 @@ class AppSession extends ChangeNotifier {
   String deliveryMethod = 'standard';
   String settlementCurrency = 'USD';
   String displayCurrency = 'USD';
+  /// Customer-selected display currency retained across FX unavailable fallbacks.
+  String preferredDisplayCurrency = 'USD';
   double fxRate = 1;
   bool fxFresh = true;
   String? fxError;

@@ -767,6 +767,8 @@ class WingerStrings {
       'addressLine': 'Street / area',
       'deliveryAddress': 'Delivery address',
       'displayCurrency': 'Currency',
+      'fxUnavailable':
+          'Currency rates are unavailable right now. Amounts stay in the payment currency.',
       'spec': 'Spec',
       'supplier': 'Supplier',
       'verified': 'Verified',
@@ -1545,6 +1547,8 @@ class WingerStrings {
       'addressLine': 'Calle / zona',
       'deliveryAddress': 'Dirección de entrega',
       'displayCurrency': 'Moneda',
+      'fxUnavailable':
+          'Las tasas de cambio no están disponibles ahora. Los importes se muestran en la moneda de pago.',
       'spec': 'Dato',
       'supplier': 'Proveedor',
       'verified': 'Verificado',
@@ -2319,6 +2323,8 @@ class WingerStrings {
       'addressLine': 'Mtaa / eneo',
       'deliveryAddress': 'Anwani ya uwasilishaji',
       'displayCurrency': 'Sarafu',
+      'fxUnavailable':
+          'Viola vya sarafu havipatikani sasa. Kiasi kinabaki kwa sarafu ya malipo.',
       'spec': 'Kipimo',
       'supplier': 'Msambazaji',
       'verified': 'Imethibitishwa',
