@@ -1,0 +1,48 @@
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# Local data and uploads
+.pgdata
+.pgdata-*/
+.uploads
+uploads
+**/uploads/products
+
+# Dependencies and build artefacts (rebuilt in image)
+node_modules
+dist
+coverage
+.nyc_output
+
+# Tests and tooling not needed for production build
+test
+**/*.spec.ts
+**/*.postgres.integration.spec.ts
+jest.config.*
+.eslintrc*
+.prettierrc*
+.editorconfig
+
+# VCS and IDE
+.git
+.gitignore
+.gitattributes
+.vscode
+.idea
+*.md
+!README.md
+
+# Local scripts / compose helpers
+docker-compose*.yml
+scripts
+docs
+
+# OS / misc
+Dockerfile*
+.dockerignore
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
