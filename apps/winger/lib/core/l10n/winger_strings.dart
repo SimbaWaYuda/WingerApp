@@ -53,8 +53,6 @@ class WingerStrings {
       'home': 'Home',
       'search': 'Search',
       'compare': 'Compare',
-      'compareEmpty':
-          'No products to compare yet. Add products to compare their features side by side.',
       'cart': 'Cart',
       'orders': 'Orders',
       'account': 'Account',
@@ -95,6 +93,28 @@ class WingerStrings {
       'paymentCurrencyLabel': 'Payment currency: {pay}',
       'multiSupplierFulfillNote':
           'Each supplier is quoted separately for delivery or pickup.',
+      'comparingProducts': 'Comparing {count} products',
+      'compareEmpty':
+          'No products to compare yet. Add products to compare their features side by side.',
+      'scrollLeft': 'Scroll left',
+      'scrollRight': 'Scroll right',
+      'estimateExpressTo': '1–2 days to {city}',
+      'estimateStandardTo': '3–5 days to {city}',
+      'estimatePickupIn': 'Ready for pickup in {city}',
+      'addressExampleHint': 'Westlands',
+      'cardExpiryHint': 'MM/YY',
+      'noPaidOrdersYet': 'No paid orders for your catalogue yet.',
+      'allNetworks': 'All networks',
+      'otherNetwork': 'Other',
+      'stockReceivedSynced':
+          'Received +{qty} for {name} · stock {stock} · synced',
+      'stockReceivedQueued':
+          'Received +{qty} for {name} · stock {stock} · queued offline',
+      'variantEditorHint':
+          'Add colour/size combinations with their own stock. Clear all rows and save to use product-level stock only.',
+      'colourHexLabel': 'Colour hex (#RRGGBB)',
+      'profileSaved': 'Profile saved',
+      'orderNotFound': 'Order not found',
       'wishlist': 'Wishlist',
       'wishlistEmpty': 'No saved products yet.',
       'categories': 'Categories',
@@ -829,8 +849,6 @@ class WingerStrings {
       'home': 'Inicio',
       'search': 'Buscar',
       'compare': 'Comparar',
-      'compareEmpty':
-          'Aún no hay productos para comparar. Añade productos para comparar sus características lado a lado.',
       'cart': 'Carrito',
       'orders': 'Pedidos',
       'account': 'Cuenta',
@@ -871,6 +889,28 @@ class WingerStrings {
       'paymentCurrencyLabel': 'Moneda de pago: {pay}',
       'multiSupplierFulfillNote':
           'Cada proveedor se cotiza por separado para entrega o recogida.',
+      'comparingProducts': 'Comparando {count} productos',
+      'compareEmpty':
+          'Aún no hay productos para comparar. Añade productos para comparar sus características lado a lado.',
+      'scrollLeft': 'Desplazar a la izquierda',
+      'scrollRight': 'Desplazar a la derecha',
+      'estimateExpressTo': '1–2 días a {city}',
+      'estimateStandardTo': '3–5 días a {city}',
+      'estimatePickupIn': 'Listo para recoger en {city}',
+      'addressExampleHint': 'Westlands',
+      'cardExpiryHint': 'MM/AA',
+      'noPaidOrdersYet': 'Aún no hay pedidos pagados de tu catálogo.',
+      'allNetworks': 'Todas las redes',
+      'otherNetwork': 'Otro',
+      'stockReceivedSynced':
+          'Recibido +{qty} de {name} · stock {stock} · sincronizado',
+      'stockReceivedQueued':
+          'Recibido +{qty} de {name} · stock {stock} · en cola sin conexión',
+      'variantEditorHint':
+          'Añade combinaciones de color/talla con su propio stock. Borra todas las filas y guarda para usar solo el stock del producto.',
+      'colourHexLabel': 'Hexadecimal de color (#RRGGBB)',
+      'profileSaved': 'Perfil guardado',
+      'orderNotFound': 'Pedido no encontrado',
       'wishlist': 'Favoritos',
       'wishlistEmpty': 'Aún no hay productos guardados.',
       'categories': 'Categorías',
@@ -1608,8 +1648,6 @@ class WingerStrings {
       'home': 'Nyumbani',
       'search': 'Tafuta',
       'compare': 'Linganisha',
-      'compareEmpty':
-          'Bado hakuna bidhaa za kulinganisha. Ongeza bidhaa ili kulinganisha sifa zake bega kwa bega.',
       'cart': 'Kikapu',
       'orders': 'Oda',
       'account': 'Akaunti',
@@ -1650,6 +1688,28 @@ class WingerStrings {
       'paymentCurrencyLabel': 'Sarafu ya malipo: {pay}',
       'multiSupplierFulfillNote':
           'Kila msambazaji ananukuliwa tofauti kwa uwasilishaji au kuchukua.',
+      'comparingProducts': 'Unalinganisha bidhaa {count}',
+      'compareEmpty':
+          'Bado hakuna bidhaa za kulinganisha. Ongeza bidhaa ili kulinganisha sifa zake bega kwa bega.',
+      'scrollLeft': 'Sogeza kushoto',
+      'scrollRight': 'Sogeza kulia',
+      'estimateExpressTo': 'Siku 1–2 hadi {city}',
+      'estimateStandardTo': 'Siku 3–5 hadi {city}',
+      'estimatePickupIn': 'Tayari kuchukuliwa katika {city}',
+      'addressExampleHint': 'Westlands',
+      'cardExpiryHint': 'MM/YY',
+      'noPaidOrdersYet': 'Bado hakuna oda zilizolipwa za katalogi yako.',
+      'allNetworks': 'Mitandao yote',
+      'otherNetwork': 'Nyingine',
+      'stockReceivedSynced':
+          'Umepokea +{qty} kwa {name} · hifadhi {stock} · imesawazishwa',
+      'stockReceivedQueued':
+          'Umepokea +{qty} kwa {name} · hifadhi {stock} · imepangwa nje ya mtandao',
+      'variantEditorHint':
+          'Ongeza mchanganyiko wa rangi/ukubwa wenye hifadhi yao. Futa mistari yote na uhifadhi ili utumie hifadhi ya bidhaa pekee.',
+      'colourHexLabel': 'Hex ya rangi (#RRGGBB)',
+      'profileSaved': 'Wasifu umehifadhiwa',
+      'orderNotFound': 'Oda haijapatikana',
       'wishlist': 'Orodha ya matamanio',
       'wishlistEmpty': 'Bado hakuna bidhaa zilizohifadhiwa.',
       'categories': 'Kategoria',

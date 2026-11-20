@@ -1090,7 +1090,7 @@ class _SupplierOrdersScreenState extends State<SupplierOrdersScreen> {
               )
             else if (orders.isEmpty)
               Text(
-                'No paid orders for your catalogue yet.',
+                s.t('noPaidOrdersYet'),
                 style: TextStyle(color: WingerColors.muted),
               )
             else if (pairs.isEmpty)
@@ -1463,12 +1463,16 @@ class _SupplierProductsScreenState extends State<SupplierProductsScreen> {
     await sync.flush();
     if (!mounted) return;
     _reload();
+    final s = WingerStrings.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          session.apiOnline
-              ? 'Received +20 for ${product.name} · stock $next · synced'
-              : 'Received +20 for ${product.name} · stock $next · queued offline',
+          (session.apiOnline
+                  ? s.t('stockReceivedSynced')
+                  : s.t('stockReceivedQueued'))
+              .replaceAll('{qty}', '20')
+              .replaceAll('{name}', product.name)
+              .replaceAll('{stock}', '$next'),
         ),
       ),
     );
@@ -2763,16 +2767,25 @@ class _SupplierPaymentsScreenState extends State<SupplierPaymentsScreen> {
             DropdownButtonFormField<String>(
               initialValue: _network,
               decoration: InputDecoration(labelText: s.t('mobileMoneyNetwork')),
-              items: const [
+              items: [
                 DropdownMenuItem(
                   value: 'ALL_NETWORKS',
-                  child: Text('All networks'),
+                  child: Text(s.t('allNetworks')),
                 ),
-                DropdownMenuItem(value: 'M_PESA', child: Text('M-Pesa')),
-                DropdownMenuItem(value: 'TIGO', child: Text('Tigo / Mixx')),
-                DropdownMenuItem(value: 'AIRTEL', child: Text('Airtel Money')),
-                DropdownMenuItem(value: 'HALO', child: Text('HaloPesa')),
-                DropdownMenuItem(value: 'OTHER', child: Text('Other')),
+                const DropdownMenuItem(value: 'M_PESA', child: Text('M-Pesa')),
+                const DropdownMenuItem(
+                  value: 'TIGO',
+                  child: Text('Tigo / Mixx'),
+                ),
+                const DropdownMenuItem(
+                  value: 'AIRTEL',
+                  child: Text('Airtel Money'),
+                ),
+                const DropdownMenuItem(value: 'HALO', child: Text('HaloPesa')),
+                DropdownMenuItem(
+                  value: 'OTHER',
+                  child: Text(s.t('otherNetwork')),
+                ),
               ],
               onChanged: _busy
                   ? null
@@ -3638,7 +3651,7 @@ class _ProductVariantsDialogState extends State<_ProductVariantsDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Add colour/size combinations with their own stock. Clear all rows and save to use product-level stock only.',
+                s.t('variantEditorHint'),
                 style: TextStyle(color: WingerColors.muted),
               ),
               const SizedBox(height: 12),
@@ -3673,8 +3686,8 @@ class _ProductVariantsDialogState extends State<_ProductVariantsDialog> {
                     Expanded(
                       child: TextField(
                         controller: _rows[i].hexCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Colour hex (#RRGGBB)',
+                        decoration: InputDecoration(
+                          labelText: s.t('colourHexLabel'),
                         ),
                       ),
                     ),

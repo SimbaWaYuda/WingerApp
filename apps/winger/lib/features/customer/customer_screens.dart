@@ -290,7 +290,9 @@ class _CompareTray extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  'Comparing $count products',
+                  s
+                      .t('comparingProducts')
+                      .replaceAll('{count}', '$count'),
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
@@ -797,7 +799,9 @@ class _HomeProductCarouselState extends State<_HomeProductCarousel> {
       child: IconButton(
         onPressed: enabled ? onPressed : null,
         icon: Icon(icon, color: enabled ? Colors.white : WingerColors.muted),
-        tooltip: icon == Icons.chevron_left ? 'Scroll left' : 'Scroll right',
+        tooltip: icon == Icons.chevron_left
+            ? WingerStrings.of(context).t('scrollLeft')
+            : WingerStrings.of(context).t('scrollRight'),
       ),
     );
   }
@@ -2255,11 +2259,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   String? _selectedSize;
   late final PageController _galleryPageCtrl;
 
-  static const _deliveryLabels = <_DeliveryOption, String>{
-    _DeliveryOption.express: 'Express 1–2 days',
-    _DeliveryOption.standard: 'Standard 3–5 days',
-    _DeliveryOption.pickup: 'Pickup',
-  };
+  String _deliveryOptionLabel(WingerStrings s, _DeliveryOption option) {
+    return switch (option) {
+      _DeliveryOption.express => s.t('fulfillExpress'),
+      _DeliveryOption.standard => s.t('fulfillStandard'),
+      _DeliveryOption.pickup => s.t('fulfillPickup'),
+    };
+  }
 
   @override
   void initState() {
@@ -2308,15 +2314,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     super.dispose();
   }
 
-  String _estimateFor(_DeliveryOption option, String city) {
-    switch (option) {
-      case _DeliveryOption.express:
-        return '1–2 days to $city';
-      case _DeliveryOption.pickup:
-        return 'Ready for pickup in $city';
-      case _DeliveryOption.standard:
-        return '3–5 days to $city';
-    }
+  String _estimateFor(
+    WingerStrings s,
+    _DeliveryOption option,
+    String city,
+  ) {
+    final key = switch (option) {
+      _DeliveryOption.express => 'estimateExpressTo',
+      _DeliveryOption.pickup => 'estimatePickupIn',
+      _DeliveryOption.standard => 'estimateStandardTo',
+    };
+    return s.t(key).replaceAll('{city}', city);
   }
 
   List<String> _galleryUrls(Product product) {
@@ -3176,7 +3184,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   children: [
                     for (final option in _DeliveryOption.values)
                       ChoiceChip(
-                        label: Text(_deliveryLabels[option]!),
+                        label: Text(_deliveryOptionLabel(s, option)),
                         selected: selected == option,
                         selectedColor: WingerColors.brandMuted,
                         onSelected: (_) {
@@ -3188,7 +3196,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${s.t('deliveryEstimate')}: ${_estimateFor(selected, session.city)}',
+                  '${s.t('deliveryEstimate')}: ${_estimateFor(s, selected, session.city)}',
                   style: TextStyle(color: WingerColors.muted),
                 ),
                 const SizedBox(height: 16),
@@ -3632,7 +3640,13 @@ class _CompareScreenState extends State<CompareScreen> {
                         DataCell(Text(s.t('stock'))),
                         ...products.map(
                           (p) => DataCell(
-                            Text('${p.stock} (${p.stockStatus.name})'),
+                            Text(
+                              '${p.stock} (${switch (p.stockStatus) {
+                                StockStatus.lowStock => s.t('lowStock'),
+                                StockStatus.outOfStock => s.t('outOfStock'),
+                                StockStatus.inStock => s.t('inStock'),
+                              }})',
+                            ),
                           ),
                         ),
                       ],
@@ -3641,7 +3655,14 @@ class _CompareScreenState extends State<CompareScreen> {
                       cells: [
                         DataCell(Text(s.t('fulfillMethod'))),
                         ...products.map(
-                          (_) => DataCell(Text(session.deliveryMethodLabel)),
+                          (_) => DataCell(
+                            Text(
+                              _localisedFulfillmentLabel(
+                                s,
+                                session.deliveryMethod,
+                              ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -3770,6 +3791,10 @@ class _CartScreenState extends State<CartScreen> {
                 '${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}'
                 '${session.cartBySupplier.length > 1 ? ' · ${session.cartBySupplier.length} ${s.t('suppliers').toLowerCase()}' : ''}',
           ),
+          _SummaryRow(
+            label: s.t('estimatedTax'),
+            value: session.formatMoney(session.cartTax),
+          ),
           if (session.cartFeesAreLocalEstimate) ...[
             const SizedBox(height: 4),
             Text(
@@ -3781,10 +3806,6 @@ class _CartScreenState extends State<CartScreen> {
               ),
             ),
           ],
-          _SummaryRow(
-            label: s.t('estimatedTax'),
-            value: session.formatMoney(session.cartTax),
-          ),
           if (session.showPaymentEstimate) ...[
             const SizedBox(height: 4),
             Text(
@@ -4404,13 +4425,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             value: session.formatMoney(session.cartTotal),
           ),
           _SummaryRow(
-            label: s.t('deliveryFee'),
+            label: _deliveryFeeFieldLabel(s, session),
             value: _deliveryFeeLabel(s, session, session.cartDeliveryFee),
           ),
           _SummaryRow(
             label: s.t('estimatedTax'),
             value: session.formatMoney(session.cartTax),
           ),
+          if (session.cartFeesAreLocalEstimate)
+            Text(
+              s.t('deliveryFeeEstimateHint'),
+              style: TextStyle(
+                color: WingerColors.inkMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           Text(
             s
                 .t('paymentCurrencyLabel')
@@ -4568,13 +4598,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       style: TextStyle(color: WingerColors.inkMuted),
                     ),
                     Text(
-                      '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}',
+                      '${_deliveryFeeFieldLabel(s, session)}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)}',
                       style: TextStyle(color: WingerColors.inkMuted),
                     ),
                     Text(
                       '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
                       style: TextStyle(color: WingerColors.inkMuted),
                     ),
+                    if (session.cartFeesAreLocalEstimate)
+                      Text(
+                        s.t('deliveryFeeEstimateHint'),
+                        style: TextStyle(
+                          color: WingerColors.inkMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     if (session.showPaymentEstimate)
                       Text(
                         s
@@ -4609,7 +4648,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               controller: _address,
               decoration: InputDecoration(
                 labelText: s.t('addressLine'),
-                hintText: 'Westlands',
+                hintText: s.t('addressExampleHint'),
               ),
             ),
             const SizedBox(height: 8),
@@ -4702,7 +4741,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         carrier: shipment.carrier,
                         courierName: shipment.courierName,
                       ),
-                      '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, shipment.fee)}'
+                      '${_deliveryFeeFieldLabel(s, session)}: ${_deliveryFeeLabel(s, session, shipment.fee)}'
                           '${_fulfillment == 'pickup' ? '' : ' (${s.t('perSupplierFee')})'}',
                     ].join('\n'),
                   ),
@@ -4710,8 +4749,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ),
               ),
             const SizedBox(height: 8),
+            if (session.cartFeesAreLocalEstimate)
+              Text(
+                s.t('deliveryFeeEstimateHint'),
+                style: TextStyle(
+                  color: WingerColors.inkMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             Text(
-              '${s.t('deliveryFee')}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)} · '
+              '${_deliveryFeeFieldLabel(s, session)}: ${_deliveryFeeLabel(s, session, session.cartDeliveryFee)} · '
               '${s.t('estimatedTax')}: ${session.formatMoney(session.cartTax)}',
               style: TextStyle(color: WingerColors.inkMuted),
             ),
@@ -4807,7 +4855,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         keyboardType: TextInputType.datetime,
                         decoration: InputDecoration(
                           labelText: s.t('cardExpiry'),
-                          hintText: 'MM/YY',
+                          hintText: s.t('cardExpiryHint'),
                         ),
                       ),
                     ),
@@ -5911,7 +5959,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 icon: const Icon(Icons.arrow_back),
                 label: Text(s.t('orders')),
               ),
-              Text(snapshot.error?.toString() ?? 'Order not found'),
+              Text(
+                snapshot.error?.toString() ?? s.t('orderNotFound'),
+              ),
             ],
           );
         }
@@ -6074,7 +6124,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                       .t('courierBooked')
                                       .replaceAll(
                                         '{name}',
-                                        leg.courierName ?? 'Courier',
+                                        leg.courierName ??
+                                            s.t('carrierCourierFallback'),
                                       )
                                       .replaceAll(
                                         '{reference}',
@@ -6273,7 +6324,7 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
         );
       }
       if (!mounted) return;
-      setState(() => _message = 'Profile saved');
+      setState(() => _message = WingerStrings.of(context).t('profileSaved'));
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
@@ -6316,7 +6367,7 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
           controller: _address,
           decoration: InputDecoration(
             labelText: s.t('addressLine'),
-            hintText: 'Westlands',
+            hintText: s.t('addressExampleHint'),
           ),
         ),
         const SizedBox(height: 8),
@@ -6446,7 +6497,9 @@ class _AddressesScreenState extends State<AddressesScreen> {
     final address = _address.text.trim();
     final city = _city.text.trim();
     if (address.isEmpty || city.isEmpty) {
-      setState(() => _error = 'Address and city are required');
+      setState(
+        () => _error = WingerStrings.of(context).t('cityAddressRequired'),
+      );
       return;
     }
     setState(() {
@@ -6507,7 +6560,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
           controller: _address,
           decoration: InputDecoration(
             labelText: s.t('addressLine'),
-            hintText: 'Westlands',
+            hintText: s.t('addressExampleHint'),
           ),
         ),
         const SizedBox(height: 8),
