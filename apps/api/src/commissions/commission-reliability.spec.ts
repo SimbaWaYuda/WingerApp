@@ -835,6 +835,7 @@ function sweepHarness(options: {
           },
         },
       };
+      tx.$executeRaw = async () => 0;
       tx.$queryRaw = async () => {
         if (!tx.held) {
           const previous = tail;
@@ -1114,6 +1115,7 @@ describe('provider event idempotency', () => {
       events: [] as { eventId: string; remittanceReversalId: string; remittanceReversal?: { id: string; remittanceId: string } }[],
     };
     const tx = {
+      $executeRaw: async () => 0,
       $queryRaw: async () => [{ id: 'locked' }],
       commissionRemittance: {
         findUnique: async ({ select }: { select?: { supplierId: boolean } }) => {

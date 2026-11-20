@@ -49,6 +49,7 @@ describe('allocation lifecycle after a cash credit', () => {
     const created: { remittanceId: string; amountUsd: string }[] = [];
     const credits: { sourceEventKey: string }[] = [];
     const tx = {
+      $executeRaw: jest.fn(async () => 0),
       $queryRaw: jest.fn(async () => []),
       orderItemCommission: {
         findUnique: jest.fn(async () => ({
