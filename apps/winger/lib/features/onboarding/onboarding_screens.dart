@@ -19,8 +19,8 @@ class CustomerOnboardingScreen extends StatefulWidget {
 class _CustomerOnboardingScreenState extends State<CustomerOnboardingScreen> {
   final _name = TextEditingController();
   final _phone = TextEditingController();
-  final _city = TextEditingController(text: 'Nairobi');
-  final _address = TextEditingController(text: 'Westlands');
+  final _city = TextEditingController();
+  final _address = TextEditingController();
   OnboardingProgress? _progress;
   String? _error;
   bool _busy = false;
