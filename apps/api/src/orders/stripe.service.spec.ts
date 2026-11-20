@@ -7,6 +7,8 @@ import {
 
 describe('StripeService payment safety', () => {
   const previousSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousStripeSecret = process.env.STRIPE_SECRET_KEY;
 
   afterEach(() => {
     if (previousSecret === undefined) {
@@ -14,6 +16,150 @@ describe('StripeService payment safety', () => {
     } else {
       process.env.STRIPE_WEBHOOK_SECRET = previousSecret;
     }
+    if (previousNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+    if (previousStripeSecret === undefined) {
+      delete process.env.STRIPE_SECRET_KEY;
+    } else {
+      process.env.STRIPE_SECRET_KEY = previousStripeSecret;
+    }
+  });
+
+  const chargeParams = {
+    amountCents: 5898,
+    currency: 'usd',
+    orderId: 'ord-1',
+    orderDisplayId: 'WG-10099',
+    customerEmail: 'amina@example.com',
+    idempotencyKey: 'winger-charge-ord-1',
+    paymentMethodId: 'pm_card_visa',
+  };
+
+  it('production without Stripe rejects card checkout and never returns paid demo', async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    process.env.NODE_ENV = 'production';
+    const service = new StripeService();
+    expect(service.configured).toBe(false);
+
+    const result = await service.chargeOrder(chargeParams);
+
+    expect(result).toEqual({
+      mode: 'demo',
+      status: 'failed',
+      message: 'Card payments are not configured',
+    });
+    expect(result.status).not.toBe('paid');
+  });
+
+  it('local development without Stripe retains demo paid behaviour', async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    process.env.NODE_ENV = 'development';
+    const service = new StripeService();
+
+    const result = await service.chargeOrder(chargeParams);
+
+    expect(result).toEqual({
+      mode: 'demo',
+      status: 'paid',
+      message: 'Demo payment accepted (no STRIPE_SECRET_KEY)',
+    });
+  });
+
+  it('NODE_ENV=Production without Stripe fails closed and never returns paid demo', async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    process.env.NODE_ENV = 'Production';
+    const service = new StripeService();
+    expect(service.configured).toBe(false);
+
+    const result = await service.chargeOrder(chargeParams);
+
+    expect(result).toEqual({
+      mode: 'demo',
+      status: 'failed',
+      message: 'Card payments are not configured',
+    });
+    expect(result.status).not.toBe('paid');
+  });
+
+  it('unset NODE_ENV without Stripe retains demo paid behaviour', async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    delete process.env.NODE_ENV;
+    const service = new StripeService();
+
+    const result = await service.chargeOrder(chargeParams);
+
+    expect(result).toEqual({
+      mode: 'demo',
+      status: 'paid',
+      message: 'Demo payment accepted (no STRIPE_SECRET_KEY)',
+    });
+  });
+
+  it('production with a whitespace-only Stripe secret fails closed and never returns paid demo', async () => {
+    process.env.STRIPE_SECRET_KEY = '   ';
+    process.env.NODE_ENV = 'production';
+    const service = new StripeService();
+    expect(service.configured).toBe(false);
+
+    const result = await service.chargeOrder(chargeParams);
+
+    expect(result).toEqual({
+      mode: 'demo',
+      status: 'failed',
+      message: 'Card payments are not configured',
+    });
+    expect(result.status).not.toBe('paid');
+  });
+
+  it('configured Stripe test mode is unchanged when a PaymentIntent succeeds', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'pi_1', status: 'succeeded' });
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { create } } as never, 'test');
+    process.env.NODE_ENV = 'production';
+
+    const result = await service.chargeOrder(chargeParams);
+
+    expect(result).toMatchObject({
+      status: 'paid',
+      paymentIntentId: 'pi_1',
+      mode: 'test',
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 5898,
+        currency: 'usd',
+        payment_method: 'pm_card_visa',
+        confirm: true,
+      }),
+      { idempotencyKey: 'winger-charge-ord-1' },
+    );
+  });
+
+  it('configured Stripe live mode is unchanged when a PaymentIntent succeeds', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'pi_live_1', status: 'succeeded' });
+    const service = new StripeService();
+    service.bindForTests({ paymentIntents: { create } } as never, 'live');
+    process.env.NODE_ENV = 'production';
+
+    const result = await service.chargeOrder(chargeParams);
+
+    expect(result).toMatchObject({
+      status: 'paid',
+      paymentIntentId: 'pi_live_1',
+      mode: 'live',
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 5898,
+        currency: 'usd',
+        payment_method: 'pm_card_visa',
+        confirm: true,
+      }),
+      { idempotencyKey: 'winger-charge-ord-1' },
+    );
   });
 
   it('sends a stable idempotency key when creating a PaymentIntent', async () => {

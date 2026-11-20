@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
+import { isProductionEnv } from '../config/env-mode';
 import { cardCheckoutMode } from './checkout-mode';
 import { StripeAmountError, toStripeAmountMinor } from './stripe-amount';
 
@@ -142,6 +143,15 @@ export class StripeService {
     paymentMethodId?: string;
   }): Promise<ChargeResult> {
     if (!this.stripe) {
+      // Option B: production may boot without Stripe (COD/Lipa-only), but must
+      // never treat a card attempt as paid without a real PaymentIntent.
+      if (isProductionEnv()) {
+        return {
+          mode: 'demo',
+          status: 'failed',
+          message: 'Card payments are not configured',
+        };
+      }
       return {
         mode: 'demo',
         status: 'paid',
