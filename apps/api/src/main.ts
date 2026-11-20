@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { assertProductionEnvOrExit } from './config/env.validation';
 import { getLocalUploadRoot, storageDriver } from './storage/upload-paths';
 import { isPaymentReconcileWorkerEnabled } from './orders/payment-reconcile.worker';
 
@@ -9,6 +10,8 @@ import { isPaymentReconcileWorkerEnabled } from './orders/payment-reconcile.work
 if (!process.env.PGCLIENTENCODING) {
   process.env.PGCLIENTENCODING = 'UTF8';
 }
+
+assertProductionEnvOrExit();
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
