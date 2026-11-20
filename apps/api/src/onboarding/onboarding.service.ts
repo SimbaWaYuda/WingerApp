@@ -8,6 +8,7 @@ import { AuthUser } from '../auth/auth.types';
 import { MixpanelService } from '../analytics/mixpanel.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OnboardingTaskDef, tasksForRole } from './onboarding.tasks';
+import { resolveProfileAddressLine } from './profile-address';
 
 type Flags = Record<string, boolean>;
 
@@ -204,7 +205,7 @@ export class OnboardingService {
     const name = body.name?.trim();
     const phone = body.phone?.trim();
     const city = body.city?.trim();
-    const addressLine = body.addressLine?.trim() || 'Westlands';
+    const addressLine = resolveProfileAddressLine(body.addressLine);
     if (!name || !phone || !city) {
       throw new BadRequestException('name, phone, and city are required');
     }
